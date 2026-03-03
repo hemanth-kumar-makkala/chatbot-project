@@ -1,0 +1,36 @@
+# Virtual Environment
+venv/
+env/
+.venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Environment / Secrets
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Database & Vector Store (local data - optional, remove if you want to commit these)
+*.db
+*.sqlite
+chroma_db/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
