@@ -1,0 +1,351 @@
+# Architecture & Execution Blueprint
+
+> Comprehensive System Discovery of the Streamlit BYOK RAG Chatbot Platform.
+> Generated from a full read of all 12 source files in the workspace.
+
+---
+
+## 1. Component Breakdown
+
+### File Map
+
+| File | Layer | Primary Responsibility |
+|---|---|---|
+| [app.py](file:///c:/Users/makka/Music/chatbot-project/app.py) | **Entry Point** | Streamlit page config, dev-login bypass, page router, sidebar |
+| [views/auth.py](file:///c:/Users/makka/Music/chatbot-project/views/auth.py) | UI | Login / Register forms with werkzeug password hashing |
+| [views/dashboard.py](file:///c:/Users/makka/Music/chatbot-project/views/dashboard.py) | UI | Bot list, create-new-bot form |
+| [views/bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py) | UI | Bot settings, document upload (triggers ingestion), document delete, bot delete |
+| [views/chat.py](file:///c:/Users/makka/Music/chatbot-project/views/chat.py) | UI | Chat interface, escalation state machine, intent routing |
+| [views/settings.py](file:///c:/Users/makka/Music/chatbot-project/views/settings.py) | UI | BYOK API key vault — encrypt & save user's LLM key |
+| [database.py](file:///c:/Users/makka/Music/chatbot-project/database.py) | Data | SQLite schema init, CRUD for users/bots/documents, API key blob storage |
+| [vector_store.py](file:///c:/Users/makka/Music/chatbot-project/vector_store.py) | Data | ChromaDB `PersistentClient` singleton + `chatbot_docs` collection accessor |
+| [rag_engine.py](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py) | AI/RAG | Vision RAG pipeline: ingest (PDF/DOCX → images → captions → embeddings), query, delete |
+| [llm_gateway.py](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py) | AI/LLM | Adapter Pattern — unified `.generate()` for Google Gemini, OpenAI, Anthropic |
+| [intent_router.py](file:///c:/Users/makka/Music/chatbot-project/intent_router.py) | AI/Routing | Keyword-based intent classifier: `verbatim` / `quick_qa` / [external](file:///c:/Users/makka/Music/chatbot-project/views/chat.py#214-245) |
+| [encryption.py](file:///c:/Users/makka/Music/chatbot-project/encryption.py) | Security | Fernet AES-256 encrypt/decrypt for BYOK API keys |
+
+### External Dependencies & APIs
+
+| Dependency | Version Constraint | Purpose |
+|---|---|---|
+| `streamlit` | ≥1.35.0 | Web UI framework, state management, file upload |
+| `google-generativeai` | ≥0.7.0 | Gemini Vision captioning, text embedding, LLM chat (⚠️ **deprecated**, should migrate to `google.genai`) |
+| `chromadb` | ≥0.5.0 | Persistent vector store for document embeddings |
+| `PyMuPDF` (`fitz`) | ≥1.24.0 | PDF → page image rendering |
+| `python-docx` | ≥1.1.0 | DOCX paragraph extraction |
+| `Pillow` | ≥10.0.0 | Image creation (DOCX → text images), image loading |
+| [openai](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py#108-139) | ≥1.0.0 | OpenAI GPT-4o chat completions (user's BYOK key) |
+| [anthropic](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py#144-180) | ≥0.25.0 | Anthropic Claude chat (user's BYOK key) |
+| `cryptography` | ≥42.0.0 | Fernet AES-256 for API key encryption |
+| `werkzeug` | ≥3.0.0 | Password hashing (PBKDF2 + salt) |
+| `python-dotenv` | ≥1.0.0 | [.env](file:///c:/Users/makka/Music/chatbot-project/.env) file loading |
+
+### API Keys & Config
+
+| Variable | Source | Used By |
+|---|---|---|
+| `GOOGLE_API_KEY` | [.env](file:///c:/Users/makka/Music/chatbot-project/.env) | [rag_engine.py](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py) — server-side ingestion (captioning + embedding). **This is the platform's key, NOT the user's.** |
+| `MASTER_KEY` | [.env](file:///c:/Users/makka/Music/chatbot-project/.env) | [encryption.py](file:///c:/Users/makka/Music/chatbot-project/encryption.py) — Fernet master key for encrypting/decrypting user BYOK API keys |
+| User's BYOK key | SQLite `users.encrypted_api_key` | [llm_gateway.py](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py) — decrypted at call time for chat queries |
+
+> [!IMPORTANT]
+> **Dual-key architecture**: The server uses `GOOGLE_API_KEY` for all ingestion (embedding + captioning), while the user's BYOK key is used only for chat-time LLM calls via [llm_gateway.py](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py). This means ingestion quota is shared across all users on a single server key.
+
+---
+
+## 2. Step-by-Step Execution Flows
+
+### Flow A: Document Ingestion (The Build Phase)
+
+```mermaid
+flowchart TD
+    A["User clicks Upload<br/>(bot_management.py:80)"] --> B["st.file_uploader returns<br/>UploadedFile (BytesIO)"]
+    B --> C["Duplicate check: filename<br/>already in this bot?"]
+    C -->|Duplicate| D["st.warning — stop"]
+    C -->|New| E["add_document(bot_id, filename)<br/>→ SQLite row, status='pending'"]
+    E --> F["file_bytes = uploaded_file.read()"]
+    F --> G["ingest_document(file_bytes,<br/>filename, bot_id, doc_id)"]
+    G --> H{File extension?}
+    H -->|.pdf| I["fitz.open(stream=file_bytes)<br/>→ 2x zoom pixmaps<br/>→ JPG per page"]
+    H -->|.docx| J["Document(BytesIO(bytes))<br/>→ paragraphs → Pillow<br/>text images → JPG per page"]
+    H -->|other| K["ValueError raised"]
+    I --> L["For each page image:"]
+    J --> L
+    L --> M["_generate_page_caption(img)<br/>Gemini Flash Vision API call"]
+    M --> N["_embed_text(caption)<br/>Gemini Embedding API call"]
+    N --> O["collection.upsert() to ChromaDB<br/>id: bot{id}_doc{id}_page{n}"]
+    O --> P["update_document_status<br/>→ 'processed', page_count"]
+    K --> Q["update_document_status<br/>→ 'failed'"]
+    M -.->|API error| Q
+    N -.->|API error| Q
+```
+
+**Detailed step sequence:**
+
+| # | Location | What Happens |
+|---|---|---|
+| 1 | `bot_management.py:80` | `st.file_uploader` returns an `UploadedFile` (BytesIO-like) object |
+| 2 | `bot_management.py:88` | Duplicate check — queries [get_documents_for_bot(bot_id)](file:///c:/Users/makka/Music/chatbot-project/database.py#204-212) to see if filename exists |
+| 3 | `bot_management.py:95` | [add_document(bot_id, filename)](file:///c:/Users/makka/Music/chatbot-project/database.py#190-202) → inserts SQLite row with `status='pending'`, returns [doc_id](file:///c:/Users/makka/Music/chatbot-project/database.py#239-247) |
+| 4 | `bot_management.py:96` | `file_bytes = uploaded_file.read()` → raw bytes in memory |
+| 5 | `rag_engine.py:187` | [_get_page_folder(doc_id)](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#56-61) → creates `document_assets/doc_{id}/` directory |
+| 6 | `rag_engine.py:188` | [get_chroma_collection()](file:///c:/Users/makka/Music/chatbot-project/vector_store.py#28-38) → returns singleton ChromaDB collection `chatbot_docs` |
+| 7 | `rag_engine.py:196` (PDF) | `fitz.open(stream=file_bytes, filetype="pdf")` → PyMuPDF in-memory document |
+| 8 | `rag_engine.py:198-202` | Each page → `get_pixmap(matrix=2x)` → saves as `page_{n}.jpg` to disk |
+| 9 | `rag_engine.py:68-115` (DOCX) | `Document(BytesIO(docx_bytes))` → extract paragraphs → wrap to ~40 lines per "page" → render as white-background Pillow images → save as `page_{n}.jpg` |
+| 10 | `rag_engine.py:217` | **PER PAGE**: [_generate_page_caption(image_path)](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#148-171) — opens image, sends to `gemini-2.5-flash` Vision with extraction prompt → returns verbatim caption |
+| 11 | `rag_engine.py:218` | **PER PAGE**: [_embed_text(caption)](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#119-132) — calls `genai.embed_content(model="models/gemini-embedding-001")` → returns 768-dim float vector |
+| 12 | `rag_engine.py:221-233` | `collection.upsert()` — stores embedding + caption text + metadata (`bot_id`, [doc_id](file:///c:/Users/makka/Music/chatbot-project/database.py#239-247), `page_num`, `source_image_path`) in ChromaDB |
+| 13 | `rag_engine.py:235` | [update_document_status(doc_id, "processed", page_count)](file:///c:/Users/makka/Music/chatbot-project/database.py#214-229) in SQLite |
+| 14 | `bot_management.py:116` | `st.rerun()` refreshes the page to show the updated document list |
+
+> [!WARNING]
+> **Rate limit bottleneck**: Steps 10–12 fire **2 API calls per page** (1 Vision + 1 Embedding). A 10-page PDF = 20 API calls in rapid succession. Free-tier Gemini quota is ~5 RPM, which guarantees a `429 RESOURCE_EXHAUSTED` on any document over 2 pages.
+
+---
+
+### Flow B: User Query (The Retrieval Phase)
+
+```mermaid
+flowchart TD
+    A["User types message<br/>(chat.py:129)"] --> B["intent_router.classify(query)<br/>→ 'verbatim' | 'quick_qa' | 'external'"]
+    B --> C{Intent?}
+    C -->|external & level < 2| D["Set escalation=1<br/>Show confirmation UI"]
+    D -->|User confirms| E["Set escalation=2<br/>gateway.generate() without docs"]
+    D -->|User declines| F["Reset escalation=0<br/>Continue RAG-only"]
+    C -->|verbatim / quick_qa| G["query_bot() in rag_engine.py"]
+    G --> H["_embed_query(user_query)<br/>Gemini Embedding API"]
+    H --> I["collection.query()<br/>Top-3 by cosine similarity<br/>WHERE bot_id = {id}"]
+    I --> J["Load page images from<br/>source_image_path on disk"]
+    J --> K["Assemble prompt:<br/>SYSTEM_GUARDRAILS +<br/>bot system_prompt +<br/>chat_history (last 3 turns) +<br/>user question"]
+    K --> L["gateway.generate(provider,<br/>api_key, prompt, images)<br/>→ User's BYOK key"]
+    L --> M["Append citation footnote<br/>→ render answer"]
+```
+
+**Detailed step sequence:**
+
+| # | Location | What Happens |
+|---|---|---|
+| 1 | `chat.py:129` | `st.chat_input` captures user text |
+| 2 | `chat.py:136` | [classify(query)](file:///c:/Users/makka/Music/chatbot-project/intent_router.py#42-64) — keyword scan against `_VERBATIM_KEYWORDS` and `_EXTERNAL_KEYWORDS` |
+| 3 | `chat.py:174-177` | If [external](file:///c:/Users/makka/Music/chatbot-project/views/chat.py#214-245) and escalation < 2 → set escalation=1, return `None` (no answer yet), show confirmation buttons |
+| 4 | `chat.py:179-188` | If confirmed external → `gateway.generate()` with system prompt only, no document context |
+| 5 | `rag_engine.py:297` | [_embed_query(user_query)](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#134-147) — embeds with `task_type="retrieval_query"` using **server's** `GOOGLE_API_KEY` |
+| 6 | `rag_engine.py:298-303` | `collection.query(query_embeddings, n_results=3, where={"bot_id": str(bot_id)})` — **bot isolation via metadata filter** |
+| 7 | `rag_engine.py:316-322` | Load each retrieved page's image from `source_image_path` metadata via `Image.open()` |
+| 8 | `rag_engine.py:339-345` | Build final prompt: `SYSTEM_GUARDRAILS` + `bot_custom_prompt` + last 3 conversation turns + user question |
+| 9 | `rag_engine.py:350-355` | `gateway.generate(provider, api_key, prompt, images)` — calls the **user's BYOK key** via the chosen provider |
+| 10 | `rag_engine.py:358-360` | Append citation footnote (`Sources checked: Page X of filename.pdf`) |
+
+> [!NOTE]
+> **Bot isolation**: Query results are filtered by `bot_id` metadata in ChromaDB (`where={"bot_id": {"$eq": str(bot_id)}}`). This is the sole mechanism preventing data bleed between bots.
+
+---
+
+### Flow C: Document / Bot Deletion
+
+**Single document delete** (`bot_management.py:142-151`):
+
+| # | Location | What Happens |
+|---|---|---|
+| 1 | `rag_engine.py:252-258` | `collection.delete(where={"$and": [bot_id, doc_id]})` — removes all ChromaDB vectors for this doc |
+| 2 | `rag_engine.py:260-262` | `shutil.rmtree(document_assets/doc_{id}/)` — deletes page images from disk |
+| 3 | `database.py:231-236` | `DELETE FROM documents WHERE doc_id = ?` — removes SQLite row |
+
+**Full bot delete** (`bot_management.py:174-187`):
+
+| # | Location | What Happens |
+|---|---|---|
+| 1 | `database.py:239-246` | [get_all_doc_ids_for_bot(bot_id)](file:///c:/Users/makka/Music/chatbot-project/database.py#239-247) — fetches all doc IDs |
+| 2 | `rag_engine.py:265-272` | Loop: [delete_document(bot_id, doc_id)](file:///c:/Users/makka/Music/chatbot-project/database.py#231-237) for each doc (ChromaDB + filesystem) |
+| 3 | `database.py:249-258` | `DELETE FROM bots WHERE bot_id = ?` — SQLite cascade deletes child [documents](file:///c:/Users/makka/Music/chatbot-project/database.py#204-212) rows |
+
+---
+
+## 3. Data Flow & State Management
+
+### Streamlit Session State
+
+State is maintained across Streamlit reruns via `st.session_state`. Here is every key used:
+
+| Key | Set By | Type | Purpose |
+|---|---|---|---|
+| `user_id` | [app.py](file:///c:/Users/makka/Music/chatbot-project/app.py) (dev bypass) / [auth.py](file:///c:/Users/makka/Music/chatbot-project/views/auth.py) | `int` | Authenticated user's SQLite ID |
+| `username` | [app.py](file:///c:/Users/makka/Music/chatbot-project/app.py) / [auth.py](file:///c:/Users/makka/Music/chatbot-project/views/auth.py) | `str` | Display name |
+| [page](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#56-61) | Router | `str` | Current page: `"auth"`, `"dashboard"`, `"bot_management"`, `"chat"`, `"settings"` |
+| `active_bot_id` | [dashboard.py](file:///c:/Users/makka/Music/chatbot-project/views/dashboard.py) | `int` | Currently selected bot for management or chat |
+| `api_provider` | [settings.py](file:///c:/Users/makka/Music/chatbot-project/views/settings.py) | `str` | `"google"`, `"openai"`, or `"anthropic"` |
+| `chat_history_{bot_id}` | [chat.py](file:///c:/Users/makka/Music/chatbot-project/views/chat.py) | `list[dict]` | Per-bot message history (`role` + `content`) |
+| `escalation_{bot_id}` | [chat.py](file:///c:/Users/makka/Music/chatbot-project/views/chat.py) | `int` | Per-bot escalation level: 0/1/2 |
+| `doc_deleted_{doc_id}` | [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py) | `bool` | Transient flag for delete success toast |
+
+### File Storage
+
+| Location | Lifetime | Contents |
+|---|---|---|
+| `document_assets/doc_{id}/` | Permanent (until doc delete) | `page_1.jpg`, `page_2.jpg`, … — rendered page images at ~144 DPI |
+| `chroma_data/` | Permanent (until doc delete) | ChromaDB persistent storage — embeddings, captions, metadata |
+| [chatbot.db](file:///c:/Users/makka/Music/chatbot-project/chatbot.db) | Permanent | SQLite database file |
+| [.env](file:///c:/Users/makka/Music/chatbot-project/.env) | Permanent | `GOOGLE_API_KEY`, `MASTER_KEY` |
+
+> [!NOTE]
+> No temporary files are used. `file_bytes` lives in memory only. PyMuPDF opens the PDF from `stream=bytes` (no temp file), and python-docx reads from `BytesIO(bytes)` (no temp file).
+
+### Database Schema (SQLite)
+
+```sql
+-- users: authentication + encrypted BYOK key storage
+CREATE TABLE users (
+    user_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    username          TEXT    UNIQUE NOT NULL,
+    password_hash     TEXT    NOT NULL,          -- werkzeug PBKDF2
+    encrypted_api_key BLOB,                     -- Fernet AES-256 encrypted
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- bots: each user can have multiple bots
+CREATE TABLE bots (
+    bot_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    bot_name      TEXT    NOT NULL,
+    system_prompt TEXT    NOT NULL DEFAULT '',
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- documents: PDF/DOCX records per bot
+CREATE TABLE documents (
+    doc_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    bot_id      INTEGER NOT NULL REFERENCES bots(bot_id) ON DELETE CASCADE,
+    filename    TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'pending',   -- 'pending' | 'processed' | 'failed'
+    page_count  INTEGER,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Vector Store Structure (ChromaDB)
+
+| Field | Value | Example |
+|---|---|---|
+| Collection name | `chatbot_docs` | — |
+| Distance metric | `cosine` | — |
+| Node ID format | `bot{bot_id}_doc{doc_id}_page{page_num}` | `bot3_doc7_page2` |
+| Embedding | 768-dim float vector | from `gemini-embedding-001` |
+| Document (text) | The Vision-generated caption | Full verbatim page description |
+| Metadata: `bot_id` | `str(bot_id)` | `"3"` |
+| Metadata: [doc_id](file:///c:/Users/makka/Music/chatbot-project/database.py#239-247) | `str(doc_id)` | `"7"` |
+| Metadata: `page_num` | `int` | `2` |
+| Metadata: `chunk_index` | `int` (always `0`) | `0` |
+| Metadata: `source_filename` | Original filename | `"invoice.pdf"` |
+| Metadata: `source_image_path` | Absolute path to JPG | `C:\...\document_assets\doc_7\page_2.jpg` |
+
+---
+
+## 4. Known Failure Modes & Exception Handling
+
+### Every Exception Block in the Codebase
+
+| File | Lines | Catches | Action | Risk |
+|---|---|---|---|---|
+| [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py#L113-L117) | 113–117 | `Exception` | `st.error()` + `st.code(traceback)` + console print | ✅ Fixed — now surfaces full traceback |
+| [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py#L149-L150) | 149–150 | `Exception` | `st.error(f"Delete failed: {exc}")` | ⚠️ No traceback shown |
+| [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py#L185-L186) | 185–186 | `Exception` | `st.error(f"Delete failed: {exc}")` | ⚠️ No traceback shown |
+| [rag_engine.py](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#L238-L242) | 238–242 | `Exception` | Sets doc status to `"failed"`, prints traceback, re-raises as `RuntimeError` | ✅ Fixed — now logs full traceback |
+| [chat.py](file:///c:/Users/makka/Music/chatbot-project/views/chat.py#L201-L211) | 201–211 | `KeyError`, `RuntimeError`, `Exception` | Returns formatted error string to chat bubble | ✅ Good — includes `traceback.format_exc()` |
+| [chat.py](file:///c:/Users/makka/Music/chatbot-project/views/chat.py#L233-L239) | 233–239 | `KeyError`, `RuntimeError`, `Exception` | Same as above (escalation path) | ✅ Good |
+| [llm_gateway.py](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py#L186-L198) | 186–198 | Generic `Exception` | Pattern-matches error strings for 401/429, re-raises typed errors | ✅ Good |
+| [database.py](file:///c:/Users/makka/Music/chatbot-project/database.py#L86-L87) | 86–87 | `sqlite3.IntegrityError` | Returns `None` for duplicate username | ✅ Good |
+| [encryption.py](file:///c:/Users/makka/Music/chatbot-project/encryption.py#L68-L72) | 68–72 | `InvalidToken` | Re-raises as `ValueError` | ✅ Good |
+| [settings.py](file:///c:/Users/makka/Music/chatbot-project/views/settings.py#L73-L74) | 73–74 | `EnvironmentError` | `st.error()` for missing `MASTER_KEY` | ✅ Good |
+
+### Specific Failure Scenarios
+
+#### What happens if the user uploads an unsupported file?
+- `st.file_uploader` on line `bot_management.py:80` restricts to `type=["pdf", "docx"]` — **Streamlit blocks other file types at the widget level**. Even if bypassed, `rag_engine.py:209` raises `ValueError("Unsupported file type")` which is caught and shown.
+
+#### What happens if the Gemini API times out, rejects the model, or hits a rate limit?
+
+| Failure | Where | What Happens |
+|---|---|---|
+| **Rate limit (429)** during ingestion | [_generate_page_caption()](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#148-171) or [_embed_text()](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#119-132) | Exception caught at `rag_engine.py:238`, doc status set to `"failed"`, traceback printed, `RuntimeError` bubbles to `bot_management.py:113` → shown in UI |
+| **Rate limit (429)** during chat | [query_bot()](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#279-363) → `gateway.generate()` | [_handle_error()](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py#185-199) in `llm_gateway.py:194` detects "429/rate limit/quota/resource_exhausted" → raises `RuntimeError` → caught at `chat.py:207` → shown as `⚠️ Rate Limit:` message |
+| **Invalid API key (401)** during chat | `gateway.generate()` | [_handle_error()](file:///c:/Users/makka/Music/chatbot-project/llm_gateway.py#185-199) detects "401/unauthorized" → raises `KeyError` → caught at `chat.py:201` → shown as `⚠️ API Key Error:` |
+| **Bad model name** | `genai.GenerativeModel(VISION_MODEL)` | The SDK raises an error on `.generate_content()`, caught as generic `Exception` |
+| **Network timeout** | Any `genai.*` call | Unhandled by retry logic — crashes into the generic `except Exception` block |
+
+#### What happens if the database is locked or unreachable?
+- **No protection**. All [database.py](file:///c:/Users/makka/Music/chatbot-project/database.py) functions open a fresh `sqlite3.connect()`, execute, and close. There is no:
+  - Connection pooling
+  - Retry on `sqlite3.OperationalError` (database locked)
+  - WAL mode for concurrent reads/writes
+  - Transaction timeout configuration
+- If two Streamlit sessions try to write simultaneously, SQLite may throw `OperationalError: database is locked`. This exception is **not caught anywhere** and would crash the Streamlit session with a raw error.
+
+### Additional Risks Identified
+
+| Risk | Severity | Details |
+|---|---|---|
+| **No retry logic on API calls** | 🔴 High | Ingestion makes 2N API calls for N pages with zero backoff. Guaranteed `429` on free tier for any doc > 2 pages. |
+| **Dev login bypass is active** | 🟡 Medium | `app.py:57-66` auto-logs in as `dev_admin/admin123`. Auth page is entirely bypassed. Fine for dev, dangerous if deployed. |
+| **GOOGLE_API_KEY in .env is committed** | 🔴 High | The [.env](file:///c:/Users/makka/Music/chatbot-project/.env) file contains a live API key. If [.gitignore](file:///c:/Users/makka/Music/chatbot-project/.gitignore) doesn't cover [.env](file:///c:/Users/makka/Music/chatbot-project/.env), this key is in version control. |
+| **Image paths are absolute in ChromaDB** | 🟡 Medium | `source_image_path` stores full absolute paths like `C:\Users\...`. Moving the project folder breaks all image lookups during query. |
+| **No pagination on document list** | 🟢 Low | If a bot has hundreds of documents, `get_documents_for_bot()` loads all at once. |
+| **Intent router is keyword-based** | 🟡 Medium | False positives are common. "Explain the table on page 4" triggers `external` instead of `verbatim`. Self-documented as V2 backlog. |
+| **`google.generativeai` is deprecated** | 🟡 Medium | Google warns to migrate to `google.genai`. Will stop receiving updates/fixes. |
+
+---
+
+## Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "UI Layer (Streamlit)"
+        APP["app.py<br/>Router + Sidebar"]
+        AUTH["views/auth.py"]
+        DASH["views/dashboard.py"]
+        BOT["views/bot_management.py"]
+        CHAT["views/chat.py"]
+        SETT["views/settings.py"]
+    end
+
+    subgraph "AI / RAG Layer"
+        RAG["rag_engine.py<br/>Vision RAG Pipeline"]
+        GW["llm_gateway.py<br/>Multi-Provider Adapter"]
+        IR["intent_router.py<br/>Keyword Classifier"]
+    end
+
+    subgraph "Data Layer"
+        DB["database.py<br/>SQLite CRUD"]
+        VS["vector_store.py<br/>ChromaDB Client"]
+        ENC["encryption.py<br/>Fernet AES-256"]
+    end
+
+    subgraph "Storage"
+        SQLITE[("chatbot.db")]
+        CHROMA[("chroma_data/")]
+        ASSETS["document_assets/"]
+        ENV[".env<br/>GOOGLE_API_KEY<br/>MASTER_KEY"]
+    end
+
+    subgraph "External APIs"
+        GEMINI["Google Gemini<br/>Vision + Embedding"]
+        OPENAI_API["OpenAI API"]
+        ANTHRO["Anthropic API"]
+    end
+
+    APP --> AUTH & DASH & BOT & CHAT & SETT
+    BOT -->|upload| RAG
+    CHAT -->|query| RAG
+    CHAT --> IR
+    CHAT --> GW
+    RAG --> VS
+    RAG --> DB
+    RAG -->|server key| GEMINI
+    GW -->|user BYOK key| GEMINI & OPENAI_API & ANTHRO
+    SETT --> ENC --> DB
+    DB --> SQLITE
+    VS --> CHROMA
+    RAG --> ASSETS
+    ENC --> ENV
+    RAG --> ENV
+```

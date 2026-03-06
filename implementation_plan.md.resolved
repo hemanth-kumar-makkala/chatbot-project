@@ -1,0 +1,55 @@
+# Fix File Upload "Failed" Status — Error Observability & I/O Robustness
+
+The Knowledge Base file upload silently shows "🔴 Failed" with no traceback. The root cause is invisible because the exception chain swallows the real error message. This plan adds full traceback surfacing and hardens I/O handling.
+
+## Analysis Summary
+
+After reading the code, here's what I found:
+
+| Hypothesis | Verdict |
+|---|---|
+| **Swallowed exception** | ✅ **Confirmed** — [rag_engine.py](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py) line 237 catches `Exception`, wraps it in `RuntimeError`, and the UI on line 113 only shows `str(exc)`. The original traceback is never displayed to the user or the console. |
+| **BytesIO I/O trap** | ❌ **Not the issue** — `fitz.open(stream=file_bytes)` accepts raw bytes directly, and `Document(io.BytesIO(docx_bytes))` is correct. No file-path dependency. |
+| **Missing dependency** | ❌ **Unlikely** — [requirements.txt](file:///c:/Users/makka/Music/chatbot-project/requirements.txt) includes `PyMuPDF`, `python-docx`, and `Pillow`. But if there's an import error at runtime, it's being swallowed by the same exception handler. |
+
+The most likely failure mode: the Gemini API call inside [_generate_page_caption](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#148-171) or [_embed_text](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py#118-131) throws an error (wrong model name, bad API key, quota exceeded, etc.) and this is being silently converted to just `"Ingestion failed: <one-line message>"`.
+
+## Proposed Changes
+
+### Error Observability
+
+#### [MODIFY] [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py)
+
+- Add `import traceback` at the top
+- Change the `except RuntimeError` on line 113 to `except Exception` (catches all failure types)
+- Add `st.code(traceback.format_exc())` after `st.error()` so the **full stack trace** is visible in the UI
+- Also add `print(traceback.format_exc())` so it appears in the Streamlit console/terminal
+
+#### [MODIFY] [rag_engine.py](file:///c:/Users/makka/Music/chatbot-project/rag_engine.py)
+
+- Add `import traceback` at the top
+- In the `except` block (line 237), add `print(traceback.format_exc())` so the original traceback is always logged to the server console before being re-raised
+
+---
+
+### I/O Robustness (Defensive Hardening)
+
+#### [MODIFY] [bot_management.py](file:///c:/Users/makka/Music/chatbot-project/views/bot_management.py)
+
+- After `uploaded_file.read()`, add `uploaded_file.seek(0)` as a defensive measure (not strictly needed here since we pass `file_bytes`, but protects against future refactors using the stream again)
+
+No `tempfile` changes needed — both parsers (`fitz.open(stream=...)` and `Document(BytesIO(...))`) already accept in-memory data correctly.
+
+## Verification Plan
+
+### Manual Verification
+
+After applying the changes:
+
+1. **Make sure the Streamlit app is running** (`streamlit run app.py` in the `chatbot-project` directory)
+2. **Navigate to any bot's management page** (Dashboard → click a bot → Manage)
+3. **Upload a small `.pdf` or `.docx` file**
+4. **Observe the result:**
+   - If it still fails, the **full Python traceback** should now be visible both in the red error box on the page AND in the terminal running Streamlit
+   - That traceback will reveal the true root cause (API error, model name issue, dependency problem, etc.)
+   - If it succeeds, the document should show "🟢 Processed"

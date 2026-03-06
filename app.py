@@ -1,79 +1,105 @@
 """
-app.py — Main Streamlit entry point.
+app.py — Main Streamlit entry point and page router.
 
-Page routing is controlled by st.session_state["page"]:
+Pages:
   "auth"           → Login / Register
-  "dashboard"      → Bot list
-  "bot_management" → Configure bot + upload PDFs
-  "chat"           → Chat with a specific bot
+  "dashboard"      → Bot list & create
+  "bot_management" → Configure bot + upload/delete PDFs
+  "chat"           → Chat with a bot (Vision RAG + escalation)
+  "settings"       → BYOK API Key Vault
 """
-import os
 from dotenv import load_dotenv
-
-# Load .env BEFORE any LlamaIndex / Gemini imports so env vars are available
 load_dotenv()
 
 import streamlit as st
 from database import init_db
 
-# Initialise DB on every cold start (no-op if tables already exist)
 init_db()
 
-# ── Page router ───────────────────────────────────────────────────────────────
 
 def _sidebar() -> None:
-    """Persistent sidebar shown on all authenticated pages."""
+    """Persistent sidebar for all authenticated pages."""
     with st.sidebar:
         st.markdown("## 🤖 Chatbot Platform")
         st.divider()
-        username = st.session_state.get("username", "")
-        st.markdown(f"👤 **{username}**")
+        st.markdown(f"👤 **{st.session_state.get('username', '')}**")
+        st.divider()
+
+        if st.button("🏠 Dashboard", use_container_width=True):
+            st.session_state["page"] = "dashboard"
+            st.rerun()
+
+        if st.button("🔑 Settings", use_container_width=True):
+            st.session_state["page"] = "settings"
+            st.rerun()
+
+        st.divider()
+
         if st.button("🚪 Logout", use_container_width=True):
-            # Clear all auth + navigation state
-            for key in ["user_id", "username", "page", "active_bot_id"]:
+            for key in ["user_id", "username", "page", "active_bot_id", "api_provider"]:
                 st.session_state.pop(key, None)
             st.rerun()
 
 
+
+
+
 def main() -> None:
-    # Default page
-    if "page" not in st.session_state:
-        st.session_state["page"] = "auth"
+    st.set_page_config(
+        page_title="AI Chatbot Platform",
+        page_icon="🤖",
+        layout="centered",
+        initial_sidebar_state="expanded",
+    )
 
-    page = st.session_state["page"]
 
-    # Unauthenticated pages
-    if page == "auth":
-        from pages.auth import show as auth_show
-        auth_show()
-        return
-
-    # All pages below require authentication
+    # ── DEV LOGIN BYPASS ──
     if "user_id" not in st.session_state:
-        st.session_state["page"] = "auth"
+        from database import register_user, get_user
+        # Create or fetch default dev user
+        dev_user = get_user("dev_admin", "admin123")
+        if not dev_user:
+            dev_user = register_user("dev_admin", "admin123")
+        
+        st.session_state["user_id"] = dev_user["user_id"]
+        st.session_state["username"] = dev_user["username"]
+        st.session_state["page"] = "dashboard"
         st.rerun()
         return
+
+    page = st.session_state.get("page", "dashboard")
+
+    # Unauthenticated - bypassed above but kept for structure
+    if page == "auth":
+        st.session_state["page"] = "dashboard"
+        st.rerun()
+        return
+
+
 
     _sidebar()
 
     if page == "dashboard":
-        from pages.dashboard import show as dashboard_show
+        from views.dashboard import show as dashboard_show
         dashboard_show()
 
     elif page == "bot_management":
-        from pages.bot_management import show as bot_mgmt_show
+        from views.bot_management import show as bot_mgmt_show
         bot_mgmt_show()
 
     elif page == "chat":
-        from pages.chat import show as chat_show
+        from views.chat import show as chat_show
         chat_show()
 
+    elif page == "settings":
+        from views.settings import show as settings_show
+        settings_show()
+
     else:
-        # Catch-all: redirect to dashboard
         st.session_state["page"] = "dashboard"
         st.rerun()
 
 
 if __name__ == "__main__" or True:
-    # Streamlit always runs the file top-to-bottom, so we call main() here.
     main()
+ 

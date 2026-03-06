@@ -1,2 +1,14 @@
 [server]
 maxUploadSize = 200  # MB — raise this if you need larger PDFs (e.g. 500)
+
+[theme]
+# Enforce a clean light theme natively instead of hacky CSS
+base = "light"
+primaryColor = "#3b82f6"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8fafc"
+textColor = "#0f172a"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

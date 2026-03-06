@@ -62,6 +62,6 @@ def show() -> None:
 
 
 def _set_logged_in(user: dict) -> None:
-    st.session_state["user_id"] = user["id"]
+    st.session_state["user_id"] = user["user_id"]
     st.session_state["username"] = user["username"]
     st.session_state["page"] = "dashboard"
