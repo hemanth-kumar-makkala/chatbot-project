@@ -346,3 +346,55 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Added deterministic failure counters to test transient retry recovery paths without flaky network dependencies.
 - **Open Issues**:
   - None. Clean pass across pytest (85 passed in 1.32s), ruff, mypy, and all pre-commit hooks.
+
+---
+
+### [2026-10-02] Task 1.6: LangGraph 9-Node StateGraph, Extraction Subgraph, and Contract Tests
+
+- **Task ID**: Task 1.6
+- **What Was Built**:
+  - Implemented the Primary 9-Node Knowledge StateGraph and Extraction Subgraph in `backend/app/core/graph.py` matching the architecture spec lines 185-235:
+    - **Zero-Content Checkpoint Architecture**: `GraphState` holds control fields and entity IDs only (`request_id`, `tenant_id`, `route`, `answer_mode`, `evidence_ids`, `evidence_state`, `attempt_counters`, `status`, `public_error_ref`).
+    - **Runtime Context (`GraphRuntimeContext`)**: Question text, evidence text, document binaries, and ports (`ModelProvider`, `Retriever`, `Tracer`) pass through LangGraph's unpersisted runtime context (`context_schema=GraphRuntimeContext`, `runtime: Runtime[GraphRuntimeContext]`). Checkpointers never store question, answer, or document content.
+    - **9 Main Nodes**: `guard_input`, `route`, `retrieve`, `rerank`, `assess_evidence`, `vision_read`, `generate`, `validate`, `respond` + fallback `safe_failure`.
+    - **Extraction Subgraph**: 4-node subgraph (`extract_fields` -> `dual_read_compare` -> `classify_confidence` -> `validate_fields`) that terminates at `validate_fields` and returns cleanly to the main graph for the shared `respond` node (no internal respond node).
+    - **3-Branch Vision Read Conditional Edge**:
+      1. `vision_ok` -> `generate`
+      2. `vision_failed` + OCR confidence >= 0.70 -> `generate` (using OCR evidence)
+      3. `vision_failed` + OCR confidence < 0.70 -> `respond` (with page refusal)
+    - **Bounded Validation & Recursion Protection**: `validate` -> `generate` retries at most once tracked by counter in state; invocation `recursion_limit` safely traps infinite cycles and routes to `safe_failure`.
+    - **Internal Retrieval Fallbacks**: Hybrid vector and keyword retrieval failure fallbacks handled seamlessly and gated by `assess_evidence`.
+    - **Fail-Open Telemetry**: All node executions wrapped with `_execute_with_telemetry` recording `step_start`, `step_end`, and `step_error` via `Tracer` fail-open.
+    - **Documentation Generator Script**: `backend/scripts/generate_graph_docs.py` compiles the StateGraph and writes exact Mermaid topology to `docs/graph.md`.
+- **Tests Added**:
+  - `backend/tests/unit/test_graph_contracts.py` (8 unit tests):
+    - Knowledge graph nodes and edges match architecture spec.
+    - Extraction subgraph ends after `validate_fields` and returns to main graph.
+    - Committed `docs/graph.md` matches compiled Mermaid diagram.
+    - In-memory `MemorySaver` checkpoint state AND metadata contain zero content strings.
+    - Validation loop bounded to at most 1 retry, transitioning to refusal.
+    - Vision read conditional edge tests all 3 branches (vision ok, ocr fallback, page refusal).
+    - Invocation recursion limit traps infinite cycles into safe failure.
+    - Telemetry wrapper calls tracer fail-open across nodes.
+  - `backend/tests/unit/test_retrieval_fallbacks.py` (4 unit tests):
+    - Vector index down falls back to keyword retrieval.
+    - Keyword index down falls back to vector retrieval.
+    - Reranker service down falls back to RRF retrieval rank.
+    - Clarify route fetches grounded topic titles strictly from Retriever.
+  - `backend/tests/integration/test_graph_end_to_end.py` (8 integration tests covering all 8 paths):
+    - Path 1: Reliable text answer.
+    - Path 2: Visual answer.
+    - Path 3: General task route.
+    - Path 4: Clarify route.
+    - Path 5: Extraction route through subgraph to shared respond.
+    - Path 6: Conflicting evidence detection.
+    - Path 7: Refusal on weak or no evidence.
+    - Path 8: Safe failure fallback on non-retryable error.
+  - `backend/tests/integration/test_langgraph_postgres_checkpointer.py` (1 integration test):
+    - PostgreSQL `AsyncPostgresSaver` checkpoint persistence verifies that both saved state channel values AND metadata contain zero prompt or evidence text.
+  - Total test suite: 106 passed (55 unit + 23 invariant + 28 integration).
+- **Decisions Made**:
+  - Preserved strict architecture boundaries: `app/core/` does not import `langchain_core` directly; relies on `langgraph` core state and casting.
+  - Used `AsyncConnectionPool(..., kwargs={"autocommit": True})` for postgres checkpointer to accommodate `CREATE INDEX CONCURRENTLY` in LangGraph migrations.
+- **Open Issues**:
+  - None. Clean pass across pytest (106 passed in 2.82s), ruff, mypy, and all 10 pre-commit hooks.
