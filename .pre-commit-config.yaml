@@ -33,3 +33,12 @@ repos:
       - id: mypy
         args: [--config-file=backend/pyproject.toml]
         files: ^backend/app/
+
+  - repo: local
+    hooks:
+      - id: boundary-invariants
+        name: boundary-invariants
+        entry: uv --directory backend run pytest tests/invariants
+        language: system
+        pass_filenames: false
+        always_run: true

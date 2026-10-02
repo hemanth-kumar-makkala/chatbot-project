@@ -140,3 +140,42 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Decisions Made**:
   - Kept version ranges in `pyproject.toml` and pinned exact hashes in `uv.lock`.
   - Configured `backend/app` package packaging via Hatchling.
+
+---
+
+### [2026-10-02] Task 1.2: Architecture Import Boundary Enforcement Rules
+
+- **Task ID**: Task 1.2
+- **What Was Built**:
+  - Implemented AST boundary analyzer `backend/tests/invariants/boundary_checker.py`:
+    - Strict allowlist enforcement:
+      - `app/core/`: Only Python standard library (`sys.stdlib_module_names`), `app.core.*`, `app.ports.*`, `langgraph`, `pydantic`, `typing_extensions`.
+      - `app/ports/`: Only Python standard library, `app.ports.*`, `pydantic`, `typing_extensions`.
+      - `app/adapters/`: May import `app.ports.*` and vendor libraries, but NEVER `app.core.*`.
+      - Composition root: Only `app/wiring.py` is authorized to import `app.core.*` and `app.adapters.*` together.
+    - Relative import resolution (`.` and `..` resolved against module hierarchy).
+    - Inspection of type checking blocks (`if TYPE_CHECKING:` traversed).
+    - Dynamic import ban: Flagging `__import__` and `importlib.import_module` inside `core` and `ports`.
+    - Environment read ban: Flagging `os.environ`, `os.getenv`, direct imports (`from os import getenv`), and aliased imports (`import os as o; o.environ[...]`) inside `app/core/` (configuration must be injected).
+    - Directory scanner: `scan_directory_boundaries(root_dir)` recursive codebase scanner.
+  - Authored Architectural Decision Record: `docs/decisions/ADR-0003-composition-root.md` establishing `app/wiring.py` as the sole composition root.
+  - Added package initializers `backend/tests/__init__.py` and `backend/tests/invariants/__init__.py`.
+- **Tests Added**:
+  - `backend/tests/invariants/test_architecture_boundaries.py` (20 tests):
+    - 16 self-tests with synthetic violation code snippets testing all boundary rules, dynamic import bans, environment access bans (including aliases and direct imports), ports vendor bans, and composition root rules.
+    - 4 repository scan invariant tests running across `backend/app/core`, `backend/app/ports`, `backend/app/adapters`, and the entire codebase.
+  - Followed strict TDD protocol:
+    1. Tests written first with boundary checker raising `NotImplementedError` -> 20 failed.
+    2. Boundary checker implemented -> 20 passed.
+- **Decisions Made**:
+  - Placed checker in `backend/tests/invariants/` (not in `app/`) to avoid polluting application production code.
+  - Formulated ADR-0003 designating `app/wiring.py` as the sole composition root.
+  - Added a fast local pre-commit hook `boundary-invariants` executing `uv --directory backend run pytest tests/invariants` (<0.05s) on every commit.
+  - Extended boundary checker to enforce that no module anywhere in `app/` (including `app/api/`) outside `app/adapters/` and `app/wiring.py` may import `app.adapters.*`.
+- **Follow-up Fixes Added**:
+  - `boundary-invariants` hook registered in `.pre-commit-config.yaml` (`always_run: true`, `pass_filenames: false`).
+  - Added self-test `test_violation_api_imports_adapters` (confirmed failing prior to checker update).
+  - Added codebase scan test `test_repo_scan_app_api_clean`.
+  - Expanded test suite to 22 invariant tests (all passing in 0.04s).
+- **Open Issues**:
+  - None. Clean pass across pytest, ruff lint, ruff format, mypy, and all pre-commit hooks.
