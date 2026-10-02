@@ -277,6 +277,72 @@ Append-only record of all completed tasks, architectural choices, and test recor
     - Scanned entire repository for password literals: removed dev password fallbacks from `docker-compose.yml`, `scripts/bootstrap_db_roles.py`, `backend/app/db/session.py`, and `backend/README.md`. Only `.env` holds actual values; `.env.example` holds empty placeholders.
   - `mypy hook`:
     - Replaced `mirrors-mypy` hook in `.pre-commit-config.yaml` with local system hook `uv --directory backend run mypy app tests` (`pass_filenames: false`, `always_run: true`). It runs within the project's virtualenv, resolving `sqlalchemy`, `pydantic`, `alembic`, and all test modules cleanly without isolated environment stub errors.
-  - Verification: `pre-commit run --all-files` passes 100% (10/10 hooks green, including `detect-secrets` and `mypy`). All 66 tests passing.
 - **Open Issues**:
   - Platform Admin cross-tenant query topology documented in `docs/OPEN_QUESTIONS.md` (Item 2.1) for stakeholder review before Phase 5.
+
+---
+
+### [2026-10-02] Task 1.4b: Three Log Stores (Operational Logger, Tracer Store, Audit Store)
+
+- **Task ID**: Task 1.4b
+- **What Was Built**:
+  - Operational Logger in `backend/app/observability/logger.py`:
+    - Formats log records into strictly allowlisted, single-line JSON.
+    - Enforces hard field allowlist: `ts`, `request_id`, `tenant_id`, `node`, `status`, `latency_ms`, `counts`, `route`, `profile`, `model_id`, `error_code`, `error_type`.
+    - Automatically drops and counts any unallowlisted field (e.g. `question_body`, `prompt_content`, `document_text`) via `get_dropped_field_count()`.
+    - Omits free-form format messages from output JSON.
+    - Enforces Invariant 10: exception logging captures only `error_type` and `error_code`, strictly excluding raw exception messages and stack traces.
+    - Contextvars propagation: `request_id_var` and `tenant_id_var` propagate across asynchronous execution tasks.
+  - Trace Store Adapter in `backend/app/adapters/observability/tracer.py`:
+    - Implements `Tracer` port (`step_start`, `step_end`, `step_error`).
+    - Writes telemetry to `run_steps` in its own independent database transaction (`tenant_session`), ensuring trace records survive application request rollbacks.
+    - Enforces fail-open contract with configurable `write_timeout_seconds` (default 1.0s). Bounded timeouts and database outages log warnings and return safely without raising exceptions to user requests.
+  - Audit Log Store in `backend/app/observability/audit.py`:
+    - `AuditLogger` appends compliance actions (`action`, `event_type`, `resource_id`, `user_id`) to `audit_events`.
+    - Enforces fail-closed contract: if writing an audit event fails, `AuditError` is raised, forcing the audited compliance operation to abort and refuse.
+  - Authored Architectural Decision Record: `docs/decisions/ADR-0005-observability-stores.md`.
+- **Tests Added**:
+  - `backend/tests/unit/test_operational_logger.py` (4 unit tests):
+    - Validates allowed fields formatting and ISO 8601 UTC timestamp.
+    - Validates unallowlisted fields are dropped and counted.
+    - Validates no free-form message in JSON output.
+    - Validates exception message and stack trace scrubbing.
+  - `backend/tests/integration/test_tracer_and_audit_stores.py` (5 integration tests):
+    - Tracer writes in own transaction and survives request transaction rollback.
+    - Tracer write timeout aborts slow writes within bounded time without raising.
+    - Tracer database outage fails open without raising.
+    - Audit event successfully logged in `audit_events`.
+    - Audit failure fails closed (raises `AuditError`).
+  - Total test suite: 75 passed (33 unit + 23 invariant + 19 integration).
+- **Decisions Made**:
+  - Documented resilience difference in ADR-0005: Tracer is fail-open (telemetry never breaks requests); Audit is fail-closed (unrecorded compliance actions are forbidden).
+- **Open Issues**:
+  - None. Clean pass across pytest (75 passed in 1.20s), ruff, mypy, and pre-commit hook suite.
+
+---
+
+### [2026-10-02] Task 1.5: Mock ModelProvider with Configurable Failure Modes
+
+- **Task ID**: Task 1.5
+- **What Was Built**:
+  - Implemented `MockModelProvider` in `backend/app/adapters/models/mock.py` implementing `ModelProvider`:
+    - Normal operation:
+      - `generate`: returns deterministic `ModelResponse` with content and usage tokens; generates schema-compliant structured output when `schema` (Pydantic model) is provided.
+      - `read_page`: returns `PageReading` with visual text, confidence score, and normalized comparison values.
+      - `extract_fields`: returns `ExtractedFields` with `ReadState.PRESENT` mapped to requested schema fields.
+    - Explicit failure injection triggers via `set_failure(mode, failure_count, delay_seconds)`:
+      - `MockFailureMode.TIMEOUT`: raises `ProviderTimeout` (retryable=True, error_code="PROVIDER_TIMEOUT").
+      - `MockFailureMode.UNAVAILABLE`: raises `ProviderUnavailable` (retryable=True, error_code="PROVIDER_UNAVAILABLE").
+      - `MockFailureMode.MALFORMED_OUTPUT`: raises `MalformedOutput` (retryable=False).
+      - `MockFailureMode.EMPTY_OUTPUT`: raises `EmptyOutput` (retryable=False).
+      - `MockFailureMode.SLOW_RESPONSE`: injects async sleep delay.
+      - Transient recovery: fails exactly N times before cleanly recovering, enabling deterministic retry loop tests in the LangGraph graph.
+- **Tests Added**:
+  - `backend/tests/unit/test_mock_provider.py` (10 unit tests):
+    - Tests text generation, structured output schema generation, page visual reading, and field extraction.
+    - Tests failure injection for timeout, unavailable, malformed output, empty output, slow response, and transient failure recovery after N attempts.
+  - Total test suite: 85 passed (43 unit + 23 invariant + 19 integration).
+- **Decisions Made**:
+  - Added deterministic failure counters to test transient retry recovery paths without flaky network dependencies.
+- **Open Issues**:
+  - None. Clean pass across pytest (85 passed in 1.32s), ruff, mypy, and all pre-commit hooks.

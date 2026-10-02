@@ -5,10 +5,12 @@
 - **Phase 1**: Engine on Mock Profile (Active execution on 8 GB office PC with mock profile)
 
 ## Current Task
-- **Task 1.4a**: Database schema (Phase 1 tables), composite foreign keys, transaction-local PostgreSQL RLS policies, and non-superuser role privilege isolation (`app_user`, `retriever_user`) — **COMPLETED**
+- **Task 1.5**: Mock ModelProvider with configurable failure modes (`backend/app/adapters/models/mock.py`) — **COMPLETED**
 
 ## Next Task
-- **Task 1.4b**: Three log stores (operational logger with zero-content scrubbing, trace store `run_steps` with fail-safe contract, audit log `audit_events` with insert-only enforcement)
+- **Task 1.6**: LangGraph 9-node knowledge StateGraph, extraction subgraph, and contract tests (requires user approval before start)
+
+
 
 
 ## Blockers
