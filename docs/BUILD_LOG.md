@@ -179,3 +179,104 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Expanded test suite to 22 invariant tests (all passing in 0.04s).
 - **Open Issues**:
   - None. Clean pass across pytest, ruff lint, ruff format, mypy, and all pre-commit hooks.
+
+---
+
+### [2026-10-02] Task 1.3: Port Interface Definitions (Layer 5)
+
+- **Task ID**: Task 1.3
+- **What Was Built**:
+  - Added approved `pydantic>=2.10.0,<3.0.0` dependency to `backend/pyproject.toml`, pinned exact hashes in `backend/uv.lock`, and synced `.venv`.
+  - Implemented 9 pure Abstract Base Class (`abc.ABC`) interfaces in `backend/app/ports/`:
+    - `ModelProvider`: `generate(...)`, `read_page(...)`, `extract_fields(...)`
+    - `EmbeddingProvider`: `embed(...)`, abstract properties `model_id` and `version`
+    - `DocumentParser`: `split_pages(...) -> AsyncIterator[PageArtifact]`, `extract(...) -> ParsedPageContent` (page-first invariant)
+    - `Retriever`: `search(...) -> list[EvidenceId]`, `search_titles(...) -> list[str]` (ADR-0002 clarify grounding)
+    - `StorageBackend`: `put(...)`, `get(...)`, `signed_url(...)`, `delete(...)`
+    - `JobQueue`: `enqueue(...)`, `status(...)`
+    - `AuthProvider`: `authenticate(...)`, `session(...)`, `roles(...)`
+    - `Tracer`: `step_start(...)`, `step_end(...)`, `step_error(...)`
+    - `Reranker`: `rerank(...)`
+  - Defined shared domain error hierarchy in `backend/app/ports/errors.py`:
+    - `PortError`, `ProviderTimeout` (retryable), `ProviderUnavailable` (retryable), `MalformedOutput`, `EmptyOutput`, `AuthenticationError`, `StorageError`, `ParseError`, `QueueError` (retryable).
+  - Defined typed data contracts in `backend/app/ports/types.py`:
+    - `UserRole` enum (`platform_admin`, `client_admin`, `staff`)
+    - `TenantContext` model derived from session
+    - `EvidenceType` enum (`text`, `visual`, `table`) and typed `EvidenceId` model
+    - `ModelResponse`, `PageReading`, `ExtractedFields` carrying `model_id` and `model_version`
+    - `ReadState` enum (`present`, `unreadable`, `not_present`) with explicit `UNREADABLE` support for single-read observations
+    - `StorageKey` enforcing `tenant_id` on all object storage operations
+    - Typed telemetry models: `StepStartPayload`, `StepEndPayload`, `StepErrorPayload` (error code and error type only, no free-form content)
+  - Authored Architectural Decision Record: `docs/decisions/ADR-0004-port-interfaces.md`.
+  - Updated `docs/FAILURE_MODES.md` adding Tracer store failure mode with fail-safe request survival verification.
+  - Closed Tracer execution mode item 1.8 in `docs/OPEN_QUESTIONS.md`.
+- **Tests Added**:
+  - `backend/tests/unit/test_ports_contracts.py` (29 test assertions across 10 test suites):
+    - Red phase: tests written first, verified failing with `ImportError`.
+    - Green phase: all 29 unit tests passing + 22 boundary invariant tests passing = 51 total tests passing in 0.21s.
+- **Decisions Made**:
+  - All I/O operations are async coroutines across all 9 ports (ADR-0004).
+  - Tracer operates asynchronously for `run_steps` database persistence; fail-safe contract guarantees tracing failures never fail user requests.
+  - Operational logs (metadata only) use standard Python logging outside `ports/`.
+  - Restructured `backend/pyproject.toml` dependencies: moved `ruff`, `mypy`, `pytest`, `pre-commit`, and `detect-secrets` into `[dependency-groups] dev = [...]`. Only `pydantic` remains in `[project].dependencies` as runtime dependency. Relocked with `uv lock` and confirmed local tool installation with `uv sync`.
+- **Open Issues**:
+  - None. Clean pass across pytest, ruff lint, ruff format, mypy strict check, and pre-commit hook suite.
+
+---
+
+### [2026-10-02] Task 1.4a: Database Schema & Row-Level Security (RLS)
+
+- **Task ID**: Task 1.4a
+- **What Was Built**:
+  - Added pinned dependencies: `sqlalchemy[asyncio]>=2.0.36,<3.0.0`, `alembic>=1.14.0,<2.0.0`, `psycopg[binary]>=3.2.3,<4.0.0` in `[project].dependencies`, and `pytest-asyncio>=0.24.0,<1.0.0` in `[dependency-groups] dev`. Locked with `uv lock` and synced `.venv`.
+  - Created idempotent local role bootstrap script `backend/scripts/bootstrap_db_roles.py`: creates non-superuser roles `app_user` (read-write) and `retriever_user` (read-only) with `NOSUPERUSER NOBYPASSRLS` and passwords read securely from `.env` (never in migrations or repo).
+  - Created Alembic environment in `backend/app/db/migrations/` and initial migration `0001_initial_phase1_schema_and_rls.py`:
+    - 8 Phase 1 tables: `tenants`, `users`, `assistants`, `memberships`, `conversations`, `messages`, `run_steps`, `audit_events`.
+    - All tables use UUID primary keys with PostgreSQL `gen_random_uuid()`.
+    - Composite foreign keys: `(tenant_id, parent_id) REFERENCES parent(tenant_id, id)` strictly preventing cross-tenant referencing.
+    - Check constraint on `memberships.role` allowing only `'client_admin'` and `'staff'`.
+    - Check constraint on `assistants` referencing `prompt_id` and `prompt_version` from `prompts/registry.yaml` (no `system_prompt` column).
+    - Invariant 10 telemetry schema on `run_steps`: contains only `status`, `model_id`, `model_version`, `prompt_id`, `prompt_version`, `evidence_ids: UUID[]`, `public_error_ref`; zero prompt, document, or message content columns.
+    - Enabled and forced Row-Level Security (`ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`) on every tenant table.
+    - Transaction-local RLS policy reading `NULLIF(current_setting('app.current_tenant_id', true), '')::uuid`, returning 0 rows without raising errors when unscoped.
+    - Restricted permissions: `app_user` has `SELECT, INSERT, UPDATE, DELETE` on operational tables but `INSERT` only on `audit_events`; `retriever_user` has `SELECT` only on tenant tables.
+  - Implemented SQLAlchemy 2.0 async models in `backend/app/db/models.py`.
+  - Implemented authorized session manager in `backend/app/db/session.py`:
+    - `tenant_session(tenant_ctx: TenantContext)`: the single authorized gateway to tenant tables, executing `SET LOCAL app.current_tenant_id = :tenant_id` within a transaction.
+    - `retriever_tenant_session(tenant_ctx: TenantContext)`: read-only tenant session bound to `retriever_user`.
+    - `unscoped_session()`: session for global bootstrap / tests only.
+  - Added boundary AST invariant test: `app/core/` importing `app.db` is strictly forbidden.
+  - Tested migration rollback (`downgrade base`) and re-application (`upgrade head`).
+- **Tests Added**:
+  - `backend/tests/integration/test_db_schema_and_rls.py` (14 comprehensive integration tests against PostgreSQL in Docker `cka-postgres`):
+    - Table existence and UUID primary keys across all 8 tables.
+    - Meta-test: every table is either tenant-scoped with forced RLS or in `GLOBAL_TABLE_ALLOWLIST` (including LangGraph checkpoint tables).
+    - Assistants schema lacks `system_prompt` and uses prompt registry references.
+    - `run_steps` schema carries zero content/prompt columns.
+    - `memberships.role` check constraint rejects unauthorized roles; `users.is_platform_admin` validated.
+    - Composite FKs reject cross-tenant parent-child references.
+    - Role privilege verification: `app_user` and `retriever_user` own 0 tables, are not superusers, and have `NOBYPASSRLS`.
+    - Unscoped queries return 0 rows without error under RLS.
+    - Tenant isolation: Tenant A cannot read, update, or delete Tenant B rows.
+    - Cross-tenant insertion blocked (Tenant A context cannot insert row with Tenant B `tenant_id`).
+    - Pooled connection leak test: consecutive transactions on the same pooled connection never leak tenant context.
+    - Retriever role is strictly read-only (insert/update/delete denied).
+    - `audit_events` insert-only policy: `app_user` can insert audit events, but update and delete are denied by PostgreSQL permission.
+  - Added `test_violation_core_imports_db` to `backend/tests/invariants/test_architecture_boundaries.py`.
+  - Total test suite: 66 passed (29 unit + 23 invariant + 14 integration).
+- **Decisions Made**:
+  - PostgreSQL container `cka-postgres` (`pgvector/pgvector:pg16`) established on port 5432 for local integration tests.
+  - Passwords managed via environment variables and bootstrap script, keeping migration files and repo green under secret scanning.
+  - Windows async psycopg requires `WindowsSelectorEventLoopPolicy` set at test runner and module entry points.
+- **Follow-up Pre-Commit Hardening**:
+  - `detect-secrets`:
+    - Removed dummy default `sqlalchemy.url` connection string from `backend/alembic.ini`. `env.py` builds the URL dynamically from environment variables.
+
+    - Added lightweight `.env` loader utility in `backend/app/db/env_utils.py` and called it in `migrations/env.py`, `session.py`, `bootstrap_db_roles.py`, and `tests/conftest.py`.
+    - Removed password literal `"hash"` in `tests/integration/test_db_schema_and_rls.py`; test now consumes `test_user_password_hash` fixture from `tests/conftest.py` backed by `TEST_USER_PASSWORD_HASH` environment variable.
+    - Scanned entire repository for password literals: removed dev password fallbacks from `docker-compose.yml`, `scripts/bootstrap_db_roles.py`, `backend/app/db/session.py`, and `backend/README.md`. Only `.env` holds actual values; `.env.example` holds empty placeholders.
+  - `mypy hook`:
+    - Replaced `mirrors-mypy` hook in `.pre-commit-config.yaml` with local system hook `uv --directory backend run mypy app tests` (`pass_filenames: false`, `always_run: true`). It runs within the project's virtualenv, resolving `sqlalchemy`, `pydantic`, `alembic`, and all test modules cleanly without isolated environment stub errors.
+  - Verification: `pre-commit run --all-files` passes 100% (10/10 hooks green, including `detect-secrets` and `mypy`). All 66 tests passing.
+- **Open Issues**:
+  - Platform Admin cross-tenant query topology documented in `docs/OPEN_QUESTIONS.md` (Item 2.1) for stakeholder review before Phase 5.

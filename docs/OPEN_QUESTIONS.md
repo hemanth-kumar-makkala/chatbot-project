@@ -38,6 +38,10 @@ This document tracks open architecture questions, closed items resolved by the u
 - **Status**: **CLOSED**
 - **Resolution**: Extraction is engineered as a separate subgraph (`extract_fields` → `dual_read_compare` → `classify_confidence` → `validate_fields`), invoked when Node 2 (`route`) routes to extraction. The extraction subgraph reuses Node 1 (`guard_input`) and Node 9 (`respond`). This keeps the primary 9-node knowledge query flow clean and enables graph contract tests to validate each graph independently.
 
+### 1.8 Tracer Execution Mode and Logging Topology
+- **Status**: **CLOSED**
+- **Resolution**: `Tracer` methods (`step_start`, `step_end`, `step_error`) are defined as asynchronous coroutines to persist execution step records (`run_steps`) to PostgreSQL. Operational logs (metadata only, no content) use standard Python logging outside `ports/`. By contract invariant, a tracing failure must never fail the request (fail-safe contract recorded in ADR-0004).
+
 ---
 
 ## 2. Active Open Decisions (Spec Lines 653–662)
@@ -51,6 +55,15 @@ The following items from the spec's "Open decisions" remain open and require sta
 - [ ] **Office LAN Model Server** (Spec line 659): Confirmation whether the office network permits using the desktop GPU PC as a model server for the 8 GB office PC (IT check).
 - [ ] **Production Auth Provider** (Spec line 660): Authentication in production: built-in hashed sessions vs Identity Platform (checking BAA coverage).
 - [ ] **Extraction Schemas** (Spec line 661): Formal JSON schemas for the initial set of PHI document types (intake faxes, prior auth forms, clinical records).
+
+### 2.1 Platform Admin Cross-Tenant Query Topology (Architecture Design)
+- **Status**: **DOCUMENTED / OPEN FOR STAKEHOLDER REVIEW**
+- **Context**: In Task 1.4a, `memberships.role` is restricted strictly to `client_admin` and `staff` via database check constraint. Platform administration is represented as `users.is_platform_admin` (boolean). All tenant table queries strictly require a `TenantContext` and execute `SET LOCAL app.current_tenant_id`, guaranteeing total RLS isolation.
+- **Question**: When platform administrators require operational telemetry or administrative reports across clients, what is the approved topology?
+  - *Option A (Tenant Switching)*: Platform admin explicitly assumes a specific client's tenant context; cross-tenant queries across multiple tenants simultaneously are disallowed.
+  - *Option B (Dedicated Admin Query Service)*: Out-of-band operational reporting reads de-identified run metrics using an unscoped reporting role.
+  - *Current Implementation*: Option A enforced — all application database queries against tenant tables require a valid `TenantContext`. Cross-tenant queries are blocked by RLS policies.
+
 
 ---
 

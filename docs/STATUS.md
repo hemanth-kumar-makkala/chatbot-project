@@ -5,10 +5,11 @@
 - **Phase 1**: Engine on Mock Profile (Active execution on 8 GB office PC with mock profile)
 
 ## Current Task
-- **Task 1.2**: Architecture import boundary enforcement rules (AST import analyzer verifying `backend/app/core/`, `app/ports/`, `app/adapters/`, and composition root boundaries) — **COMPLETED**
+- **Task 1.4a**: Database schema (Phase 1 tables), composite foreign keys, transaction-local PostgreSQL RLS policies, and non-superuser role privilege isolation (`app_user`, `retriever_user`) — **COMPLETED**
 
 ## Next Task
-- **Task 1.3**: Port interface definitions in `backend/app/ports/` (pure ABC interfaces for `ModelProvider`, `EmbeddingProvider`, `Reranker`, `DocumentParser`, `StorageBackend`, `JobQueue`, `AuthProvider`, `Tracer`, and `Retriever`)
+- **Task 1.4b**: Three log stores (operational logger with zero-content scrubbing, trace store `run_steps` with fail-safe contract, audit log `audit_events` with insert-only enforcement)
+
 
 ## Blockers
 - **None for Phase 1**: Phase 1 operates entirely on the `mock` profile with synthetic data on the 8 GB office PC (Docker memory capped at 3 GB).

@@ -27,15 +27,14 @@ repos:
         args: [--config=backend/pyproject.toml]
         files: ^backend/
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
-    hooks:
-      - id: mypy
-        args: [--config-file=backend/pyproject.toml]
-        files: ^backend/app/
-
   - repo: local
     hooks:
+      - id: mypy
+        name: mypy
+        entry: uv --directory backend run mypy app tests
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: boundary-invariants
         name: boundary-invariants
         entry: uv --directory backend run pytest tests/invariants

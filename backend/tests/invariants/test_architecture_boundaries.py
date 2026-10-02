@@ -34,6 +34,12 @@ class TestBoundaryCheckerSelfTests:
         assert len(violations) >= 1
         assert any("app.adapters" in v.message for v in violations)
 
+    def test_violation_core_imports_db(self) -> None:
+        code = "from app.db.models import Tenant\n"
+        violations = check_code_boundaries(code, "app/core/retrieval/engine.py")
+        assert len(violations) >= 1
+        assert any("app.db" in v.message or "unlisted package" in v.message for v in violations)
+
     def test_violation_core_imports_unlisted_vendor(self) -> None:
         code = "import requests\n"
         violations = check_code_boundaries(code, "app/core/retrieval/engine.py")
