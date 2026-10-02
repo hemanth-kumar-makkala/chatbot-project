@@ -114,6 +114,29 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Decisions Made**:
   - Explicitly anchored root data/model directories with leading slashes.
 
+---
 
+### [2026-10-02] Task 1.1: Pre-Commit Quality Checks, Tooling, and Python 3.12 Pinning
 
-
+- **Task ID**: Task 1.1
+- **What Was Built**:
+  - Configured project line endings: added `.gitattributes` enforcing `eol=lf` for all repository text files.
+  - Installed and pinned Python 3.12 via `uv` (`cpython-3.12.15-windows-x86_64-none`), creating virtual environment in `backend/.venv`.
+  - Configured `backend/pyproject.toml` with version ranges for `ruff`, `mypy`, `pytest`, `pre-commit`, and `detect-secrets`.
+  - Configured strict type checking in Mypy targeting `app.core.*` and `app.ports.*` (`disallow_untyped_defs = true`, `check_untyped_defs = true`).
+  - Configured Ruff with Python 3.12 target, 100 char line limit, and comprehensive lint rules (`E`, `W`, `F`, `I`, `B`, `C4`, `UP`, `ARG`, `SIM`).
+  - Generated and locked dependencies into `backend/uv.lock` via `uv lock`.
+  - Created `.pre-commit-config.yaml` at repo root with hooks:
+    - `trailing-whitespace`
+    - `end-of-file-fixer`
+    - `check-added-large-files` (`--maxkb=1000`)
+    - `detect-private-key`
+    - `mixed-line-ending` (`--fix=lf`)
+    - `detect-secrets` (excluding `uv.lock`)
+    - `ruff` and `ruff-format`
+    - `mypy`
+- **Tests Added**:
+  - Validated via direct execution of acceptance check suite (`uv run python --version`, `uv lock --check`, `uv run ruff check .`, `uv run mypy app`, `uv run pytest`, `pre-commit run --all-files`).
+- **Decisions Made**:
+  - Kept version ranges in `pyproject.toml` and pinned exact hashes in `uv.lock`.
+  - Configured `backend/app` package packaging via Hatchling.
