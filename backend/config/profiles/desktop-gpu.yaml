@@ -1,0 +1,15 @@
+# Runtime Profile: desktop-gpu (Default profile for real-model work)
+# Hardware: Intel Core i7-12700F, 32 GB RAM, NVIDIA RTX 3050 6 GB
+# Model setup: Single multimodal model (qwen3-vl:4b) for answer and vision roles to fit 6 GB VRAM;
+# embeddings and reranker offloaded to CPU.
+profile: desktop-gpu
+models:
+  router:  { provider: ollama, model: "qwen3-vl:4b" }
+  answer:  { provider: ollama, model: "qwen3-vl:4b" }
+  vision:  { provider: ollama, model: "qwen3-vl:4b" }
+  extract: { provider: ollama, model: "qwen3-vl:4b" }
+  judge:   { provider: ollama, model: "qwen2.5:3b" }
+embeddings: { provider: local, model: "BAAI/bge-m3", device: cpu }
+reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
+storage:    { backend: local, path: ./data/files }
+queue:      { backend: procrastinate }

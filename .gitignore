@@ -1,0 +1,92 @@
+# 1. Secrets
+.env
+.env.*
+.env.local
+!.env.example
+
+# 2. Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env-py/
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# 3. Node and Next.js
+node_modules/
+web/node_modules/
+.next/
+web/.next/
+out/
+web/out/
+.npm/
+.yarn/
+.turbo/
+
+# 4. Runtime Data & Storage (anchored to root)
+/data/
+/uploads/
+/backend/data/
+/postgres_data/
+*.sqlite
+*.sqlite3
+*.db
+
+# 5. AI Models and Caches (anchored to root)
+/models/
+.cache/
+/huggingface/
+/.huggingface/
+/ollama_models/
+*.bin
+*.onnx
+*.safetensors
+*.gguf
+*.pt
+*.pth
+
+# 6. Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 7. Tool State & Local Infrastructure
+.langgraph/
+.langgraph_api/
+.langsmith/
+langfuse_data/
+docker_volumes/
+
+# 8. OS and Editor Clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

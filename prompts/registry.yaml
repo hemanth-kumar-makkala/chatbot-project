@@ -1,0 +1,126 @@
+# Central Versioned Prompt Registry
+# Invariant & Audit Rule: Every model invocation must reference an explicit prompt ID and version.
+# Format: <prompt_id> -> versions -> <version_string> -> {role, description, template, response_schema}
+
+version: "1.0.0"
+
+prompts:
+  router_classify:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "router"
+        description: "Classify incoming user query into route (knowledge vs general) and answer mode (exact, short, explain, table)."
+        template: |
+          You are the query router for a client knowledge assistant.
+          Analyze the user question and determine the appropriate route and answer mode.
+          Question: {question}
+          Output JSON matching the required schema.
+        response_schema:
+          type: "object"
+          properties:
+            route:
+              type: "string"
+              enum: ["knowledge", "general"]
+            answer_mode:
+              type: "string"
+              enum: ["exact", "short", "explain", "table"]
+            language:
+              type: "string"
+          required: ["route", "answer_mode", "language"]
+
+  answer_synthesis:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "answer"
+        description: "Synthesize answer strictly from validated evidence chunks. Returns structured JSON."
+        template: |
+          You are an assistant answering solely based on the provided evidence.
+          Do NOT extrapolate, assume, or invent facts. If the evidence is insufficient, state refusal.
+          Mode: {mode}
+          Target Language: {language}
+          Evidence:
+          {evidence_context}
+
+          Question: {question}
+          Output strictly as JSON matching the schema.
+        response_schema:
+          type: "object"
+          properties:
+            mode:
+              type: "string"
+            answer:
+              type: "string"
+            evidence_ids:
+              type: "array"
+              items:
+                type: "string"
+            quoted_span:
+              type: "string"
+            evidence_type:
+              type: "string"
+              enum: ["text", "visual", "table"]
+          required: ["mode", "answer", "evidence_ids", "evidence_type"]
+
+  vision_read_page:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "vision"
+        description: "Read scanned or image-heavy document page to answer question or extract text."
+        template: |
+          Examine the attached page image carefully.
+          Question: {question}
+          Transcribe visible text relevant to the question and provide a direct factual answer.
+          State clearly if the target region is illegible or unreadable.
+        response_schema:
+          type: "object"
+          properties:
+            answer:
+              type: "string"
+            transcription:
+              type: "string"
+            confidence:
+              type: "string"
+              enum: ["high", "medium", "low", "unreadable"]
+          required: ["answer", "confidence"]
+
+  extract_phi_fields:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "extract"
+        description: "Extract structured fields from uploaded PHI document against schema."
+        template: |
+          Extract required fields from the document image according to the schema provided.
+          For each field, assign an explicit state: FILLED_HIGH, FILLED_MEDIUM, CONFLICTING, UNREADABLE, INVALID, NOT_PRESENT, NOT_APPLICABLE.
+          Schema:
+          {field_schema}
+        response_schema:
+          type: "object"
+          properties:
+            fields:
+              type: "object"
+          required: ["fields"]
+
+  eval_judge_faithfulness:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "judge"
+        description: "Score faithfulness of generated answer against ground truth evidence."
+        template: |
+          Evaluate whether every claim in the answer is directly supported by the provided evidence.
+          Question: {question}
+          Evidence: {evidence}
+          Answer: {answer}
+          Rate faithfulness from 0.0 to 1.0 with justification.
+        response_schema:
+          type: "object"
+          properties:
+            score:
+              type: "number"
+            reasoning:
+              type: "string"
+          required: ["score", "reasoning"]

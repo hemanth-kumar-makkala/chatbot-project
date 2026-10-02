@@ -1,0 +1,14 @@
+# Runtime Profile: home-gpu
+# Hardware: RTX 3060 12 GB VRAM
+# Model setup: Generation models fit within 12 GB VRAM; embeddings and reranker on CPU
+profile: home-gpu
+models:
+  router:  { provider: ollama, model: "qwen2.5:7b" }
+  answer:  { provider: ollama, model: "qwen2.5:7b" }
+  vision:  { provider: ollama, model: "qwen2-vl:7b" }
+  extract: { provider: ollama, model: "qwen2-vl:7b" }
+  judge:   { provider: ollama, model: "llama3.1:8b" }
+embeddings: { provider: local, model: "BAAI/bge-m3", device: cpu }
+reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
+storage:    { backend: local, path: ./data/files }
+queue:      { backend: procrastinate }

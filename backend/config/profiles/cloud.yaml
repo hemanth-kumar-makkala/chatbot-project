@@ -1,0 +1,13 @@
+# Runtime Profile: cloud (GCP Production/Staging under BAA)
+# Target: Cloud Run, Vertex AI (BAA covered), Cloud SQL pgvector, Cloud Storage
+profile: cloud
+models:
+  router:  { provider: vertex, model: "gemini-1.5-flash-002" }
+  answer:  { provider: vertex, model: "gemini-1.5-pro-002" }
+  vision:  { provider: vertex, model: "gemini-1.5-pro-002" }
+  extract: { provider: vertex, model: "gemini-1.5-pro-002" }
+  judge:   { provider: vertex, model: "gemini-1.5-pro-002" }
+embeddings: { provider: vertex, model: "text-embedding-004", dimension: 768 }
+reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
+storage:    { backend: gcs, bucket: "${GCS_STORAGE_BUCKET}" }
+queue:      { backend: procrastinate }
