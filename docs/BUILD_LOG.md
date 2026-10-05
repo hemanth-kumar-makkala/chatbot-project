@@ -631,3 +631,20 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Phase 1 marked complete in `docs/STATUS.md` and ready for Phase 2 ("Ingestion Pipeline").
 - **Open Issues**:
   - None. Ready for Task 2.1.
+
+---
+
+### [2026-10-05] Hotfix: Editor Pyrefly Configuration for StateGraph Specialization
+
+- **Issue**:
+  - The Pyrefly language extension flagged LangGraph's internal `StateT` bound protocol on `TypedDict` schemas with `[bad-specialization]` in `backend/app/core/graph.py` and `backend/app/wiring.py`.
+- **Resolution**:
+  - Reverted all source code changes in `app/core/graph.py` and `app/wiring.py`. Mypy is the sole type authority for the project; Python source types are never weakened to satisfy editor extensions.
+  - Handled via configuration and documentation only:
+    - Added `[tool.pyrefly.errors] bad-specialization = false` to `backend/pyproject.toml`.
+    - Documented in `backend/README.md` under "Type Checking & Editor Diagnostics" that `mypy` is the type authority, detailing the Pyrefly configuration and option to disable the extension in favour of Mypy.
+- **Verification**:
+  - `mypy app tests`: 0 issues found in 60 source files.
+  - `pyrefly check backend/app`: 0 errors.
+  - Full test suite: 148 passed.
+  - Pre-commit: all 10 hooks passed.

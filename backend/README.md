@@ -88,3 +88,15 @@ In the LangGraph Studio UI under the **Input** pane, select the `knowledge_assis
    - `evidence_ids`: `["chunk-syn-001"]`
    - `public_error_ref`: `null`
    - Duration: < 100ms
+
+---
+
+## Type Checking & Editor Diagnostics
+
+`mypy` is the sole type authority for this codebase. Strict type checking is enforced across `app.core.*` and `app.ports.*` via:
+```bash
+cd backend
+uv run mypy app tests
+```
+
+If using an IDE extension such as Pyrefly (`meta.pyrefly`), note that Pyrefly's protocol solver flags LangGraph's internal `StateT` bound protocol on `TypedDict` schemas (`[bad-specialization]`). This false positive is disabled at the project configuration level in `backend/pyproject.toml` via `[tool.pyrefly.errors] bad-specialization = false`. Alternatively, developers may disable the Pyrefly extension in VS Code / Antigravity IDE for this workspace in favour of Mypy. Python source types are never weakened to satisfy editor extensions.
