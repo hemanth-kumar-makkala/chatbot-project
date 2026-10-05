@@ -398,3 +398,60 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Used `AsyncConnectionPool(..., kwargs={"autocommit": True})` for postgres checkpointer to accommodate `CREATE INDEX CONCURRENTLY` in LangGraph migrations.
 - **Open Issues**:
   - None. Clean pass across pytest (106 passed in 2.82s), ruff, mypy, and all 10 pre-commit hooks.
+
+---
+
+### [2026-10-02] Task 1.7: LangGraph Studio Setup for Local Debugging
+
+- **Task ID**: Task 1.7
+- **What Was Built**:
+  - Configured LangGraph Studio setup for local, visual node-by-node debugging of the 9-node knowledge graph on the mock profile with zero cloud telemetry egress:
+    - **Single Configuration Point (`langgraph.json`)**:
+      - Retained single root `langgraph.json` pointing to `./backend/studio/entry.py:make_studio_graph` and removed duplicate `backend/langgraph.json`.
+    - **Dedicated Studio Entrypoint (`backend/studio/entry.py`)**:
+      - Separated all Studio-specific helpers cleanly away from production composition wiring (`backend/app/wiring.py`).
+      - Created `make_studio_graph()` factory function compiling the knowledge StateGraph with an in-memory checkpointer (`MemorySaver`).
+      - Created `StudioCompiledGraph` (subclass of `CompiledStateGraph`) providing synthetic healthcare default context (`get_default_studio_context()`) with `MockModelProvider` and `MockRetriever` whenever `context is None` (the Studio UI default invocation mode), while preserving user-provided context when passed explicitly.
+      - Overrode `copy(update=...)` and added default `thread_id` generation in `_ensure_config` to ensure LangGraph server internal graph cloning preserves the subclass wrapper.
+    - **Zero-Content Checkpoint & Answer Text Isolation**:
+      - Removed `response_payload` completely from `GraphState`. Answer text lives strictly in unpersisted `GraphRuntimeContext.response_text`; `GraphState` retains only `response_message_id`.
+      - Isolated extraction field values to `GraphRuntimeContext.extracted_fields`, storing only `extracted_field_ids` in `GraphState`.
+      - Extended in-memory and PostgreSQL checkpointer invariant tests to assert `ALLOWED_CONTROL_KEYS`, ban answer content, ban free-text sentences across state channels, and confirm test catches `response_payload`.
+    - **Untrusted Input State Protection**:
+      - `node_guard_input` enforces `tenant_id` from `runtime.context.tenant` exclusively and initializes `status = "in_progress"`, rejecting forged caller `tenant_id` and `status`.
+      - `node_route` computes `route` and `answer_mode` dynamically from question context or mock context forcing (`forced_route`, `forced_answer_mode`), ignoring caller input state.
+      - `node_assess_evidence` computes `evidence_state` dynamically from retrieved evidence and mock context triggers (`ports.mock_evidence_state`), ignoring caller input state.
+      - Studio and mock tests may force execution paths exclusively via runtime mock context, never via input state.
+    - **Pure Production Wiring (`backend/app/wiring.py`)**:
+      - Verified production wiring contains zero monkeypatching or developer shims; serves strictly as the application composition root.
+    - **Architectural Decision Record (`docs/decisions/ADR-0006-langgraph-studio-debugging.md`)**:
+      - Formally documented why `StudioCompiledGraph` is required: LangGraph Studio UI only exposes inputs for graph state channels and configuration, not runtime context dataclasses (`GraphRuntimeContext`).
+    - **Telemetry Scrubbing & Zero Egress**:
+      - Enforced `LANGSMITH_TRACING=false` in `.env` and `.env.example`.
+    - **Documentation**:
+      - Updated `backend/README.md` with exact start command (`uv run --project backend langgraph dev`), sample JSON payload, and expected zero-content state output.
+- **Tests Added**:
+  - `backend/tests/unit/test_langgraph_config.py` (8 unit tests):
+    - `langgraph.json` exists at root, specifies python 3.12, dependencies, and valid graph entrypoint; confirms duplicate in `backend/` does not exist.
+    - `LANGSMITH_TRACING` is set to `false` in `.env` and `.env.example`.
+    - Production `app/wiring.py` defines `build_app_graph` without monkeypatching.
+    - `make_studio_graph()` produces valid graph with in-memory checkpointer.
+    - Studio graph provides default mock context when `context` is omitted.
+    - Studio graph preserves explicit context when provided.
+    - Studio graph executes full run end-to-end to `status: answered`.
+  - `backend/tests/unit/test_graph_contracts.py` (added 6 tests / updated):
+    - Extended `test_checkpoint_state_and_metadata_contains_zero_content_memory_saver` inspecting `ALLOWED_CONTROL_KEYS`, banning answer content, and rejecting free text in state channels.
+    - `test_zero_content_inspection_catches_free_text_and_response_payload`: confirms validator detects answer content and `response_payload`.
+    - `TestUntrustedInputProtection`:
+      - `test_caller_forged_tenant_id_overwritten_by_tenant_context`
+      - `test_caller_forged_route_and_answer_mode_overwritten`
+      - `test_caller_forged_evidence_state_overwritten_by_assess_evidence`
+      - `test_caller_forged_status_overwritten_by_guard_input`
+      - `test_studio_forcing_paths_via_mock_context_only`
+  - Total test suite: 120 passed in 3.10s (unit, integration, and invariants).
+- **Decisions Made**:
+  - Adopted ADR-0006 (`docs/decisions/ADR-0006-langgraph-studio-debugging.md`).
+  - Retained single `langgraph.json` at root directory.
+  - Removed `response_payload` from `GraphState` in favor of `response_message_id`.
+- **Open Issues**:
+  - None. Clean pass across full pytest suite (120 passed in 3.10s), ruff, mypy, and all 10 pre-commit hooks.

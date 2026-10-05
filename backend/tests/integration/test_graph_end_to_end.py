@@ -62,16 +62,13 @@ class TestGraphEndToEndPaths:
 
     async def test_e2e_visual_answer(self, base_state: GraphState) -> None:
         """Path 2: Visual required evidence -> vision read -> generate -> validated."""
-        ports = GraphPorts(mock_vision_mode="ok")
+        ports = GraphPorts(mock_vision_mode="ok", mock_evidence_state="VISUAL_REQUIRED")
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="What is the fax number in the scan?",
             evidence_text={"v1": "Fax: 555-0199"},
         )
         state = dict(base_state)
-        state["route"] = "knowledge"
-        state["evidence_state"] = "VISUAL_REQUIRED"
-        state["needs_vision"] = True
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)
@@ -87,7 +84,6 @@ class TestGraphEndToEndPaths:
             question_text="Hello, how can you help me today?",
         )
         state = dict(base_state)
-        state["route"] = "general"
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)
@@ -99,9 +95,12 @@ class TestGraphEndToEndPaths:
     async def test_e2e_clarify(self, base_state: GraphState) -> None:
         """Path 4: Vague question -> clarify with top 3 grounded titles."""
         ports = GraphPorts(mock_titles=["Prior Authorization", "Intake Workflow", "Referrals"])
-        ctx = GraphRuntimeContext(ports=ports, question_text="Help with form")
+        ctx = GraphRuntimeContext(
+            ports=ports,
+            question_text="Help with form",
+            forced_route="clarify",
+        )
         state = dict(base_state)
-        state["route"] = "clarify"
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)
@@ -116,20 +115,21 @@ class TestGraphEndToEndPaths:
             ports=ports,
             question_text="Extract fields from intake form",
             raw_document_bytes=b"\x89PNG\r\n\x1a\nfakeimage",
+            forced_route="extraction",
         )
         state = dict(base_state)
-        state["route"] = "extraction"
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)
 
         assert result["status"] in ("extracted", "completed")
         assert result["route"] == "extraction"
-        assert "extracted_fields" in result
+        assert "extracted_field_ids" in result
+        assert ctx.extracted_fields != {}
 
     async def test_e2e_conflicting_evidence(self, base_state: GraphState) -> None:
         """Path 6: Conflicting evidence detected at gate -> respond with both sources."""
-        ports = GraphPorts()
+        ports = GraphPorts(mock_evidence_state="CONFLICTING")
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="Copay rate",
@@ -139,7 +139,6 @@ class TestGraphEndToEndPaths:
             },
         )
         state = dict(base_state)
-        state["evidence_state"] = "CONFLICTING"
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)

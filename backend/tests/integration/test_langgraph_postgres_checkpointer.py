@@ -42,14 +42,15 @@ class TestLangGraphPostgresCheckpointer:
 
             graph = build_knowledge_graph().compile(checkpointer=checkpointer)
 
-            question_secret = f"SecretQuestion_{uuid4()}"
-            evidence_secret = f"SecretDocumentEvidence_{uuid4()}"
+            question_probe = f"SyntheticQuestion_{uuid4()}"
+            evidence_probe = f"SyntheticDocumentEvidence_{uuid4()}"
+            answer_probe = "Generated answer grounded in evidence"
 
             # Sensitive text lives strictly in GraphRuntimeContext, not in GraphState
             runtime_ctx = GraphRuntimeContext(
                 ports=GraphPorts(),
-                question_text=question_secret,
-                evidence_text={"c1": evidence_secret},
+                question_text=question_probe,
+                evidence_text={"c1": evidence_probe},
             )
 
             thread_id = f"thread_{uuid4()}"
@@ -72,6 +73,8 @@ class TestLangGraphPostgresCheckpointer:
             config = RunnableConfig(configurable={"thread_id": thread_id})
             result = await graph.ainvoke(initial_state, config=config, context=runtime_ctx)
             assert result["status"] in ("answered", "completed")
+            assert result.get("response_message_id") is not None
+            assert "response_payload" not in result
 
             # Inspect all checkpoints written to PostgreSQL for this thread
             checkpoints_found = 0
@@ -82,22 +85,31 @@ class TestLangGraphPostgresCheckpointer:
 
                 # 1. State channels check
                 channel_values = checkpoint.get("channel_values", {})
+                assert "response_payload" not in channel_values, (
+                    "response_payload must never be stored in Postgres checkpoint channels"
+                )
                 for key, val in channel_values.items():
                     val_str = str(val)
-                    assert question_secret not in val_str, (
+                    assert question_probe not in val_str, (
                         f"Secret question leaked into PostgreSQL checkpoint channel '{key}'"
                     )
-                    assert evidence_secret not in val_str, (
+                    assert evidence_probe not in val_str, (
                         f"Secret evidence leaked into PostgreSQL checkpoint channel '{key}'"
+                    )
+                    assert answer_probe not in val_str, (
+                        f"Answer text leaked into PostgreSQL checkpoint channel '{key}'"
                     )
 
                 # 2. Metadata check
                 meta_str = str(metadata)
-                assert question_secret not in meta_str, (
+                assert question_probe not in meta_str, (
                     "Secret question leaked into PostgreSQL checkpoint metadata"
                 )
-                assert evidence_secret not in meta_str, (
+                assert evidence_probe not in meta_str, (
                     "Secret evidence leaked into PostgreSQL checkpoint metadata"
+                )
+                assert answer_probe not in meta_str, (
+                    "Answer text leaked into PostgreSQL checkpoint metadata"
                 )
 
             assert checkpoints_found > 0, "Expected at least one checkpoint recorded in PostgreSQL"

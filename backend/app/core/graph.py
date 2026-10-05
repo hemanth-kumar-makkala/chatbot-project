@@ -36,6 +36,8 @@ from app.ports.types import (
     StepEndPayload,
     StepErrorPayload,
     StepStartPayload,
+    TenantContext,
+    UserRole,
 )
 
 # --- 1. Graph State & Runtime Context ---
@@ -58,8 +60,11 @@ class GraphState(TypedDict, total=False):
     validation_attempts: int
     status: str
     public_error_ref: str | None
-    extracted_fields: dict[str, Any] | None
-    response_payload: str | None
+    extracted_field_ids: list[str] | None
+    dual_read_matches: bool | None
+    confidence_score: float | None
+    fields_valid: bool | None
+    response_message_id: str | None
 
 
 @dataclass
@@ -75,6 +80,7 @@ class GraphPorts:
     mock_vector_down: bool = False
     mock_keyword_down: bool = False
     mock_reranker_down: bool = False
+    mock_evidence_state: str | None = None
     mock_titles: list[str] = field(default_factory=list)
     force_non_retryable_error: bool = False
     force_infinite_loop: bool = False
@@ -85,9 +91,21 @@ class GraphRuntimeContext:
     """Request-scoped runtime context holding ports and content payloads (unpersisted)."""
 
     ports: GraphPorts
+    tenant: TenantContext = field(
+        default_factory=lambda: TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-synthetic",
+            role=UserRole.STAFF,
+            session_id="session-synthetic",
+        )
+    )
     question_text: str = ""
     evidence_text: dict[str, str] = field(default_factory=dict)
     raw_document_bytes: bytes = b""
+    response_text: str = ""
+    forced_route: str | None = None
+    forced_answer_mode: str | None = None
+    extracted_fields: dict[str, Any] = field(default_factory=dict)
 
 
 # --- 2. Telemetry Node Wrapper ---
@@ -159,13 +177,37 @@ async def node_guard_input(
         if ports.force_non_retryable_error:
             raise MalformedOutput("Injected non-retryable error")
 
+        tenant_ctx = runtime.context.tenant
+        if not tenant_ctx or not tenant_ctx.tenant_id:
+            return {
+                "tenant_id": "",
+                "status": "refusal",
+                "public_error_ref": "ERR-UNAUTHORIZED-TENANT",
+            }
+
+        tenant_id = tenant_ctx.tenant_id
+
         q = runtime.context.question_text
         if len(q) > 4000:
-            return {"status": "refusal", "public_error_ref": "ERR-INPUT-TOO-LONG"}
+            return {
+                "tenant_id": tenant_id,
+                "status": "refusal",
+                "public_error_ref": "ERR-INPUT-TOO-LONG",
+            }
         # Basic injection keywords
         if "ignore previous instructions" in q.lower():
-            return {"status": "refusal", "public_error_ref": "ERR-PROMPT-INJECTION"}
-        return {"status": "in_progress"}
+            return {
+                "tenant_id": tenant_id,
+                "status": "refusal",
+                "public_error_ref": "ERR-PROMPT-INJECTION",
+            }
+
+        # Invariant: status is initialized by guard_input, never trusting caller-supplied status.
+        # Invariant: tenant_id comes only from runtime context's TenantContext.
+        return {
+            "tenant_id": tenant_id,
+            "status": "in_progress",
+        }
 
     return await _execute_with_telemetry("guard_input", 1, state, runtime, _action)
 
@@ -175,19 +217,41 @@ async def node_route(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        route = state.get("route", "knowledge")
-        answer_mode = state.get("answer_mode", "short")
+        # Never trust caller-supplied route or answer_mode from state.
+        # Always compute route and answer_mode directly or from mock context.
+        ctx = runtime.context
+        q = ctx.question_text.lower()
 
-        if route == "clarify":
+        if ctx.forced_route:
+            computed_route = ctx.forced_route
+        elif any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
+            computed_route = "extraction"
+        elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
+            computed_route = "clarify"
+        elif any(k in q for k in ("hello", "who are you", "help", "system status", "general")):
+            computed_route = "general"
+        else:
+            computed_route = "knowledge"
+
+        if ctx.forced_answer_mode:
+            computed_mode = ctx.forced_answer_mode
+        elif any(k in q for k in ("detailed", "comprehensive", "in depth", "elaborate", "long")):
+            computed_mode = "long"
+        else:
+            computed_mode = "short"
+
+        if computed_route == "clarify":
             ports = runtime.context.ports
             titles = ports.mock_titles or ["General Guide", "Policy Document"]
+            ctx.response_text = f"Please clarify. Top matching topics: {', '.join(titles)}"
             return {
                 "route": "clarify",
+                "answer_mode": computed_mode,
                 "status": "clarify",
-                "response_payload": f"Please clarify. Top matching topics: {', '.join(titles)}",
+                "response_message_id": str(uuid4()),
             }
 
-        return {"route": route, "answer_mode": answer_mode}
+        return {"route": computed_route, "answer_mode": computed_mode}
 
     return await _execute_with_telemetry("route", 2, state, runtime, _action)
 
@@ -233,16 +297,42 @@ async def node_assess_evidence(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        ev_state = state.get("evidence_state", "RELIABLE_TEXT")
+        # Never trust caller-supplied evidence_state from state.
+        # Always compute evidence_state strictly from retrieved evidence and mock context triggers.
         ev_ids = state.get("evidence_ids", [])
+        evidence_dict = runtime.context.evidence_text
+        ports = runtime.context.ports
 
-        if not ev_ids or ev_state == "NO_EVIDENCE":
-            return {"evidence_state": "NO_EVIDENCE", "status": "refusal"}
-        if ev_state == "WEAK":
-            return {"evidence_state": "WEAK", "status": "refusal"}
-        if ev_state == "CONFLICTING":
-            return {"evidence_state": "CONFLICTING", "status": "conflicting"}
-        if ev_state == "VISUAL_REQUIRED" or state.get("needs_vision"):
+        if ports.mock_evidence_state:
+            computed_ev_state = ports.mock_evidence_state
+        elif not ev_ids or not evidence_dict:
+            computed_ev_state = "NO_EVIDENCE"
+        else:
+            combined_evidence = " ".join(evidence_dict.values()).lower()
+            if "conflict" in combined_evidence or any("conflict" in k for k in evidence_dict):
+                computed_ev_state = "CONFLICTING"
+            elif "weak" in combined_evidence or any("weak" in k for k in evidence_dict):
+                computed_ev_state = "WEAK"
+            elif (
+                "visual" in combined_evidence
+                or any("visual" in k for k in evidence_dict)
+                or ports.mock_vision_mode != "ok"
+            ):
+                computed_ev_state = "VISUAL_REQUIRED"
+            else:
+                computed_ev_state = "RELIABLE_TEXT"
+
+        if computed_ev_state == "NO_EVIDENCE":
+            return {"evidence_state": "NO_EVIDENCE", "status": "refusal", "needs_vision": False}
+        if computed_ev_state == "WEAK":
+            return {"evidence_state": "WEAK", "status": "refusal", "needs_vision": False}
+        if computed_ev_state == "CONFLICTING":
+            return {
+                "evidence_state": "CONFLICTING",
+                "status": "conflicting",
+                "needs_vision": False,
+            }
+        if computed_ev_state == "VISUAL_REQUIRED":
             return {"evidence_state": "VISUAL_REQUIRED", "needs_vision": True}
         return {"evidence_state": "RELIABLE_TEXT", "needs_vision": False}
 
@@ -286,7 +376,8 @@ async def node_generate(
             )
             content = resp.content
 
-        return {"response_payload": content, "status": "in_progress"}
+        runtime.context.response_text = content
+        return {"response_message_id": str(uuid4()), "status": "in_progress"}
 
     return await _execute_with_telemetry("generate", 7, state, runtime, _action)
 
@@ -336,10 +427,11 @@ async def node_safe_failure(
     async def _action() -> dict[str, Any]:
         err_ref = state.get("public_error_ref") or f"ERR-{uuid4().hex[:6].upper()}"
         msg = f"An error occurred. Please contact support quoting reference {err_ref}."
+        runtime.context.response_text = msg
         return {
             "status": "safe_failure",
             "public_error_ref": err_ref,
-            "response_payload": msg,
+            "response_message_id": str(uuid4()),
         }
 
     return await _execute_with_telemetry("safe_failure", None, state, runtime, _action)
@@ -352,8 +444,9 @@ async def node_extract_fields(
     state: GraphState,
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
-    _ = (state, runtime)
-    return {"extracted_fields": {"patient_name": "John Doe", "dob": "1980-01-01"}}
+    _ = state
+    runtime.context.extracted_fields = {"patient_name": "John Doe", "dob": "1980-01-01"}
+    return {"extracted_field_ids": ["field_patient_name", "field_dob"]}
 
 
 async def node_dual_read_compare(
@@ -395,7 +488,7 @@ def _route_from_route(state: GraphState) -> str:
         return "generate"
     if r == "clarify":
         return "respond"
-    if r == "extraction":
+    if r in ("extraction", "extract"):
         return "extraction_subgraph"
     return "retrieve"
 
@@ -540,7 +633,6 @@ async def invoke_graph(
         failure_state = dict(state)
         failure_state["status"] = "safe_failure"
         failure_state["public_error_ref"] = err_ref
-        failure_state["response_payload"] = (
-            f"An error occurred ({type(exc).__name__}). Reference: {err_ref}"
-        )
+        failure_state["response_message_id"] = str(uuid4())
+        context.response_text = f"An error occurred ({type(exc).__name__}). Reference: {err_ref}"
         return cast(GraphState, failure_state)

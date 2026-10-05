@@ -46,3 +46,45 @@ uv run alembic upgrade head
   ```bash
   uv run pytest tests/integration
   ```
+
+---
+
+## LangGraph Studio (Local Visual Debugging)
+
+LangGraph Studio provides visual, node-by-node debugging of the 9-node knowledge graph on the mock profile with zero cloud telemetry egress (`LANGSMITH_TRACING=false` and in-memory checkpointing via `MemorySaver`).
+
+### 1. Start Studio Dev Server
+From the repository root:
+```bash
+uv run --project backend langgraph dev
+```
+
+Output should show:
+```
+- Ready!
+- API: http://127.0.0.1:2024
+- Docs: http://127.0.0.1:2024/docs
+- Studio: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+*(Open the Studio URL in your browser. No data leaves your machine; the web client communicates directly with your local server at `http://127.0.0.1:2024`)*.
+
+### 2. Send a Test Question
+In the LangGraph Studio UI under the **Input** pane, select the `knowledge_assistant` graph and submit the following JSON state:
+```json
+{
+  "request_id": "11111111-1111-1111-1111-111111111111",
+  "status": "pending"
+}
+```
+*(Note: Per architecture security invariants, `tenant_id`, `route`, `answer_mode`, and `evidence_state` are computed and verified by the engine from the authenticated session context and evidence, never trusted from input state).*
+
+### 3. What You Should See
+1. **Interactive Graph Topology**: The Studio canvas displays the 9 primary nodes (`guard_input`, `route`, `retrieve`, `rerank`, `assess_evidence`, `vision_read`, `generate`, `validate`, `respond`) along with the fallback node `safe_failure`.
+2. **Step-by-Step Execution Sequence**: The run highlights each active node sequentially:
+   `guard_input` &rarr; `route` &rarr; `retrieve` &rarr; `rerank` &rarr; `assess_evidence` &rarr; `generate` &rarr; `validate` &rarr; `respond`
+3. **Execution Completion & State Output (Zero Content)**:
+   - `status`: `"answered"`
+   - `response_message_id`: `<uuid>` *(State holds message and entity IDs only; zero answer or prompt text is ever persisted to checkpoints)*
+   - `evidence_ids`: `["chunk-syn-001"]`
+   - `public_error_ref`: `null`
+   - Duration: < 100ms

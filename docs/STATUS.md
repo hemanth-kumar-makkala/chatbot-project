@@ -5,10 +5,10 @@
 - **Phase 1**: Engine on Mock Profile (Active execution on 8 GB office PC with mock profile)
 
 ## Current Task
-- **Task 1.6**: LangGraph 9-node knowledge StateGraph, extraction subgraph, and contract tests — **COMPLETED**
+- **Task 1.7**: LangGraph Studio setup for local visual debugging (`langgraph.json`, dedicated entrypoint, zero telemetry egress) — **COMPLETED**
 
 ## Next Task
-- **Task 1.7**: Wire full app on mock profile (FastAPI application factory, wiring container, health endpoint, Phase 1 exit gate)
+- **Task 1.8**: Fallback Table Failure-Mode Test Suite (or next Phase 1 task per build plan)
 
 
 

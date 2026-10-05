@@ -1,0 +1,8 @@
+{
+  "dependencies": ["./backend"],
+  "graphs": {
+    "knowledge_assistant": "./backend/studio/entry.py:make_studio_graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

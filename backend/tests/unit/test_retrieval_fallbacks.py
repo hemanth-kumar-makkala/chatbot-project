@@ -111,15 +111,20 @@ class TestRetrievalFallbacks:
     ) -> None:
         titles = ["Office Guidelines", "Billing Schedule", "Referral Protocol"]
         ports = GraphPorts(mock_titles=titles)
-        ctx = GraphRuntimeContext(ports=ports, question_text="Vague question")
+        ctx = GraphRuntimeContext(
+            ports=ports,
+            question_text="Vague question",
+            forced_route="clarify",
+        )
 
         clarify_state = dict(base_state)
-        clarify_state["route"] = "clarify"
 
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(clarify_state, context=ctx)
 
         assert result["status"] == "clarify"
         assert result["route"] == "clarify"
-        # Grounded titles must be present in response
-        assert "Office Guidelines" in str(result.get("response_payload", ""))
+        assert result.get("response_message_id") is not None
+        assert "response_payload" not in result
+        # Grounded titles must be present in response_text in runtime context
+        assert "Office Guidelines" in ctx.response_text
