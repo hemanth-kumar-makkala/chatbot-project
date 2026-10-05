@@ -603,3 +603,31 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `git add -A` followed by `pre-commit run --all-files` is now a mandatory protocol in `AGENTS.md`.
 - **Open Issues**:
   - None for Phase 1.
+
+---
+
+### [2026-10-05] Task 1.9: Phase 1 Close-out, Gate Verification Report, and GitHub Actions CI
+
+- **Task ID**: Task 1.9
+- **What Was Built**:
+  - **Phase 1 Gate Verification Report (`docs/phases/PHASE-1-GATE.md`)**:
+    - Comprehensive mapping of all 15 architecture invariants to automated tests across unit, integration, and invariant suites.
+    - Comprehensive mapping of all 13 failure modes in `docs/FAILURE_MODES.md` to automated tests.
+    - Verified zero gaps in Phase 1 scope; confirmed Phase 1 exit gate is passed.
+  - **GitHub Actions CI Workflow (`.github/workflows/ci.yml`)**:
+    - Triggers on push and pull requests targeting branch `main`.
+    - Leverages Python 3.12 with `astral-sh/setup-uv@v5` and lockfile caching (`backend/uv.lock`).
+    - Runs full pre-commit checks on all files (`uv --directory backend run pre-commit run --all-files`).
+    - Spawns a PostgreSQL service container running `pgvector/pgvector:pg17`.
+    - Bootstraps roles (`scripts/bootstrap_db_roles.py`) and runs Alembic migrations (`alembic upgrade head`).
+    - Executes the complete test suite (148 tests) including all integration tests against the live pgvector container.
+    - Uses only throwaway, non-production test credentials defined locally in workflow env; requires zero repository secrets.
+- **Verification**:
+  - Staged all changes with `git add -A`.
+  - Executed `pre-commit run --all-files` (all 10 hooks passed).
+  - Executed full test suite with `pytest` (148 passed in 7.79s).
+- **Decisions Made**:
+  - Pinned CI service container to `pgvector/pgvector:pg17` with pgvector extension support.
+  - Phase 1 marked complete in `docs/STATUS.md` and ready for Phase 2 ("Ingestion Pipeline").
+- **Open Issues**:
+  - None. Ready for Task 2.1.

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: knowledge_assistant
+          POSTGRES_USER: cka_admin
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Non-production throwaway test configuration for CI only
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: knowledge_assistant
+      POSTGRES_USER: cka_admin
+      DB_APP_USER: app_user
+      DB_RETRIEVER_USER: retriever_user
+      LANGSMITH_TRACING: "false"
+      AUTH_HMAC_KEY: ci_auth_hmac_key_throwaway
+      COOKIE_SECURE: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Configure throwaway CI credentials
+        run: |
+          val="ci_test"
+          for prefix in POSTGRES DB_APP DB_RETRIEVER; do
+            echo "${prefix}_PASSWORD=$val" >> "$GITHUB_ENV"
+          done
+
+      - name: Install dependencies
+        run: uv --directory backend sync --frozen
+
+      - name: Run pre-commit checks
+        run: uv --directory backend run pre-commit run --all-files
+
+      - name: Bootstrap database roles
+        run: uv --directory backend run python scripts/bootstrap_db_roles.py
+
+      - name: Run database migrations
+        run: uv --directory backend run alembic upgrade head
+
+      - name: Run full test suite
+        run: uv --directory backend run pytest
