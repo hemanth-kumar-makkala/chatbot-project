@@ -5,10 +5,10 @@
 - **Phase 1**: Engine on Mock Profile (Active execution on 8 GB office PC with mock profile)
 
 ## Current Task
-- **Task 1.7**: LangGraph Studio setup for local visual debugging (`langgraph.json`, dedicated entrypoint, zero telemetry egress) — **COMPLETED**
+- **Task 1.8**: Authentication (`AuthProvider`), Tenant Roles, and FastAPI Application Core (Mock Profile) with Security Hardening Follow-ups — **COMPLETED**
 
 ## Next Task
-- **Task 1.8**: Fallback Table Failure-Mode Test Suite (or next Phase 1 task per build plan)
+- **Task 1.9**: Fallback Table Failure-Mode Test Suite (or next Phase 1 task per build plan)
 
 
 

@@ -35,6 +35,8 @@ from app.ports.types import TenantContext, UserRole
 GLOBAL_TABLE_ALLOWLIST = {
     "tenants",
     "users",
+    "sessions",
+    "auth_events",
     "alembic_version",
     "checkpoints",
     "checkpoint_blobs",

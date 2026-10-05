@@ -15,6 +15,12 @@ from app.ports.types import (
 )
 
 
+class AuthenticationError(Exception):
+    """Raised when authentication or session validation fails."""
+
+    pass
+
+
 class AuthProvider(ABC):
     """Abstract port for identity, authentication, and authorization."""
 
@@ -22,6 +28,7 @@ class AuthProvider(ABC):
     async def authenticate(
         self,
         credentials: AuthCredentials,
+        client_ip_hash: str | None = None,
     ) -> AuthToken:
         """Authenticate user credentials and issue an auth token."""
         ...
@@ -41,4 +48,12 @@ class AuthProvider(ABC):
         tenant_id: str,
     ) -> list[UserRole]:
         """Fetch granted roles for a user within a specific tenant scope."""
+        ...
+
+    @abstractmethod
+    async def revoke(
+        self,
+        token: str,
+    ) -> bool:
+        """Revoke a session token upon user logout."""
         ...

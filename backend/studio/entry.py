@@ -46,6 +46,7 @@ def get_default_studio_context() -> GraphRuntimeContext:
     mock_ports = GraphPorts(
         model_provider=mock_model,
         retriever=mock_retriever,
+        is_mock_profile=True,
     )
     return GraphRuntimeContext(
         ports=mock_ports,

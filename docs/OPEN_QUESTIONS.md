@@ -73,3 +73,13 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Status**: **DEFERRED TO PHASE 6**
 - **Context**: BGE-M3 sits entirely behind the `EmbeddingProvider` port interface; core engine code does not depend on its hosting topology.
 - **Decision Driver**: While a separate internal Cloud Run service is standard, scale-to-zero introduces cold-start latency to initial queries. The decision between a dedicated internal Cloud Run service versus co-location inside the API/worker container will be decided in Phase 6 based on measured cold-start latency and monthly cost profiling.
+
+### 3.2 In-Memory Login Rate Limiter Migration to Shared Store (Phase 6 Decision)
+- **Status**: **DEFERRED TO PHASE 6**
+- **Context**: In Task 1.8, failed login attempts are rate-limited via an in-memory sliding window limiter (`LoginRateLimiter`) on the local development server to protect against brute-force attacks.
+- **Decision Driver**: In-memory rate limiting operates correctly for single-process local servers on the 8 GB office PC. Before multi-instance cloud deployment on Cloud Run in Phase 6, rate limiting state must be migrated to a shared distributed store (e.g., Redis/Valkey on Memorystore) or delegated to an edge gateway/Cloud Armor rule to enforce rate limits across horizontally scaled instances.
+
+### 3.3 Per-Account Lockout vs Per-IP Rate Limiting (Phase 5 Decision - Hardening)
+- **Status**: **DEFERRED TO PHASE 5 (HARDENING)**
+- **Context**: Task 1.8 implements per-IP sliding-window rate limiting (`LoginRateLimiter`) with HMAC client IP pseudonymization and Argon2 dummy timing attack mitigation.
+- **Decision Driver**: Per-account lockout protects against distributed credential stuffing attacks targeting specific high-privilege accounts from rotating IP pools. However, unmitigated per-account lockout can expose the application to denial-of-service (DoS) attacks against legitimate staff members. In Phase 5 ("Hardening"), a balanced per-account lockout mechanism (progressive backoff, CAPTCHA, or admin unlock workflows) will be specified alongside the Phase 5 security audit and Presidio exception scrubbing.

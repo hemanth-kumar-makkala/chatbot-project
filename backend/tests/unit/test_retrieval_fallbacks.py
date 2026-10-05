@@ -110,11 +110,14 @@ class TestRetrievalFallbacks:
         self, base_state: GraphState
     ) -> None:
         titles = ["Office Guidelines", "Billing Schedule", "Referral Protocol"]
-        ports = GraphPorts(mock_titles=titles)
+        ports = GraphPorts(
+            is_mock_profile=True,
+            mock_titles=titles,
+            mock_forced_route="clarify",
+        )
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="Vague question",
-            forced_route="clarify",
         )
 
         clarify_state = dict(base_state)

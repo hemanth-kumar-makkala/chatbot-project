@@ -2,6 +2,8 @@
 
 Execute this workflow upon passing the `/review-task` checklist to formally close out a task.
 
+0. **Pre-Commit Verification**:
+   - Run `git add -A`, then `pre-commit run --all-files` to ensure all staged and new files pass all hooks without exception. Report that output.
 1. **Update `docs/STATUS.md`**:
    - Mark the completed task as finished.
    - Designate the current phase, next active task, and record any newly discovered blockers.

@@ -236,7 +236,11 @@ class TestGraphContractsAndStructure:
 
         # Branch 1: Vision OK
         ctx1 = GraphRuntimeContext(
-            ports=GraphPorts(mock_vision_mode="ok", mock_evidence_state="VISUAL_REQUIRED")
+            ports=GraphPorts(
+                is_mock_profile=True,
+                mock_vision_mode="ok",
+                mock_evidence_state="VISUAL_REQUIRED",
+            )
         )
         s1: GraphState = {
             "request_id": "req-v1",
@@ -258,6 +262,7 @@ class TestGraphContractsAndStructure:
 
         # Branch 2: Vision fails, OCR confidence passes -> generate using OCR
         p2 = GraphPorts(
+            is_mock_profile=True,
             mock_vision_mode="fail",
             mock_ocr_confidence=0.95,
             mock_evidence_state="VISUAL_REQUIRED",
@@ -270,6 +275,7 @@ class TestGraphContractsAndStructure:
 
         # Branch 3: Vision fails, OCR confidence unusable -> respond with refusal
         p3 = GraphPorts(
+            is_mock_profile=True,
             mock_vision_mode="fail",
             mock_ocr_confidence=0.40,
             mock_evidence_state="VISUAL_REQUIRED",
@@ -393,10 +399,13 @@ class TestUntrustedInputProtection:
     async def test_studio_forcing_paths_via_mock_context_only(self) -> None:
         """Studio forces paths via mock context (forced_route, mock_evidence_state), not state."""
         ctx = GraphRuntimeContext(
-            ports=GraphPorts(mock_titles=["Topic A", "Topic B"]),
+            ports=GraphPorts(
+                is_mock_profile=True,
+                mock_titles=["Topic A", "Topic B"],
+                mock_forced_route="clarify",
+                mock_forced_answer_mode="long",
+            ),
             question_text="General query",
-            forced_route="clarify",
-            forced_answer_mode="long",
         )
         clean_state: GraphState = {
             "request_id": "req-studio-force",
@@ -408,3 +417,63 @@ class TestUntrustedInputProtection:
         assert result["route"] == "clarify"
         assert result["answer_mode"] == "long"
         assert result["status"] == "clarify"
+
+    def test_graph_ports_default_is_mock_profile_is_false(self) -> None:
+        """GraphPorts() with no arguments must default is_mock_profile to False."""
+        ports = GraphPorts()
+        assert ports.is_mock_profile is False
+
+    async def test_production_wiring_leaves_forcing_switches_unset_and_engine_ignores_outside_mock(
+        self,
+    ) -> None:
+        """Production ports have is_mock_profile=False; engine ignores forcing switches."""
+        from app.adapters.models.mock import MockModelProvider
+        from app.adapters.retrieval.mock import MockRetriever
+        from app.ports.types import TenantContext, UserRole
+        from app.wiring import create_production_context, create_production_ports
+
+        prod_ports = create_production_ports(
+            model_provider=MockModelProvider(),
+            retriever=MockRetriever(),
+        )
+
+        # 1. Assert production wiring leaves all forcing switches unset
+        assert prod_ports.is_mock_profile is False
+        assert prod_ports.mock_forced_route is None
+        assert prod_ports.mock_forced_answer_mode is None
+        assert prod_ports.mock_evidence_state is None
+
+        # 2. Inject forcing values into a non-mock ports instance
+        prod_ports.mock_forced_route = "clarify"
+        prod_ports.mock_forced_answer_mode = "long"
+        prod_ports.mock_evidence_state = "RELIABLE_TEXT"
+
+        tenant = TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-prod",
+            role=UserRole.STAFF,
+            session_id="session-prod",
+        )
+        # Context with standard question and empty evidence
+        ctx = create_production_context(
+            ports=prod_ports,
+            tenant=tenant,
+            question_text="What are the clinic hours?",
+            evidence_text={},
+        )
+
+        state: GraphState = {
+            "request_id": "req-prod-1",
+            "status": "pending",
+        }
+        graph = build_knowledge_graph().compile()
+        result = await graph.ainvoke(state, context=ctx)
+
+        # 3. Engine must ignore mock_forced_route ("clarify")
+        # and compute from question -> "knowledge"
+        assert result["route"] == "knowledge"
+        # 4. Engine must ignore mock_forced_answer_mode ("long") -> "short"
+        assert result["answer_mode"] == "short"
+        # 5. Engine must ignore mock_evidence_state ("RELIABLE_TEXT") -> "NO_EVIDENCE"
+        assert result["evidence_state"] == "NO_EVIDENCE"
+        assert result["status"] == "refusal"

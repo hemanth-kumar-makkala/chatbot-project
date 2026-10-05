@@ -6,6 +6,7 @@ Architecture specification: `Client Knowledge Assistant Architecture and Build P
 
 ## Mandatory Task Protocol
 Before any task, read `docs/STATUS.md` and the current phase file (`docs/phases/PHASE-X.md`).
+Before reporting any task done: run `git add -A`, then `pre-commit run --all-files`, and report that output.
 After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.md`.
 
 ## Build Rules ("Working with Antigravity")
@@ -20,6 +21,7 @@ After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.m
 9. Stop and ask when the spec is silent. Do not fill gaps with assumptions.
 
 ## Review Checklist (Before Accepting Any Module)
+- [ ] Staged all changes with `git add -A`, and `pre-commit run --all-files` passes on all files.
 - [ ] Tests pass, including all invariant tests.
 - [ ] No `if production:` branches in the engine.
 - [ ] Tenant filter present on every query, RLS policy present on every tenant table.

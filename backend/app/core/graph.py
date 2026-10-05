@@ -74,13 +74,16 @@ class GraphPorts:
     model_provider: ModelProvider | None = None
     retriever: Retriever | None = None
     tracer: Tracer | None = None
-    # Simulation triggers for testing failure modes and fallbacks
+    # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
+    is_mock_profile: bool = False
     mock_vision_mode: str = "ok"  # "ok" or "fail"
     mock_ocr_confidence: float = 0.95
     mock_vector_down: bool = False
     mock_keyword_down: bool = False
     mock_reranker_down: bool = False
     mock_evidence_state: str | None = None
+    mock_forced_route: str | None = None
+    mock_forced_answer_mode: str | None = None
     mock_titles: list[str] = field(default_factory=list)
     force_non_retryable_error: bool = False
     force_infinite_loop: bool = False
@@ -103,8 +106,6 @@ class GraphRuntimeContext:
     evidence_text: dict[str, str] = field(default_factory=dict)
     raw_document_bytes: bytes = b""
     response_text: str = ""
-    forced_route: str | None = None
-    forced_answer_mode: str | None = None
     extracted_fields: dict[str, Any] = field(default_factory=dict)
 
 
@@ -219,11 +220,12 @@ async def node_route(
     async def _action() -> dict[str, Any]:
         # Never trust caller-supplied route or answer_mode from state.
         # Always compute route and answer_mode directly or from mock context.
+        ports = runtime.context.ports
         ctx = runtime.context
         q = ctx.question_text.lower()
 
-        if ctx.forced_route:
-            computed_route = ctx.forced_route
+        if ports.is_mock_profile and ports.mock_forced_route:
+            computed_route = ports.mock_forced_route
         elif any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
             computed_route = "extraction"
         elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
@@ -233,15 +235,14 @@ async def node_route(
         else:
             computed_route = "knowledge"
 
-        if ctx.forced_answer_mode:
-            computed_mode = ctx.forced_answer_mode
+        if ports.is_mock_profile and ports.mock_forced_answer_mode:
+            computed_mode = ports.mock_forced_answer_mode
         elif any(k in q for k in ("detailed", "comprehensive", "in depth", "elaborate", "long")):
             computed_mode = "long"
         else:
             computed_mode = "short"
 
         if computed_route == "clarify":
-            ports = runtime.context.ports
             titles = ports.mock_titles or ["General Guide", "Policy Document"]
             ctx.response_text = f"Please clarify. Top matching topics: {', '.join(titles)}"
             return {
@@ -303,7 +304,7 @@ async def node_assess_evidence(
         evidence_dict = runtime.context.evidence_text
         ports = runtime.context.ports
 
-        if ports.mock_evidence_state:
+        if ports.is_mock_profile and ports.mock_evidence_state:
             computed_ev_state = ports.mock_evidence_state
         elif not ev_ids or not evidence_dict:
             computed_ev_state = "NO_EVIDENCE"

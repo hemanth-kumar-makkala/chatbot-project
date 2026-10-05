@@ -62,7 +62,11 @@ class TestGraphEndToEndPaths:
 
     async def test_e2e_visual_answer(self, base_state: GraphState) -> None:
         """Path 2: Visual required evidence -> vision read -> generate -> validated."""
-        ports = GraphPorts(mock_vision_mode="ok", mock_evidence_state="VISUAL_REQUIRED")
+        ports = GraphPorts(
+            is_mock_profile=True,
+            mock_vision_mode="ok",
+            mock_evidence_state="VISUAL_REQUIRED",
+        )
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="What is the fax number in the scan?",
@@ -94,11 +98,14 @@ class TestGraphEndToEndPaths:
 
     async def test_e2e_clarify(self, base_state: GraphState) -> None:
         """Path 4: Vague question -> clarify with top 3 grounded titles."""
-        ports = GraphPorts(mock_titles=["Prior Authorization", "Intake Workflow", "Referrals"])
+        ports = GraphPorts(
+            is_mock_profile=True,
+            mock_titles=["Prior Authorization", "Intake Workflow", "Referrals"],
+            mock_forced_route="clarify",
+        )
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="Help with form",
-            forced_route="clarify",
         )
         state = dict(base_state)
 
@@ -110,12 +117,11 @@ class TestGraphEndToEndPaths:
 
     async def test_e2e_extraction(self, base_state: GraphState) -> None:
         """Path 5: Extraction route -> runs extraction subgraph -> shared respond."""
-        ports = GraphPorts()
+        ports = GraphPorts(is_mock_profile=True, mock_forced_route="extraction")
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="Extract fields from intake form",
             raw_document_bytes=b"\x89PNG\r\n\x1a\nfakeimage",
-            forced_route="extraction",
         )
         state = dict(base_state)
 
@@ -129,7 +135,7 @@ class TestGraphEndToEndPaths:
 
     async def test_e2e_conflicting_evidence(self, base_state: GraphState) -> None:
         """Path 6: Conflicting evidence detected at gate -> respond with both sources."""
-        ports = GraphPorts(mock_evidence_state="CONFLICTING")
+        ports = GraphPorts(is_mock_profile=True, mock_evidence_state="CONFLICTING")
         ctx = GraphRuntimeContext(
             ports=ports,
             question_text="Copay rate",
