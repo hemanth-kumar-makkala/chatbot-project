@@ -3,11 +3,11 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, DocumentVersion
+from app.db.models import Document, DocumentVersion, Job, JobStep, Page
 from app.ports.document_repository import DocumentRepository
 from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
 from app.ports.types import DocumentRecord, DocumentVersionRecord
@@ -227,3 +227,103 @@ class PostgresDocumentRepository(DocumentRepository):
             status=ver.status,
             created_at=ver.created_at,
         )
+
+    async def get_page_numbers(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> list[int]:
+        """Retrieve existing page numbers for a version in ascending order."""
+        stmt = (
+            select(Page.page_number)
+            .where(
+                Page.tenant_id == UUID(str(tenant_id)),
+                Page.document_version_id == version_id,
+            )
+            .order_by(Page.page_number)
+        )
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def create_page(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        page_sha256: str,
+        page_type: str,
+        image_key: str,
+    ) -> None:
+        """Create a page evidence record."""
+        page = Page(
+            id=uuid4(),
+            tenant_id=UUID(str(tenant_id)),
+            document_version_id=version_id,
+            page_number=page_number,
+            page_sha256=page_sha256,
+            page_type=page_type,
+            image_key=image_key,
+        )
+        self.session.add(page)
+        await self.session.flush()
+
+    async def update_version_status(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        status: str,
+    ) -> None:
+        """Update lifecycle status of a document version."""
+        stmt = (
+            update(DocumentVersion)
+            .where(
+                DocumentVersion.tenant_id == UUID(str(tenant_id)),
+                DocumentVersion.id == version_id,
+            )
+            .values(status=status)
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def record_job_step(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int | None,
+        step: str,
+        status: str,
+        processing_version: str = "v1",
+    ) -> None:
+        """Record an idempotent job step execution in job_steps."""
+        job_stmt = (
+            select(Job)
+            .where(
+                Job.tenant_id == UUID(str(tenant_id)),
+                Job.document_version_id == version_id,
+            )
+            .order_by(Job.created_at.desc())
+        )
+        job_res = await self.session.execute(job_stmt)
+        job = job_res.scalars().first()
+        if job is None:
+            job = Job(
+                id=uuid4(),
+                tenant_id=UUID(str(tenant_id)),
+                document_version_id=version_id,
+                status="processing",
+            )
+            self.session.add(job)
+            await self.session.flush()
+
+        step_row = JobStep(
+            id=uuid4(),
+            tenant_id=UUID(str(tenant_id)),
+            job_id=job.id,
+            document_version_id=version_id,
+            page_number=page_number,
+            step=step,
+            processing_version=processing_version,
+            status=status,
+        )
+        self.session.add(step_row)
+        await self.session.flush()

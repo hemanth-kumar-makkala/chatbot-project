@@ -718,3 +718,45 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `uv run --project backend pytest backend/tests/unit/test_upload_validation.py`: 25 passed.
   - `uv run --project backend pytest backend/tests/integration/test_upload_service.py`: 12 passed.
+
+---
+
+### [2026-10-06] Task 2.3: Document Splitting & Page Classification
+
+- **Task ID**: Task 2.3
+- **What Was Built**:
+  - **Libraries & Dependencies** (`backend/pyproject.toml`, `backend/uv.lock`):
+    - Runtime: pinned `pypdfium2==5.14.0` (Apache-2.0 / BSD-3-Clause) and `pillow==12.3.0` (HPND).
+    - Dev-only: pinned `pypdf==6.19.0` (BSD-3-Clause) strictly under `[dependency-groups] dev` for synthetic test fixture generation; confirmed zero runtime presence.
+  - **Port Interfaces & Adapters**:
+    - Created `DocumentSplitter` port (`backend/app/ports/document_splitter.py`) defining `async def split(content: bytes, extension: str, max_pages: int) -> list[PageArtifact]`.
+    - Added `exists(key: StorageKey) -> bool` to `StorageBackend` port and implementations (`InMemoryStorageBackend`, `LocalStorageBackend`).
+    - Added `get_page_numbers`, `create_page`, `update_version_status`, and `record_job_step` to `DocumentRepository` port and `PostgresDocumentRepository`.
+    - Created `PyPdfiumDocumentSplitter` adapter (`backend/app/adapters/pypdfium_splitter.py`):
+      - Thread safety: wrapped all `pypdfium2` calls in a process-wide `threading.Lock()` (`_PDFIUM_LOCK`).
+      - Renders pages at 150 DPI with 72 DPI base scale (`RENDER_SCALE = 150 / 72`).
+      - Decompression bomb safety: capped `Image.MAX_IMAGE_PIXELS = 50_000_000`, rejected PDF canvas dimensions $> 5000\times 5000\,\text{pt}$, and enforced configurable page limit (default 500).
+      - Multi-page TIFF support with frame count and dimension safety checks.
+  - **Core Splitting & Classification Domain**:
+    - Pure MECE page classifier (`backend/app/core/ingestion/page_classifier.py`): classifies `digital_text`, `scanned` (with text layer detection for searchable scans), `image_heavy`, and `blank`.
+    - Routing helper (`backend/app/core/ingestion/splitter_router.py`): routes `.pdf`, `.tiff`, `.tif` to splitter; marks `.txt`, `.csv`, `.xlsx` as skipped with `job_steps` record.
+    - Orchestration service (`backend/app/core/ingestion/splitter_service.py`):
+      - Preflight validation verifies container integrity, encryption, page count, and dimensions before writing any page rows to database.
+      - Enforces `app_user` zero-DELETE privilege: preflight permanent failures fail with 0 page rows written; mid-run corruption preserves committed page rows, updates version to `failed`, records failure in `job_steps`, and purges stored image files from object storage.
+      - Idempotent resumption (Invariant 11): checks existing committed pages and skips duplicate storage/database writes.
+  - **Database Migration 0004** (`backend/app/db/migrations/versions/0004_page_type_and_status.py`):
+    - Added check constraints `ck_document_versions_status` (`received`, `processing`, `needs_review`, `ready`, `failed`) and `ck_pages_page_type` (`digital_text`, `scanned`, `image_heavy`, `blank`).
+    - Migration normalizes existing legacy `page_type = 'digital'` to `'digital_text'` before creating the constraint.
+    - Updated `backend/app/db/models.py` with SQLAlchemy `CheckConstraint` declarations.
+  - **Synthetic Fixtures** (`backend/tests/fixtures/synthetic_documents.py`):
+    - Programmatic in-memory generators for blank, digital, scanned, searchable scanned, image-heavy, encrypted, corrupt, and oversized PDFs and multi-page TIFFs. Zero real documents used.
+- **Tests Added**:
+  - `backend/tests/unit/test_page_splitting_and_classification.py`: 37 unit tests covering MECE decision table boundaries, adapter parsing and rendering, thread-safe concurrent splitting, safety caps, and non-paged routing.
+  - `backend/tests/integration/test_document_splitter_service.py`: 4 integration tests covering Migration 0004 check constraint enforcement, temporary failure idempotent resumption (Invariant 11), preflight permanent failure clean termination, and mid-run corruption partial row preservation with storage cleanup.
+- **Decisions Made**:
+  - `pypdfium2` calls guarded by adapter-level process-wide `threading.Lock()`.
+  - Ingestion progress and failure steps recorded in `job_steps`, reserving `run_steps` for query-time graph telemetry.
+  - Preflight checks execute prior to DB writes, accommodating `app_user` lack of `DELETE` permissions.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_page_splitting_and_classification.py`: 37 passed.
+  - `uv run --project backend pytest backend/tests/integration/test_document_splitter_service.py`: 4 passed.

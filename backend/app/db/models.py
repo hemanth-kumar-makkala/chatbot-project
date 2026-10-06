@@ -318,6 +318,10 @@ class DocumentVersion(Base):
             name="fk_document_versions_document",
             ondelete="RESTRICT",
         ),
+        CheckConstraint(
+            "status IN ('received', 'processing', 'needs_review', 'ready', 'retired', 'failed')",
+            name="ck_document_versions_status",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -350,6 +354,10 @@ class Page(Base):
             ["document_versions.tenant_id", "document_versions.id"],
             name="fk_pages_document_version",
             ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "page_type IN ('digital_text', 'scanned', 'image_heavy', 'blank')",
+            name="ck_pages_page_type",
         ),
         CheckConstraint(
             "image_key LIKE (tenant_id::text || '/%') "

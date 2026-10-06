@@ -31,3 +31,6 @@ class InMemoryStorageBackend(StorageBackend):
 
     async def delete(self, key: StorageKey) -> None:
         self.files.pop(key.full_key, None)
+
+    async def exists(self, key: StorageKey) -> bool:
+        return key.full_key in self.files

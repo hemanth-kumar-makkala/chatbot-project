@@ -105,12 +105,28 @@ class ExtractedFields(BaseModel):
     raw_text: str | None = None
 
 
+class PageType(StrEnum):
+    """Classification of page layout and content structure."""
+
+    DIGITAL_TEXT = "digital_text"
+    SCANNED = "scanned"
+    IMAGE_HEAVY = "image_heavy"
+    BLANK = "blank"
+
+
 class PageArtifact(BaseModel):
     """Extracted single page artifact ready for page-first processing."""
 
     page_number: int
     image_bytes: bytes
     mime_type: str = "image/png"
+    page_sha256: str = ""
+    page_type: PageType = PageType.DIGITAL_TEXT
+    char_count: int = 0
+    has_text_layer: bool = False
+    image_area_ratio: float = 0.0
+    width_pts: float | None = None
+    height_pts: float | None = None
 
 
 class TableData(BaseModel):

@@ -77,3 +77,48 @@ class DocumentRepository(ABC):
     ) -> None:
         """Set the active version for a document."""
         ...
+
+    @abstractmethod
+    async def get_page_numbers(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> list[int]:
+        """Retrieve existing page numbers for a version in ascending order."""
+        ...
+
+    @abstractmethod
+    async def create_page(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        page_sha256: str,
+        page_type: str,
+        image_key: str,
+    ) -> None:
+        """Create a page evidence record."""
+        ...
+
+    @abstractmethod
+    async def update_version_status(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        status: str,
+    ) -> None:
+        """Update lifecycle status of a document version."""
+        ...
+
+    @abstractmethod
+    async def record_job_step(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int | None,
+        step: str,
+        status: str,
+        processing_version: str = "v1",
+    ) -> None:
+        """Record an idempotent job step execution in job_steps."""
+        ...

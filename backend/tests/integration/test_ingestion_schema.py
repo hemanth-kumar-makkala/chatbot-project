@@ -174,7 +174,7 @@ async def seed_page(
     page_id: UUID | None = None,
     page_number: int = 1,
     page_sha256: str = "sha-p1",
-    page_type: str = "digital",
+    page_type: str = "digital_text",
     image_key: str | None = None,
 ) -> UUID:
     """Helper to insert a page row."""

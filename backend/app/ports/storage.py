@@ -46,3 +46,11 @@ class StorageBackend(ABC):
     ) -> None:
         """Permanently delete data at the tenant-scoped storage key."""
         ...
+
+    @abstractmethod
+    async def exists(
+        self,
+        key: StorageKey,
+    ) -> bool:
+        """Check if binary data exists under tenant-scoped storage key."""
+        ...

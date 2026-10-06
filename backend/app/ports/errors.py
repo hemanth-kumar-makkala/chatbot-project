@@ -278,3 +278,75 @@ class DocumentNotFoundError(PortError):
             retryable=False,
             details=details,
         )
+
+
+class EncryptedDocumentError(PortError):
+    """Raised when an encrypted/password-protected document cannot be opened."""
+
+    def __init__(
+        self,
+        message: str = "Document is password protected or encrypted",
+        error_code: str = "ERR_PDF_ENCRYPTED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )
+
+
+class CorruptDocumentError(PortError):
+    """Raised when a document stream is corrupt or unparseable."""
+
+    def __init__(
+        self,
+        message: str = "Document stream is corrupt or cannot be parsed",
+        error_code: str = "ERR_PDF_CORRUPT",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )
+
+
+class DecompressionBombError(PortError):
+    """Raised when an image or page exceeds maximum allowable pixel dimensions."""
+
+    def __init__(
+        self,
+        message: str = "Image or document page exceeds safety pixel limit",
+        error_code: str = "ERR_IMAGE_BOMB",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )
+
+
+class PageLimitExceededError(PortError):
+    """Raised when a document exceeds maximum allowed page count."""
+
+    def __init__(
+        self,
+        message: str = "Document exceeds maximum allowed page count",
+        error_code: str = "ERR_PAGE_LIMIT_EXCEEDED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )

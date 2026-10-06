@@ -48,3 +48,8 @@ class LocalStorageBackend(StorageBackend):
         target = self._resolve_path(key)
         if target.exists():
             target.unlink()
+
+    async def exists(self, key: StorageKey) -> bool:
+        """Check if storage object exists on disk."""
+        target = self._resolve_path(key)
+        return target.exists()

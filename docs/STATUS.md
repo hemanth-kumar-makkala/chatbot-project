@@ -6,11 +6,11 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Task 2.2**: Document Upload Validation & Tenant-Scoped Deduplication — **COMPLETED**
+- **Task 2.3**: Document Splitting & Page Classification — **COMPLETED**
 
 ## Next Task
-- **Task 2.3**: Document Splitting & Page Classification
-  - Scope: Implement page splitting rendering each page as an image, creating individual `pages` records, and classifying page type (digital text, scanned, table-heavy, image-heavy) with OCR confidence. Tests to write first in `tests/unit/test_page_splitting_and_classification.py`.
+- **Task 2.4**: Docling Parser Adapter & Tri-Path Extraction
+  - Scope: Implement DocumentParser adapter wrapping Docling in adapters/parsing/docling.py to handle digital text/tables and scanned OCR extraction paths. Tests to write first in tests/integration/test_docling_parser.py.
 
 ## Pending Implementation Notes
 - **Upload API (Phase 2 upload API task)**: The upload endpoint must open `tenant_session(ctx)` itself and pass that session to `create_upload_service`. Add a test in that task proving uploads run with `app.current_tenant_id` set.
