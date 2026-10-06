@@ -681,3 +681,40 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `git add -A` and `pre-commit run --all-files` passed with 100% compliance across all 10 hooks.
   - Full test suite passed: 169 passed in 7.73s with zero failures and zero skipped tests.
+
+---
+
+### [2026-10-06] Task 2.2: Document Upload Validation & Tenant-Scoped Deduplication
+
+- **Task ID**: Task 2.2
+- **What Was Built**:
+  - **Upload Content Validation & Sniffing** (`backend/app/core/ingestion/validation.py`):
+    - Content-based MIME inspection via magic bytes: PDF (`%PDF-`), XLSX (`[Content_Types].xml`, `xl/workbook.xml`, rejecting `.docx` and `.xlsm`), CSV/TXT with encoding detection (`utf-8`, `utf-8-sig`, `windows-1252`).
+    - Delimiter check applies strictly to `.csv` files; plain `.txt` files with standard sentences and no commas or tabs are accepted (`text/plain`).
+    - Enforced strict 50 MB file size limit and rejection of NUL bytes or binary disguised as text.
+    - Sanitized error messages to guarantee zero PHI/PII leakage (error codes only; no raw filenames or content).
+  - **Tenant-Scoped Upload Orchestration** (`backend/app/core/ingestion/upload.py`):
+    - Role authorization strictly restricted to `client_admin` (`staff` and `platform_admin` rejected with `AuthorizationError`).
+    - Tenant-scoped deduplication lookup by SHA-256 before storage writes. Existing duplicates bypass storage writes entirely.
+    - Storage write before DB insert to prevent orphaned database records.
+    - Status initialized to `received` (reserving `ready` for pipeline completion).
+    - Fail-closed audit logging: failure during audit logging aborts upload, deletes the stored file, and re-raises.
+  - **Document Repository Port & PostgreSQL Adapter**:
+    - Port interface (`backend/app/ports/document_repository.py`) and PostgreSQL adapter (`backend/app/adapters/db/postgres_document_repository.py`).
+    - Atomic `create_document_with_version` executes inside `async with session.begin_nested():` savepoint.
+    - Brand-new upload concurrency race: when unique violation (`uq_document_versions_tenant_sha256`) is caught, savepoint rollback rolls back both the `DocumentVersion` row and the new `Document` row cleanly in PostgreSQL without requiring `DELETE` permissions (respecting `app_user` grants).
+  - **Profile Allowlist Wiring Guards** (`backend/app/wiring.py`):
+    - `create_malware_scanner` and `create_storage_backend` guarded by `SYNTHETIC_LOCAL_PROFILES` allowlist (`mock`, `office-cpu`, `desktop-gpu`, `home-gpu`, `dev-free-api`).
+    - `cloud`, `frontier`, or unknown profile names raise `ConfigurationError`.
+  - **StorageKey Traversal Protections** (`backend/app/ports/types.py`):
+    - Enforced UUID typing for `tenant_id` and rejected `..`, backslashes (`\`), leading slashes, and double slashes (`//`).
+- **Tests Added**:
+  - `backend/tests/unit/test_upload_validation.py`: 25 unit tests covering MIME sniffing, extension matching, boundary file size (exactly 50MB), plain text without delimiters, Windows-1252 accents, UTF-8 BOM, deterministic binary rejection, macro rejection, malware profile allowlist, storage profile allowlist, StorageKey path sanitization, zero-PHI error sanitization.
+  - `backend/tests/integration/test_upload_service.py`: 12 integration tests covering initial upload, duplicate upload returning existing version, duplicate targeting different document ID, concurrent barrier race asserting exactly 1 document and 1 version in DB, storage failure cleanup, cross-tenant isolation (Invariant 15), role authorization rejection, zero-PHI operational audit logging, new version leaves active_version_id NULL, cross-tenant RLS query isolation, normal duplicate never calls storage put, fail-closed audit log cleanup.
+- **Decisions Made**:
+  - Concurrency rollback handled strictly via savepoint rollback (`begin_nested`), eliminating `DELETE FROM documents` statements since `app_user` has `SELECT, INSERT, UPDATE` grants only.
+  - `create_storage_backend` matches `create_malware_scanner` profile allowlist guard.
+  - Core domain imports strictly isolated to `app.core` and `app.ports` (ADR-0003).
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_upload_validation.py`: 25 passed.
+  - `uv run --project backend pytest backend/tests/integration/test_upload_service.py`: 12 passed.

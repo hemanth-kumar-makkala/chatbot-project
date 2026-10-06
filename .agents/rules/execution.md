@@ -5,7 +5,7 @@
    - Never say "running in the background" or "waiting for results". If you cannot run something to completion, stop and hand it to the user.
 
 2. **Long-Running & Blocking Commands**:
-   - Long-running or blocking commands (dev servers, `langgraph dev`, `docker compose up`, watchers, anything that does not exit on its own): do not start them. Give the user the exact command, the folder to run it from, and what output to expect. The user will run it in PowerShell and paste the result.
+   - Commands expected to exceed 10 seconds (such as the full test suite) or long-running/blocking commands (dev servers, `langgraph dev`, `docker compose up`, watchers, anything that does not exit on its own): do not start them. Give the user the exact command, the folder to run it from, and what output to expect. The user will run it in PowerShell and paste the result.
 
 3. **Escalation**:
    - If anything fails for permissions, network, GUI, or anything you cannot do: stop, tell the user exactly what is needed, and the user will do it by hand.
@@ -22,4 +22,4 @@
    - Every report ends with two lists: every command you ran (in order) and every file you created or edited.
 
 7. **Process Management**:
-   - The `manage_task` tool manages background tasks (listing, checking status, sending input, or cancelling running tasks). Do not use it to start or run processes.
+   - The `manage_task` tool may only be used to check status or read output of a command your runtime auto-backgrounded (when exceeding the 10-second synchronous timeout), and every such use must be disclosed in the command list in true order. Never use it to start processes. Commands expected to exceed 10 seconds (such as the full test suite) go to the user.

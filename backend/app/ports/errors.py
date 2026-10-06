@@ -168,3 +168,113 @@ class QueueError(PortError):
             retryable=True,
             details=details,
         )
+
+
+class FileValidationError(PortError):
+    """Raised when file format, header, size, or encoding validation fails."""
+
+    def __init__(
+        self,
+        message: str = "File validation failed",
+        error_code: str = "FILE_VALIDATION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+
+
+class MalwareDetectedError(PortError):
+    """Raised when malware or unsafe signature is detected in an uploaded payload."""
+
+    def __init__(
+        self,
+        message: str = "Malware detected in payload",
+        error_code: str = "MALWARE_DETECTED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+
+
+class AuthorizationError(PortError):
+    """Raised when an authenticated user lacks permission for an operation."""
+
+    def __init__(
+        self,
+        message: str = "Permission denied",
+        error_code: str = "AUTHORIZATION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=403,
+            retryable=False,
+            details=details,
+        )
+
+
+class ConfigurationError(PortError):
+    """Raised when system or profile configuration violates architectural rules."""
+
+    def __init__(
+        self,
+        message: str = "Configuration error",
+        error_code: str = "CONFIGURATION_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=500,
+            retryable=False,
+            details=details,
+        )
+
+
+class DuplicateVersionError(PortError):
+    """Raised when concurrent upload attempts to create a duplicate version."""
+
+    def __init__(
+        self,
+        existing_version: Any,
+        message: str = "Duplicate document version already exists",
+        error_code: str = "DUPLICATE_VERSION",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=409,
+            retryable=False,
+            details=details,
+        )
+        self.existing_version = existing_version
+
+
+class DocumentNotFoundError(PortError):
+    """Raised when an operation targets a document_id that does not exist within the tenant."""
+
+    def __init__(
+        self,
+        message: str = "Document not found",
+        error_code: str = "DOCUMENT_NOT_FOUND",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=404,
+            retryable=False,
+            details=details,
+        )

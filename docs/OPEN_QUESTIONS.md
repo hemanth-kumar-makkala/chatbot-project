@@ -64,6 +64,21 @@ The following items from the spec's "Open decisions" remain open and require sta
   - *Option B (Dedicated Admin Query Service)*: Out-of-band operational reporting reads de-identified run metrics using an unscoped reporting role.
   - *Current Implementation*: Option A enforced — all application database queries against tenant tables require a valid `TenantContext`. Cross-tenant queries are blocked by RLS policies.
 
+### 2.2 Production Malware Scanner Provider Selection (Task 2.2)
+- **Status**: **OPEN FOR STAKEHOLDER REVIEW**
+- **Context**: Task 2.2 defines the `MalwareScanner` port interface and introduces an allowlist guard restricting `MockMalwareScanner` strictly to local synthetic profiles (`mock`, `office-cpu`, `desktop-gpu`, `home-gpu`, `dev-free-api`). Wiring refuses to start on `cloud`, `frontier`, or unknown profiles.
+- **Question**: Which production malware scanning engine/service should be adopted for cloud deployments?
+  - *Option A (ClamAV Container/Daemon)*: Open-source, local daemon or sidecar container on Cloud Run / Compute, zero per-scan API cost, compliant under BAA.
+  - *Option B (Google Cloud Web Risk / VirusTotal API)*: Managed API, high fidelity, requires verifying HIPAA BAA coverage and recurring API costs under the <$100/mo cloud budget.
+### 2.3 Storage Orphan File Garbage Collection & Sweeper Pipeline (Task 2.2)
+- **Status**: **OPEN FOR STAKEHOLDER REVIEW**
+- **Context**: Document upload writes raw objects to storage before committing document and version metadata to PostgreSQL. In standard execution, application-level error handlers and lost concurrency races delete uncommitted files immediately via `storage.delete(key)`. However, an abrupt server crash, OOM kill, or network partition between storage write and database commit could leave an orphan file in storage.
+- **Question**: What reconciliation sweeper topology should be implemented to garbage collect unreferenced storage objects?
+  - *Option A (Nightly Reconciliation Worker)*: A scheduled maintenance worker iterates tenant storage prefixes, checks for corresponding rows in `document_versions` / `pages`, and prunes unreferenced files older than 24 hours.
+  - *Option B (Two-Stage Staging Bucket)*: Write uploads to a staging directory with automated short TTL retention (e.g. 24h), copying/promoting only upon DB transaction commit.
+  - *Option C (Deferred to Phase 5 Hardening)*: Implement sweeper as part of the Phase 5 infrastructure audit and maintenance scripts.
+
+
 
 ---
 

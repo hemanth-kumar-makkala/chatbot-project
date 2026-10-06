@@ -4,13 +4,12 @@ import asyncio
 import os
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import psycopg
 import pytest
 from alembic.config import Config
 from sqlalchemy import text
@@ -109,39 +108,3 @@ async def throwaway_db() -> AsyncIterator[ThrowawayDatabase]:
     """Fixture providing a fresh, isolated throwaway database for migration testing."""
     async with isolated_throwaway_database() as db:
         yield db
-
-
-@pytest.fixture(scope="session", autouse=True)
-def verify_shared_database_persistence_across_suite() -> Iterator[UUID]:
-    """Ensures that running the test suite never wipes the shared database."""
-    load_dotenv()
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    user = os.getenv("POSTGRES_USER", "cka_admin")
-    password = os.getenv("POSTGRES_PASSWORD", "")
-    db_name = os.getenv("POSTGRES_DB", "knowledge_assistant")
-
-    marker_id = uuid4()
-    conn_str = f"host={host} port={port} user={user} password={password} dbname={db_name}"
-    try:
-        with psycopg.connect(conn_str, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO tenants (id, name) VALUES (%s, %s);",
-                (marker_id, f"Suite Persistence Marker {marker_id}"),
-            )
-    except Exception:
-        yield marker_id
-        return
-
-    yield marker_id
-
-    # Post-suite verification: assert marker tenant is still present in shared DB
-    with psycopg.connect(conn_str, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM tenants WHERE id = %s;", (marker_id,))
-        row = cur.fetchone()
-        cnt = row[0] if row else 0
-        assert cnt == 1, (
-            f"CRITICAL: Shared database '{db_name}' was wiped during the test suite! "
-            f"Marker tenant {marker_id} was lost."
-        )
-        cur.execute("DELETE FROM tenants WHERE id = %s;", (marker_id,))

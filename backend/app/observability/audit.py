@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from app.db.models import AuditEvent
 from app.db.session import tenant_session
+from app.ports.audit import AuditLogger as AuditLoggerPort
 from app.ports.types import TenantContext
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class AuditError(RuntimeError):
     """Raised when an audit event fails to persist. Forces audited actions to fail-closed."""
 
 
-class AuditLogger:
+class AuditLogger(AuditLoggerPort):
     """Service for appending compliance audit records into audit_events."""
 
     async def _insert_event(self, session: Any, event: AuditEvent) -> None:

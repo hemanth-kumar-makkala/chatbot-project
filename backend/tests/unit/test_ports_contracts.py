@@ -17,8 +17,10 @@ Verifies:
 
 import inspect
 from abc import ABC
+from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 from app.ports import (
     AuthProvider,
@@ -237,9 +239,14 @@ class TestStorageBackendContract:
         assert inspect.iscoroutinefunction(StorageBackend.delete)
 
     def test_storage_key_requires_tenant_id(self) -> None:
-        key = StorageKey(tenant_id="tenant-abc", path="documents/v1/page_1.png")
-        assert key.tenant_id == "tenant-abc"
+        valid_uuid = UUID("11111111-1111-4111-8111-111111111111")
+        key = StorageKey(tenant_id=valid_uuid, path="documents/v1/page_1.png")
+        assert key.tenant_id == valid_uuid
         assert key.path == "documents/v1/page_1.png"
+
+        # Strengthened: invalid non-UUID string must fail validation
+        with pytest.raises(ValidationError):
+            StorageKey(tenant_id="tenant-abc", path="documents/v1/page_1.png")  # type: ignore[arg-type]
 
 
 class TestJobQueueContract:
@@ -286,3 +293,24 @@ class TestTracerContract:
     def test_tracer_contract_docstring_specifies_fail_safe(self) -> None:
         doc = Tracer.__doc__ or ""
         assert "never fail the request" in doc.lower()
+
+
+class TestAuditLoggerContract:
+    """Verifies AuditLogger abstract port contract."""
+
+    def test_cannot_be_instantiated_directly(self) -> None:
+        from app.ports.audit import AuditLogger
+
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            AuditLogger()  # type: ignore[abstract]
+
+    def test_methods_are_async(self) -> None:
+        from app.ports.audit import AuditLogger
+
+        assert inspect.iscoroutinefunction(AuditLogger.record)
+
+    def test_contract_docstring_specifies_fail_closed(self) -> None:
+        from app.ports.audit import AuditLogger
+
+        doc = AuditLogger.__doc__ or ""
+        assert "fail-closed" in doc.lower()

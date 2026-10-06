@@ -1,9 +1,11 @@
 """Shared data contracts and Pydantic schemas for ports and engine boundaries."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserRole(StrEnum):
@@ -153,8 +155,76 @@ class RetrievalFilters(BaseModel):
 class StorageKey(BaseModel):
     """Tenant-scoped object storage key."""
 
-    tenant_id: str
+    tenant_id: UUID
     path: str
+
+    @field_validator("path")
+    @classmethod
+    def validate_safe_path(cls, v: str) -> str:
+        if ".." in v:
+            raise ValueError("StorageKey path must not contain '..'")
+        if "\\" in v:
+            raise ValueError("StorageKey path must not contain backslashes")
+        if v.startswith("/"):
+            raise ValueError("StorageKey path must not start with leading slash")
+        if "//" in v:
+            raise ValueError("StorageKey path must not contain double slashes")
+        return v
+
+    @property
+    def full_key(self) -> str:
+        return f"{self.tenant_id}/{self.path}"
+
+
+class DocumentRecord(BaseModel):
+    """Domain record representing an uploaded document entity."""
+
+    id: UUID
+    tenant_id: str
+    title: str
+    active_version_id: UUID | None = None
+    created_at: datetime
+
+
+class DocumentVersionRecord(BaseModel):
+    """Domain record representing an immutable document version."""
+
+    id: UUID
+    tenant_id: str
+    document_id: UUID
+    sha256: str
+    uploaded_by: str
+    status: str
+    created_at: datetime
+
+
+class UploadPayload(BaseModel):
+    """Input payload for a document upload."""
+
+    filename: str
+    content: bytes
+    document_id: UUID | None = None
+
+
+class ValidatedFile(BaseModel):
+    """Validated file metadata and sanitized payload."""
+
+    mime_type: str
+    extension: str
+    sha256: str
+    size_bytes: int
+    content: bytes
+
+
+class UploadResult(BaseModel):
+    """Result of processing a document upload."""
+
+    document_id: UUID
+    document_version_id: UUID
+    sha256: str
+    title: str
+    is_duplicate: bool
+    existing_document_id: UUID | None = None
 
 
 class JobStatus(StrEnum):
