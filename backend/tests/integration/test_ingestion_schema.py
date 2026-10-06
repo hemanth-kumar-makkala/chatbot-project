@@ -34,13 +34,11 @@ Validates:
 """
 
 import os
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -96,10 +94,12 @@ async def assert_all_8_tables_exist(session: AsyncSession) -> None:
     res = await session.execute(
         text(
             """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name = ANY(:tables);
+            SELECT c.relname
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relname = ANY(:tables);
             """
         ),
         {"tables": ALL_8_INGESTION_TABLES},
@@ -140,11 +140,12 @@ async def seed_version(
     doc_id: UUID,
     user_id: UUID | str,
     ver_id: UUID | None = None,
-    sha256: str = "sha256-default",
+    sha256: str | None = None,
     status: str = "ready",
 ) -> UUID:
     """Helper to insert a document_version row."""
     ver_id = ver_id or uuid4()
+    actual_sha = sha256 if sha256 is not None else f"sha256-{uuid4().hex}"
     await session.execute(
         text(
             """
@@ -158,7 +159,7 @@ async def seed_version(
             "id": ver_id,
             "tid": UUID(str(tenant_id)),
             "doc_id": doc_id,
-            "sha": sha256,
+            "sha": actual_sha,
             "uid": UUID(str(user_id)),
             "status": status,
         },
@@ -482,8 +483,8 @@ class TestIngestionSchemaStructure:
             page_id = await seed_page(session, ctx_a.tenant_id, ver_id)
 
             invalid_1023_vec = "[" + ",".join(["0.0"] * 1023) + "]"
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await session.execute(
                         text(
                             """
@@ -551,6 +552,7 @@ class TestIngestionSchemaStructure:
             invalid_keys = [
                 f"{ctx_a.tenant_id}/../{ctx_b.tenant_id}/x.png",
                 f"{ctx_a.tenant_id}\\documents\\x.png",
+                f"{ctx_a.tenant_id}/documents\\x.png",
                 f"{ctx_a.tenant_id}//documents/x.png",
                 f"{ctx_a.tenant_id}/documents//x.png",
                 "/var/data/documents/page_1.png",
@@ -559,8 +561,8 @@ class TestIngestionSchemaStructure:
             ]
 
             for inv_key in invalid_keys:
-                async with session.begin_nested():
-                    with pytest.raises(DBAPIError) as exc_info:
+                with pytest.raises(DBAPIError) as exc_info:
+                    async with session.begin_nested():
                         await seed_page(
                             session,
                             ctx_a.tenant_id,
@@ -581,6 +583,16 @@ class TestIngestionSchemaStructure:
                 ver_id,
                 page_number=1,
                 image_key=valid_key,
+            )
+
+            # Valid key with '%' succeeds (confirms backslash check does not reject '%')
+            valid_key_percent = f"{ctx_a.tenant_id}/documents/100%.png"
+            await seed_page(
+                session,
+                ctx_a.tenant_id,
+                ver_id,
+                page_number=2,
+                image_key=valid_key_percent,
             )
 
 
@@ -723,15 +735,15 @@ class TestIngestionRowLevelSecurity:
             await assert_all_8_tables_exist(session)
 
             # Table 1: documents
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_document(session, ctx_b.tenant_id, title="Cross Doc")
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 2: document_versions
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_version(
                         session, ctx_b.tenant_id, uuid4(), ctx_a.user_id, sha256="sha-x"
                     )
@@ -739,43 +751,43 @@ class TestIngestionRowLevelSecurity:
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 3: pages
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_page(session, ctx_b.tenant_id, uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 4: page_readings
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_reading(session, ctx_b.tenant_id, uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 5: chunks
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_chunk(session, ctx_b.tenant_id, uuid4(), uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 6: tables_data
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_table_data(session, ctx_b.tenant_id, uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 7: jobs
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_job(session, ctx_b.tenant_id, uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
 
             # Table 8: job_steps
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_job_step(session, ctx_b.tenant_id, uuid4(), uuid4())
             assert get_sqlstate(exc_info.value) == "42501"
             assert "row-level security" in str(exc_info.value).lower()
@@ -827,50 +839,50 @@ class TestCompositeForeignKeysAndIdempotency:
 
             # Link 1: document_versions -> documents
             await seed_version(session_a, ctx_a.tenant_id, a_doc_id, ctx_a.user_id)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_version(session_a, ctx_a.tenant_id, b_doc_id, ctx_a.user_id)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 2: pages -> document_versions
             await seed_page(session_a, ctx_a.tenant_id, a_ver_id, page_number=2)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_page(session_a, ctx_a.tenant_id, b_ver_id, page_number=1)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 3: page_readings -> pages
             await seed_reading(session_a, ctx_a.tenant_id, a_page_id)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_reading(session_a, ctx_a.tenant_id, b_page_id)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 4: chunks -> pages (tenant_id, document_version_id, page_id)
             await seed_chunk(session_a, ctx_a.tenant_id, a_page_id, a_ver_id)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_chunk(session_a, ctx_a.tenant_id, b_page_id, b_ver_id)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 5: tables_data -> document_versions
             await seed_table_data(session_a, ctx_a.tenant_id, a_ver_id)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_table_data(session_a, ctx_a.tenant_id, b_ver_id)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 6: jobs -> document_versions
             await seed_job(session_a, ctx_a.tenant_id, a_ver_id)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_job(session_a, ctx_a.tenant_id, b_ver_id)
             assert get_sqlstate(exc_info.value) == "23503"
 
             # Link 7: job_steps -> jobs
             await seed_job_step(session_a, ctx_a.tenant_id, a_job_id, a_ver_id, page_number=2)
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_job_step(
                         session_a, ctx_a.tenant_id, b_job_id, a_ver_id, page_number=1
                     )
@@ -898,8 +910,8 @@ class TestCompositeForeignKeysAndIdempotency:
                 step="ocr",
                 processing_version="v1",
             )
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_job_step(
                         session,
                         ctx_a.tenant_id,
@@ -922,8 +934,8 @@ class TestCompositeForeignKeysAndIdempotency:
                 step="split_doc",
                 processing_version="v1",
             )
-            async with session.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session.begin_nested():
                     await seed_job_step(
                         session,
                         ctx_a.tenant_id,
@@ -967,24 +979,28 @@ class TestCompositeForeignKeysAndIdempotency:
             await seed_version(session_a, ctx_a.tenant_id, doc_a2, ctx_a.user_id, ver_id=ver_a2)
 
             # Case 1: Point Doc A1 active_version_id to ver_a2 (Doc A2)
-            async with session_a.begin_nested():
-                await session_a.execute(
-                    text("UPDATE documents SET active_version_id = :ver_id WHERE id = :doc_id;"),
-                    {"ver_id": ver_a2, "doc_id": doc_a1},
-                )
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
+                    await session_a.execute(
+                        text(
+                            "UPDATE documents SET active_version_id = :ver_id WHERE id = :doc_id;"
+                        ),
+                        {"ver_id": ver_a2, "doc_id": doc_a1},
+                    )
                     await session_a.execute(text("SET CONSTRAINTS ALL IMMEDIATE;"))
-                assert get_sqlstate(exc_info.value) == "23503"
+            assert get_sqlstate(exc_info.value) == "23503"
 
             # Case 2: Point Doc A1 active_version_id to ver_b1 (Tenant B)
-            async with session_a.begin_nested():
-                await session_a.execute(
-                    text("UPDATE documents SET active_version_id = :ver_id WHERE id = :doc_id;"),
-                    {"ver_id": ver_b1, "doc_id": doc_a1},
-                )
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
+                    await session_a.execute(
+                        text(
+                            "UPDATE documents SET active_version_id = :ver_id WHERE id = :doc_id;"
+                        ),
+                        {"ver_id": ver_b1, "doc_id": doc_a1},
+                    )
                     await session_a.execute(text("SET CONSTRAINTS ALL IMMEDIATE;"))
-                assert get_sqlstate(exc_info.value) == "23503"
+            assert get_sqlstate(exc_info.value) == "23503"
 
             # Case 3: Valid assignment (Doc A1 -> Ver A1) succeeds at commit
             await session_a.execute(
@@ -1006,8 +1022,8 @@ class TestCompositeForeignKeysAndIdempotency:
             await seed_version(session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha)
 
             # Duplicate SHA under same tenant fails
-            async with session_a.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_a.begin_nested():
                     await seed_version(
                         session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha
                     )
@@ -1081,8 +1097,8 @@ class TestChunksLanguageAndFullTextSearch:
 
             # Rejected language configs using savepoints
             for invalid_cfg in ["french", "german", "unsupported"]:
-                async with session.begin_nested():
-                    with pytest.raises(DBAPIError) as exc_info:
+                with pytest.raises(DBAPIError) as exc_info:
+                    async with session.begin_nested():
                         await seed_chunk(
                             session,
                             ctx_a.tenant_id,
@@ -1199,15 +1215,15 @@ class TestRolePrivilegesAndBoundaries:
                 assert isinstance(res.scalar_one(), int)
 
             # INSERT fails with 42501 and 'permission denied'
-            async with session_ret.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_ret.begin_nested():
                     await seed_document(session_ret, ctx_a.tenant_id, title="x")
             assert get_sqlstate(exc_info.value) == "42501"
             assert "permission denied" in str(exc_info.value).lower()
 
             # UPDATE fails with 42501 and 'permission denied'
-            async with session_ret.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_ret.begin_nested():
                     await session_ret.execute(
                         text("UPDATE documents SET title = 'New' WHERE id = :id;"),
                         {"id": doc_id},
@@ -1216,8 +1232,8 @@ class TestRolePrivilegesAndBoundaries:
             assert "permission denied" in str(exc_info.value).lower()
 
             # DELETE fails with 42501 and 'permission denied'
-            async with session_ret.begin_nested():
-                with pytest.raises(DBAPIError) as exc_info:
+            with pytest.raises(DBAPIError) as exc_info:
+                async with session_ret.begin_nested():
                     await session_ret.execute(
                         text("DELETE FROM documents WHERE id = :id;"),
                         {"id": doc_id},
@@ -1234,8 +1250,8 @@ class TestRolePrivilegesAndBoundaries:
             await assert_all_8_tables_exist(session_ret)
 
             for tbl in ["jobs", "job_steps"]:
-                async with session_ret.begin_nested():
-                    with pytest.raises(DBAPIError) as exc_info:
+                with pytest.raises(DBAPIError) as exc_info:
+                    async with session_ret.begin_nested():
                         await session_ret.execute(text(f"SELECT COUNT(*) FROM {tbl};"))
                 assert get_sqlstate(exc_info.value) == "42501"
                 assert "permission denied" in str(exc_info.value).lower()
@@ -1277,8 +1293,8 @@ class TestRolePrivilegesAndBoundaries:
 
             # 1. DELETE privilege denied on all 8 tables
             for tbl in ALL_8_INGESTION_TABLES:
-                async with session.begin_nested():
-                    with pytest.raises(DBAPIError) as exc_info:
+                with pytest.raises(DBAPIError) as exc_info:
+                    async with session.begin_nested():
                         await session.execute(
                             text(f"DELETE FROM {tbl} WHERE tenant_id = :tid;"),
                             {"tid": UUID(ctx_a.tenant_id)},
@@ -1361,127 +1377,110 @@ class TestRolePrivilegesAndBoundaries:
 class TestMigrationLifecycleIsolated:
     """Verifies Alembic 0003 upgrade -> downgrade -> upgrade on isolated throwaway DB."""
 
-    async def test_migration_0003_upgrade_downgrade_upgrade_isolated(self) -> None:
+    async def test_migration_0003_upgrade_downgrade_upgrade_isolated(
+        self, throwaway_db: Any
+    ) -> None:
         """Isolated throwaway database: downgrade drops 0003 objects, leaving Phase 1 intact."""
-        load_dotenv()
         host = os.getenv("POSTGRES_HOST", "localhost")
         port = os.getenv("POSTGRES_PORT", "5432")
         user = os.getenv("POSTGRES_USER", "cka_admin")
         password = os.getenv("POSTGRES_PASSWORD", "")
-        throwaway_db_name = f"cka_test_throwaway_{uuid4().hex[:12]}"
-
-        admin_default_url = f"postgresql+psycopg://{user}:{password}@{host}:{port}/postgres"
-        admin_engine = create_async_engine(admin_default_url, isolation_level="AUTOCOMMIT")
-
         shared_admin_url = (
             f"postgresql+psycopg://{user}:{password}@{host}:{port}/knowledge_assistant"
         )
         shared_admin_engine = create_async_engine(shared_admin_url)
-        async with shared_admin_engine.connect() as conn:
+        marker_tenant_id = uuid4()
+
+        async with shared_admin_engine.begin() as conn:
             res_ver = await conn.execute(text("SELECT version_num FROM alembic_version;"))
             shared_version_before = res_ver.scalar_one_or_none()
+            await conn.execute(
+                text("INSERT INTO tenants (id, name) VALUES (:id, :name);"),
+                {"id": marker_tenant_id, "name": "Marker Ingestion Test"},
+            )
 
         try:
-            # 1. Create throwaway database
-            async with admin_engine.connect() as conn:
-                await conn.execute(text(f"CREATE DATABASE {throwaway_db_name};"))
+            # 1. Upgrade to head in throwaway DB
+            command.upgrade(throwaway_db.cfg, "head")
 
-            throwaway_url = (
-                f"postgresql+psycopg://{user}:{password}@{host}:{port}/{throwaway_db_name}"
-            )
-            backend_dir = Path(__file__).resolve().parents[2]
-            alembic_ini_path = backend_dir / "alembic.ini"
-            cfg = Config(str(alembic_ini_path))
-
-            old_alembic_url = os.environ.get("ALEMBIC_DATABASE_URL")
-            os.environ["ALEMBIC_DATABASE_URL"] = throwaway_url
-
-            try:
-                # 2. Upgrade to head in throwaway DB
-                command.upgrade(cfg, "head")
-
-                # Verify all 8 tables and Phase 1 tables exist in throwaway DB
-                test_engine = create_async_engine(throwaway_url)
-                async with test_engine.connect() as conn:
-                    res = await conn.execute(
-                        text(
-                            """
-                            SELECT table_name FROM information_schema.tables
-                            WHERE table_schema = 'public';
-                            """
-                        )
-                    )
-                    tables_up: set[str] = {str(r[0]) for r in res.fetchall()}
-                    for t in ALL_8_INGESTION_TABLES:
-                        assert t in tables_up, (
-                            f"Table {t} missing after upgrade head in throwaway DB"
-                        )
-
-                    phase1_tables = [
-                        "tenants",
-                        "users",
-                        "assistants",
-                        "memberships",
-                        "conversations",
-                        "messages",
-                        "run_steps",
-                        "audit_events",
-                        "sessions",
-                        "auth_events",
-                    ]
-                    for p1_t in phase1_tables:
-                        assert p1_t in tables_up, f"Phase 1 table {p1_t} missing in throwaway DB"
-
-                # 3. Downgrade to 0002_sessions_auth_events
-                command.downgrade(cfg, "0002_sessions_auth_events")
-
-                # Verify 0003 tables are dropped, but Phase 1 tables remain intact
-                async with test_engine.connect() as conn:
-                    res = await conn.execute(
-                        text(
-                            """
-                            SELECT table_name FROM information_schema.tables
-                            WHERE table_schema = 'public';
-                            """
-                        )
-                    )
-                    tables_down: set[str] = {str(r[0]) for r in res.fetchall()}
-                    for t in ALL_8_INGESTION_TABLES:
-                        assert t not in tables_down, f"Table {t} was NOT dropped during downgrade!"
-
-                    for p1_t in phase1_tables:
-                        assert p1_t in tables_down, f"Phase 1 table {p1_t} was erroneously dropped!"
-
-                # 4. Upgrade back to head in throwaway DB
-                command.upgrade(cfg, "head")
-                await test_engine.dispose()
-            finally:
-                if old_alembic_url is not None:
-                    os.environ["ALEMBIC_DATABASE_URL"] = old_alembic_url
-                else:
-                    os.environ.pop("ALEMBIC_DATABASE_URL", None)
-
-        finally:
-            # 5. Cleanly terminate connections and drop throwaway DB
-            async with admin_engine.connect() as conn:
-                await conn.execute(
+            # Verify all Phase 1 tables and all 8 tables exist in throwaway DB
+            test_engine = create_async_engine(throwaway_db.url)
+            async with test_engine.connect() as conn:
+                res = await conn.execute(
                     text(
-                        f"""
-                        SELECT pg_terminate_backend(pid)
-                        FROM pg_stat_activity
-                        WHERE datname = '{throwaway_db_name}' AND pid <> pg_backend_pid();
+                        """
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public';
                         """
                     )
                 )
-                await conn.execute(text(f"DROP DATABASE IF EXISTS {throwaway_db_name};"))
-            await admin_engine.dispose()
+                tables_up: set[str] = {str(r[0]) for r in res.fetchall()}
 
-        # 6. Verify shared database alembic_version is completely unchanged
-        async with shared_admin_engine.connect() as conn:
-            res_ver_after = await conn.execute(text("SELECT version_num FROM alembic_version;"))
-            shared_version_after = res_ver_after.scalar_one_or_none()
-            assert shared_version_before == shared_version_after, (
-                f"Shared database alembic_version altered! "
-                f"Was {shared_version_before}, now {shared_version_after}"
-            )
-        await shared_admin_engine.dispose()
+                phase1_tables = [
+                    "tenants",
+                    "users",
+                    "assistants",
+                    "memberships",
+                    "conversations",
+                    "messages",
+                    "run_steps",
+                    "audit_events",
+                    "sessions",
+                    "auth_events",
+                ]
+                for p1_t in phase1_tables:
+                    assert p1_t in tables_up, (
+                        f"Phase 1 table {p1_t} missing in throwaway DB. "
+                        f"Tables found: {sorted(tables_up)}"
+                    )
+
+                for t in ALL_8_INGESTION_TABLES:
+                    assert t in tables_up, (
+                        f"Table {t} missing after upgrade head in throwaway DB. "
+                        f"Tables found: {sorted(tables_up)}"
+                    )
+
+            # 2. Downgrade to 0002_sessions_auth_events
+            command.downgrade(throwaway_db.cfg, "0002_sessions_auth_events")
+
+            # Verify 0003 tables are dropped, but Phase 1 tables remain intact
+            async with test_engine.connect() as conn:
+                res = await conn.execute(
+                    text(
+                        """
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public';
+                        """
+                    )
+                )
+                tables_down: set[str] = {str(r[0]) for r in res.fetchall()}
+                for t in ALL_8_INGESTION_TABLES:
+                    assert t not in tables_down, f"Table {t} was NOT dropped during downgrade!"
+
+                for p1_t in phase1_tables:
+                    assert p1_t in tables_down, f"Phase 1 table {p1_t} was erroneously dropped!"
+
+            # 3. Upgrade back to head in throwaway DB
+            command.upgrade(throwaway_db.cfg, "head")
+            await test_engine.dispose()
+        finally:
+            # 4. Verify shared database alembic_version and marker tenant survived intact
+            async with shared_admin_engine.begin() as conn:
+                res_ver_after = await conn.execute(text("SELECT version_num FROM alembic_version;"))
+                shared_version_after = res_ver_after.scalar_one_or_none()
+                assert shared_version_before == shared_version_after, (
+                    f"Shared database alembic_version altered! "
+                    f"Was {shared_version_before}, now {shared_version_after}"
+                )
+                res_cnt = await conn.execute(
+                    text("SELECT COUNT(*) FROM tenants WHERE id = :id;"),
+                    {"id": marker_tenant_id},
+                )
+                assert int(res_cnt.scalar_one()) == 1, (
+                    "Shared database marker tenant was missing after throwaway test!"
+                )
+                await conn.execute(
+                    text("DELETE FROM tenants WHERE id = :id;"),
+                    {"id": marker_tenant_id},
+                )
+            await shared_admin_engine.dispose()

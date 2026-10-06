@@ -6,10 +6,11 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Task 1.9**: Phase 1 Close-out, Gate Verification Report, and GitHub Actions CI — **COMPLETED**
+- **Task 2.1**: Ingestion Database Schema & Idempotency Migration — **COMPLETED**
 
 ## Next Task
-- **Task 2.1**: Ingestion Database Schema & Idempotency Migration
+- **Task 2.2**: Document Upload Validation & Tenant-Scoped Deduplication
+  - Scope: Build upload handler verifying file headers (magic bytes), size limits, malware check stub, and tenant-scoped hash matching (Invariant 15). Catch duplicate `(tenant_id, sha256)` uploads and return existing version instead of raising `IntegrityError`.
 
 ## Pending Implementation Notes
 - **Upload Service (Task 2.2)**: For `(tenant_id, sha256)` duplicate uploads, the upload service must catch the duplicate / query existing record and return the existing version instead of raising `IntegrityError`.

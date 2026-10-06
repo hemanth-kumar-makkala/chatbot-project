@@ -648,3 +648,36 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `pyrefly check backend/app`: 0 errors.
   - Full test suite: 148 passed.
   - Pre-commit: all 10 hooks passed.
+
+---
+
+### [2026-10-06] Task 2.1: Ingestion Database Schema, Idempotency Migration, and Isolated Migration Testing
+
+- **What Was Built**:
+  - **8 Ingestion Relational Schema Tables**:
+    - `documents`: Master record with circular composite foreign key `active_version_id` pointing to `document_versions(tenant_id, document_id, id)` (`ON DELETE RESTRICT`, `DEFERRABLE INITIALLY DEFERRED`, `use_alter=True`). Single source of truth for active version (no version-level `is_active`).
+    - `document_versions`: Immutable content-hashed version of uploaded document with `UNIQUE (tenant_id, sha256)` preventing duplicate uploads per tenant, and composite parent FK to `documents`.
+    - `pages`: Single-page evidence boundary carrying page classification, sequence number, and `image_key` storage path with check constraint enforcing tenant prefix and traversal prevention (`position(chr(92) in image_key) = 0`, rejecting `..`, `//`, and leading slash).
+    - `page_readings`: Extracted text from digital parsing, Docling OCR, or upload-time vision transcription referencing `(tenant_id, page_id)`.
+    - `chunks`: Searchable text chunks with `embedding vector(1024)`, HNSW cosine similarity index (`vector_cosine_ops`), `ts_config` check constraint (`english`, `spanish`, `simple`), GIN-indexed generated `tsv` column, and `is_active DEFAULT false`.
+    - `tables_data`: Tabular spreadsheet rows (CSV / Excel) preserved as structured JSON without chunking.
+    - `jobs`: Background ingestion workflow execution tracking document versions with attempts counter.
+    - `job_steps`: Granular pipeline step execution tracking state and retries with PostgreSQL 15+ `UNIQUE NULLS NOT DISTINCT (tenant_id, document_version_id, page_number, step, processing_version)`.
+  - **Row Level Security (RLS) & Role Privileges**:
+    - ENABLE and FORCE RLS on all 8 tables using `NULLIF(current_setting('app.current_tenant_id', true), '')::uuid` for both `USING` and `WITH CHECK`.
+    - `app_user` granted `SELECT, INSERT, UPDATE` on all 8 tables (`DELETE` revoked; all FKs `ON DELETE RESTRICT`).
+    - `retriever_user` granted `SELECT` exclusively on the 6 evidence tables (`documents`, `document_versions`, `pages`, `page_readings`, `chunks`, `tables_data`); access denied to `jobs` and `job_steps`.
+    - `PUBLIC` role privileges revoked across all tables.
+  - **Alembic Migration (`0003_ingestion_pipeline_schema.py`)**:
+    - Clean upgrade applying `CREATE EXTENSION IF NOT EXISTS vector;`, tables, constraints, indexes, RLS policies, and role grants.
+    - Strict downgrade dropping created objects and `DROP EXTENSION IF EXISTS vector;` without `CASCADE` to fail loudly if unexpected external dependents exist.
+  - **Architectural Decision Record (`ADR-0008`)**:
+    - Documented multi-language full-text search tsvector generation, ingestion relational schema, and idempotency keys in `docs/decisions/ADR-0008-tsvector-and-ingestion-schema.md`.
+- **Key Decisions & Bug Fixes**:
+  - **tsvector Generation Immutability Fix**: PostgreSQL generated columns require strictly `IMMUTABLE` expressions. Dynamic cast `ts_config::regconfig` is classified as `STABLE` due to search_path catalog lookups. Resolved using a deterministic compile-time `CASE` expression with constant literals (`WHEN ts_config = 'english' THEN to_tsvector('english'::regconfig, text) ...`) matching the check constraint.
+  - **Storage Key Backslash Constraint Fix**: In SQL `LIKE`, backslash is the escape character, so `NOT LIKE '%\%'` tested for literal `%`. Replaced with `position(chr(92) in image_key) = 0` in both migration and models, and added tests verifying that valid keys with `%` succeed while validly prefixed paths with backslashes fail with 23514.
+  - **Execution Rule**: Updated `.agents/rules/execution.md` requiring all commands to execute in foreground and mandating `git add -A` and `pre-commit run --all-files` before any handoff.
+  - **Destructive Phase 1 Migration Test Fix**: `test_alembic_migrations_upgrade_and_downgrade` in `test_db_schema_and_rls.py` previously executed `command.downgrade(cfg, "base")` against the shared database (`knowledge_assistant`), wiping data on every run. Moved both migration lifecycle tests to use a shared `throwaway_db` fixture in `conftest.py` executing against isolated throwaway databases (`cka_test_throwaway_*`). Added suite-level and test-level persistence assertions verifying that the shared database is never wiped.
+- **Verification**:
+  - `git add -A` and `pre-commit run --all-files` passed with 100% compliance across all 10 hooks.
+  - Full test suite passed: 169 passed in 7.73s with zero failures and zero skipped tests.

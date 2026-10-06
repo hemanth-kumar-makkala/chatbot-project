@@ -15,7 +15,7 @@ Verifies:
 - Role permissions: retriever is read-only; audit_events allows insert-only (no update/delete).
 """
 
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -53,18 +53,39 @@ def anyio_backend() -> str:
 class TestDatabaseSchemaMetadata:
     """Verifies table structures, column definitions, and UUID primary keys."""
 
-    def test_alembic_migrations_upgrade_and_downgrade(self) -> None:
-        from pathlib import Path
-
+    async def test_alembic_migrations_upgrade_and_downgrade(self, throwaway_db: Any) -> None:
         from alembic import command
-        from alembic.config import Config
 
-        backend_dir = Path(__file__).resolve().parents[2]
-        alembic_ini_path = backend_dir / "alembic.ini"
-        cfg = Config(str(alembic_ini_path))
-        # Downgrade to base and upgrade back to head to verify migration idempotency
-        command.downgrade(cfg, "base")
-        command.upgrade(cfg, "head")
+        # 1. Seed marker tenant in shared database before running migration lifecycle
+        shared_engine = get_app_engine()
+        marker_tenant_id = uuid4()
+        async with shared_engine.begin() as conn:
+            await conn.execute(
+                text("INSERT INTO tenants (id, name) VALUES (:id, :name);"),
+                {"id": marker_tenant_id, "name": "Marker Tenant Before Phase 1 Migration Test"},
+            )
+
+        try:
+            # 2. Upgrade to head, downgrade to base, re-upgrade to head in throwaway DB
+            command.upgrade(throwaway_db.cfg, "head")
+            command.downgrade(throwaway_db.cfg, "base")
+            command.upgrade(throwaway_db.cfg, "head")
+
+            # 3. Assert marker tenant in shared database was NEVER wiped
+            async with shared_engine.connect() as conn:
+                res = await conn.execute(
+                    text("SELECT COUNT(*) FROM tenants WHERE id = :id;"),
+                    {"id": marker_tenant_id},
+                )
+                assert int(res.scalar_one()) == 1, (
+                    "Shared database was wiped during migration test!"
+                )
+        finally:
+            async with shared_engine.begin() as conn:
+                await conn.execute(
+                    text("DELETE FROM tenants WHERE id = :id;"),
+                    {"id": marker_tenant_id},
+                )
 
     async def test_phase1_tables_exist_with_uuid_primary_keys(self) -> None:
         engine = get_app_engine()

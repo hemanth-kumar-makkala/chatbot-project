@@ -10,24 +10,42 @@ Enforces:
 """
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy import (
+    text as sa_text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import UserDefinedType
+
+
+class PGVector(UserDefinedType):
+    """PostgreSQL pgvector vector column type."""
+
+    def __init__(self, dim: int = 1024):
+        self.dim = dim
+
+    def get_col_spec(self, **_kw: Any) -> str:
+        return f"vector({self.dim})"
 
 
 class Base(DeclarativeBase):
@@ -241,4 +259,291 @@ class AuthEvent(Base):
     client_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Ingestion Models
+# ---------------------------------------------------------------------------
+
+
+class Document(Base):
+    """Client document record representing an uploaded knowledge asset."""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_documents_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "id", "active_version_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.document_id",
+                "document_versions.id",
+            ],
+            name="fk_documents_active_version",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    active_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class DocumentVersion(Base):
+    """Immutable version of an ingested document."""
+
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_document_versions_tenant_id"),
+        UniqueConstraint(
+            "tenant_id", "document_id", "id", name="uq_document_versions_tenant_doc_id"
+        ),
+        UniqueConstraint("tenant_id", "sha256", name="uq_document_versions_tenant_sha256"),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id"],
+            ["documents.tenant_id", "documents.id"],
+            name="fk_document_versions_document",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    uploaded_by: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Page(Base):
+    """Individual page evidence unit within a document version."""
+
+    __tablename__ = "pages"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_pages_tenant_id"),
+        UniqueConstraint(
+            "tenant_id", "document_version_id", "id", name="uq_pages_tenant_version_page"
+        ),
+        UniqueConstraint(
+            "tenant_id", "document_version_id", "page_number", name="uq_pages_version_page_num"
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id"],
+            ["document_versions.tenant_id", "document_versions.id"],
+            name="fk_pages_document_version",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "image_key LIKE (tenant_id::text || '/%') "
+            "AND image_key NOT LIKE '%..%' "
+            "AND position(chr(92) in image_key) = 0 "
+            "AND image_key NOT LIKE '%//%' "
+            "AND image_key NOT LIKE (tenant_id::text || '//%')",
+            name="ck_pages_image_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    image_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PageReading(Base):
+    """Vision model transcription or OCR extraction of a page."""
+
+    __tablename__ = "page_readings"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_page_readings_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "page_id"],
+            ["pages.tenant_id", "pages.id"],
+            name="fk_page_readings_page",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    page_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Chunk(Base):
+    """Searchable text chunk with generated tsv and vector embedding."""
+
+    __tablename__ = "chunks"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_chunks_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "page_id"],
+            ["pages.tenant_id", "pages.document_version_id", "pages.id"],
+            name="fk_chunks_page",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "ts_config IN ('english', 'spanish', 'simple')", name="ck_chunks_ts_config"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    page_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    context_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(50), nullable=False)
+    ts_config: Mapped[str] = mapped_column(String(50), nullable=False)
+    tsv: Mapped[Any | None] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "CASE "
+            "WHEN ts_config = 'english' THEN to_tsvector('english'::regconfig, text) "
+            "WHEN ts_config = 'spanish' THEN to_tsvector('spanish'::regconfig, text) "
+            "ELSE to_tsvector('simple'::regconfig, text) "
+            "END",
+            persisted=True,
+        ),
+        nullable=True,
+    )
+    embedding: Mapped[Any | None] = mapped_column(PGVector(1024), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_text("false"), nullable=False
+    )
+    chunker_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    embedding_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TableData(Base):
+    """Tabular spreadsheet row data."""
+
+    __tablename__ = "tables_data"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_tables_data_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id"],
+            ["document_versions.tenant_id", "document_versions.id"],
+            name="fk_tables_data_document_version",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    row_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Job(Base):
+    """Background ingestion job tracking execution for a document version."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_jobs_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id"],
+            ["document_versions.tenant_id", "document_versions.id"],
+            name="fk_jobs_document_version",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=sa_text("0"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class JobStep(Base):
+    """Granular, idempotent step execution within an ingestion job."""
+
+    __tablename__ = "job_steps"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_job_steps_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "job_id"],
+            ["jobs.tenant_id", "jobs.id"],
+            name="fk_job_steps_job",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id"],
+            ["document_versions.tenant_id", "document_versions.id"],
+            name="fk_job_steps_document_version",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "uq_job_steps_idempotency",
+            "tenant_id",
+            "document_version_id",
+            "page_number",
+            "step",
+            "processing_version",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    job_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    step: Mapped[str] = mapped_column(String(50), nullable=False)
+    processing_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
