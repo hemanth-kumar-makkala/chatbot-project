@@ -9,11 +9,12 @@
 - **Task 1.9**: Phase 1 Close-out, Gate Verification Report, and GitHub Actions CI — **COMPLETED**
 
 ## Next Task
-- **Task 2.1**: Ingestion Pipeline Scaffolding, Docling Parser Port, and Ingestion Graph Architecture
+- **Task 2.1**: Ingestion Database Schema & Idempotency Migration
 
-
-
-
+## Pending Implementation Notes
+- **Upload Service (Task 2.2)**: For `(tenant_id, sha256)` duplicate uploads, the upload service must catch the duplicate / query existing record and return the existing version instead of raising `IntegrityError`.
+- **Version Activation (Phase 2 activation task)**: Version activation must flip `documents.active_version_id` and `chunks.is_active` in one transaction, with a test, in the task that builds activation.
+- **Storage Adapter (Phase 2 storage task)**: `StorageKey` must take `tenant_id` from `TenantContext` as a UUID and reject `..`, absolute paths, and backslashes in Python as well.
 ## Blockers
 - **None for Phase 1**: Phase 1 operates entirely on the `mock` profile with synthetic data on the 8 GB office PC (Docker memory capped at 3 GB).
 - **External Governance Gates (Phase 6/7 Prerequisites)**:

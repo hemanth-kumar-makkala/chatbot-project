@@ -1,6 +1,7 @@
 # /next-task Workflow
 
 Execute this workflow when initiating a new work session or transitioning to the next task.
+Execution rule: All commands must follow `.agents/rules/execution.md` (strictly foreground, no background tasks).
 
 1. **Context Assessment**:
    - Read `docs/STATUS.md` to identify the active phase, current task, and any blockers.

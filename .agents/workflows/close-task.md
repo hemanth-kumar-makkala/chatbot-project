@@ -1,6 +1,7 @@
 # /close-task Workflow
 
 Execute this workflow upon passing the `/review-task` checklist to formally close out a task.
+Execution rule: All commands must follow `.agents/rules/execution.md` (strictly foreground, no background tasks).
 
 0. **Pre-Commit Verification**:
    - Run `git add -A`, then `pre-commit run --all-files` to ensure all staged and new files pass all hooks without exception. Report that output.

@@ -1,6 +1,7 @@
 # /review-task Workflow
 
 Execute this workflow when completing an implementation task to verify compliance against the architecture spec.
+Execution rule: All commands must follow `.agents/rules/execution.md` (strictly foreground, no background tasks).
 
 Evaluate each criterion and report **PASS** or **FAIL** with evidence:
 
