@@ -211,6 +211,66 @@ class TestPyPdfiumSplitterAdapter:
         assert len(res_1) == 2
         assert len(res_2) == 2
 
+    def test_pypdfium_splitter_real_threads_lock_concurrency(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Concurrent calls across real OS threads coordinate safely through _PDFIUM_LOCK."""
+        import asyncio
+        import concurrent.futures
+        import threading
+
+        import app.adapters.pypdfium_splitter as splitter_mod
+        from app.adapters.pypdfium_splitter import PyPdfiumDocumentSplitter
+
+        splitter = PyPdfiumDocumentSplitter()
+        pdf_bytes = create_synthetic_digital_pdf(
+            text="Thread safety test on real threads", num_pages=2
+        )
+
+        real_lock = splitter_mod._PDFIUM_LOCK
+        max_concurrent_in_lock = 0
+        current_in_lock = 0
+        counter_lock = threading.Lock()
+
+        class MonitoredLock:
+            def acquire(self, *args, **kwargs):
+                nonlocal max_concurrent_in_lock, current_in_lock
+                res = real_lock.acquire(*args, **kwargs)
+                if res:
+                    with counter_lock:
+                        current_in_lock += 1
+                        if current_in_lock > max_concurrent_in_lock:
+                            max_concurrent_in_lock = current_in_lock
+                return res
+
+            def release(self, *args, **kwargs):
+                nonlocal current_in_lock
+                with counter_lock:
+                    current_in_lock -= 1
+                return real_lock.release(*args, **kwargs)
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                self.release()
+
+        monkeypatch.setattr(splitter_mod, "_PDFIUM_LOCK", MonitoredLock())
+
+        def worker():
+            return asyncio.run(splitter.split(pdf_bytes, extension=".pdf"))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(worker) for _ in range(10)]
+            results = [f.result() for f in futures]
+
+        assert len(results) == 10
+        for r in results:
+            assert len(r) == 2
+        # Proves at most 1 thread entered _PDFIUM_LOCK critical section concurrently
+        assert max_concurrent_in_lock == 1
+
 
 # ===========================================================================
 # 3. Security, Bomb Defense, and Permanent Failure Tests
@@ -255,6 +315,20 @@ class TestSplitterPermanentFailuresAndSafety:
 
         splitter = PyPdfiumDocumentSplitter()
         bomb_bytes = create_synthetic_decompression_bomb_tiff()
+
+        with pytest.raises(DecompressionBombError) as exc_info:
+            await splitter.split(bomb_bytes, extension=".tiff")
+
+        assert exc_info.value.error_code == "ERR_IMAGE_BOMB"
+        assert not exc_info.value.retryable
+
+    @pytest.mark.asyncio
+    async def test_decompression_bomb_75mp_tiff_raises_permanent_error(self) -> None:
+        """Explicit ~75 MP (7500x10000) TIFF raises DecompressionBombError without warning."""
+        from app.adapters.pypdfium_splitter import PyPdfiumDocumentSplitter
+
+        splitter = PyPdfiumDocumentSplitter()
+        bomb_bytes = create_synthetic_decompression_bomb_tiff(width=7500, height=10000)
 
         with pytest.raises(DecompressionBombError) as exc_info:
             await splitter.split(bomb_bytes, extension=".tiff")

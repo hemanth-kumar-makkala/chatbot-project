@@ -107,9 +107,8 @@ def create_synthetic_searchable_scanned_pdf(
     text_reader = pypdf.PdfReader(io.BytesIO(text_pdf))
 
     writer = pypdf.PdfWriter()
-    page = img_reader.pages[0]
+    page = writer.add_page(img_reader.pages[0])
     page.merge_page(text_reader.pages[0])
-    writer.add_page(page)
 
     buf = io.BytesIO()
     writer.write(buf)
@@ -130,9 +129,8 @@ def create_synthetic_image_heavy_pdf(
     text_reader = pypdf.PdfReader(io.BytesIO(text_pdf))
 
     writer = pypdf.PdfWriter()
-    page = text_reader.pages[0]
+    page = writer.add_page(text_reader.pages[0])
     page.merge_page(img_reader.pages[0])
-    writer.add_page(page)
 
     buf = io.BytesIO()
     writer.write(buf)
@@ -187,11 +185,14 @@ def create_synthetic_multipage_tiff(
     return buf.getvalue()
 
 
-def create_synthetic_decompression_bomb_tiff() -> bytes:
-    """Generate a TIFF frame exceeding 50M pixels safety threshold."""
-    # 7500 x 7000 = 52,500,000 pixels (> 50_000_000 threshold)
-    # Using 1-bit mode ('1') or palette ('P') keeps in-memory size tiny (< 7 MB)
-    img = Image.new("1", (7500, 7000), color=0)
+def create_synthetic_decompression_bomb_tiff(
+    width: int = 7500,
+    height: int = 10000,
+) -> bytes:
+    """Generate a TIFF frame exceeding 50M pixels safety threshold (~75 MP)."""
+    # 7500 x 10000 = 75,000,000 pixels (~75 MP, > 50_000_000 threshold)
+    # Using 1-bit mode ('1') keeps in-memory size tiny (< 10 MB)
+    img = Image.new("1", (width, height), color=0)
     buf = io.BytesIO()
     img.save(buf, format="TIFF")
     return buf.getvalue()

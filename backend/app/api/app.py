@@ -6,11 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
 from app.api.routes import auth, health, questions
+from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.wiring import create_auth_provider
 
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
     """Create and configure FastAPI application."""
+    enforce_langsmith_tracing_disabled()
     app_settings = settings or ApiSettings()
 
     # Invariant: CORS origins must never include "*"

@@ -58,17 +58,36 @@ class TestLangGraphStudioConfiguration:
         env_file = repo_root / ".env"
 
         assert env_example.is_file(), ".env.example missing"
-        assert env_file.is_file(), ".env missing"
-
         example_lines = env_example.read_text(encoding="utf-8").splitlines()
         assert any(line.strip() == "LANGSMITH_TRACING=false" for line in example_lines), (
             "LANGSMITH_TRACING=false must be present in .env.example"
         )
 
-        env_lines = env_file.read_text(encoding="utf-8").splitlines()
-        assert any(line.strip() == "LANGSMITH_TRACING=false" for line in env_lines), (
-            "LANGSMITH_TRACING=false must be present in .env"
-        )
+        if env_file.is_file():
+            env_lines = env_file.read_text(encoding="utf-8").splitlines()
+            assert any(line.strip() == "LANGSMITH_TRACING=false" for line in env_lines), (
+                "LANGSMITH_TRACING=false must be present in .env"
+            )
+
+    def test_runtime_guard_forces_langsmith_tracing_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Startup forces LANGSMITH_TRACING and equivalent variables to false."""
+        import os
+
+        from app.api.app import create_app
+
+        monkeypatch.setenv("LANGSMITH_TRACING", "true")
+        monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+        monkeypatch.setenv("LANGCHAIN_TRACING", "true")
+
+        # Act: startup of app
+        _ = create_app()
+
+        # Assert: tracing variables forced off
+        assert os.environ.get("LANGSMITH_TRACING") == "false"
+        assert os.environ.get("LANGCHAIN_TRACING_V2") == "false"
+        assert os.environ.get("LANGCHAIN_TRACING") == "false"
 
 
 class TestProductionWiringPurity:

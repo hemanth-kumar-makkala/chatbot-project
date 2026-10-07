@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import threading
+import warnings
 from typing import TYPE_CHECKING
 
 import pypdfium2  # type: ignore[import-untyped]
@@ -177,8 +178,10 @@ class PyPdfiumDocumentSplitter(DocumentSplitter):
     def _split_tiff(self, content: bytes, max_pages: int) -> list[PageArtifact]:
         """Open, preflight, and render TIFF frames using Pillow."""
         try:
-            img = Image.open(io.BytesIO(content))
-        except Image.DecompressionBombError as exc:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("error", category=Image.DecompressionBombWarning)
+                img = Image.open(io.BytesIO(content))
+        except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
             raise DecompressionBombError(
                 f"TIFF file exceeds safety limit of 50M pixels: {exc}"
             ) from exc
