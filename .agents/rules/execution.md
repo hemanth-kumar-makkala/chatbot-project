@@ -23,3 +23,9 @@
 
 7. **Process Management**:
    - The `manage_task` tool may only be used to check status or read output of a command your runtime auto-backgrounded (when exceeding the 10-second synchronous timeout), and every such use must be disclosed in the command list in true order. Never use it to start processes. Commands expected to exceed 10 seconds (such as the full test suite) go to the user.
+
+8. **Credential & Access Guardrails**:
+   - Never read, print or extract credentials, tokens, passwords or keys from any source: git credential helpers, environment variables, .env files, keychains, browser storage or config files.
+   - Never put a credential in a command. Code that needs database credentials reads them from .env at runtime; you never echo them.
+   - If you need access you don't have (GitHub, CI logs, cloud consoles), stop and ask me. I will check it and paste the result.
+   - Do not run investigations nobody asked for. If unsure, ask first.
