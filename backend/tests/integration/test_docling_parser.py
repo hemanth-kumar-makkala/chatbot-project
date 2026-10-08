@@ -241,3 +241,65 @@ class TestRealDoclingModelsDesktop:
 
         extracted = await parser.extract(artifacts[0])
         assert "guidelines" in extracted.text.lower()
+
+    @pytest.mark.skipif(
+        not HAS_DOCLING,
+        reason="Docling optional dependencies not installed; run on desktop-gpu",
+    )
+    @pytest.mark.asyncio
+    async def test_real_docling_multipage_confidence_and_review_detection(self) -> None:
+        """Real Docling resolves per-page scores; degraded page must end with needs_review=True."""
+        import io
+
+        import pypdf
+
+        from app.core.ingestion.review_policy import (
+            evaluate_page_review,
+            evaluate_version_review_status,
+        )
+        from tests.fixtures.synthetic_documents import create_synthetic_scanned_pdf
+
+        parser = DoclingDocumentParser()
+
+        # Build 2-page document: Page 1 legible clinical text; Page 2 blank/unreadable raster scan
+        clean_pdf = create_synthetic_spanish_scanned_pdf(
+            text="Documento clínico con datos legibles del paciente.",
+            num_pages=1,
+        )
+        degraded_pdf = create_synthetic_scanned_pdf(num_pages=1)
+
+        writer = pypdf.PdfWriter()
+        writer.add_page(pypdf.PdfReader(io.BytesIO(clean_pdf)).pages[0])
+        writer.add_page(pypdf.PdfReader(io.BytesIO(degraded_pdf)).pages[0])
+        combined_buf = io.BytesIO()
+        writer.write(combined_buf)
+        pdf_bytes = combined_buf.getvalue()
+
+        artifacts = [a async for a in parser.split_pages(pdf_bytes, "multipage_sample.pdf")]
+        assert len(artifacts) == 2
+
+        p1_extracted = await parser.extract(artifacts[0])
+        p2_extracted = await parser.extract(artifacts[1])
+
+        assert p1_extracted.page_number == 1
+        assert p2_extracted.page_number == 2
+
+        # Page 1: legible Spanish OCR with high confidence (>= 0.70) -> needs_review is False
+        p1_needs_review = evaluate_page_review(
+            page_type=PageType.SCANNED,
+            ocr_score=p1_extracted.confidence,
+            threshold=0.70,
+        )
+        assert p1_needs_review is False
+
+        # Page 2: degraded / blank raster scan without text ->
+        # low score or NaN -> needs_review is True
+        p2_needs_review = evaluate_page_review(
+            page_type=PageType.SCANNED,
+            ocr_score=p2_extracted.confidence,
+            threshold=0.70,
+        )
+        assert p2_needs_review is True
+
+        # Version status aggregates to needs_review when any page is flagged
+        assert evaluate_version_review_status([p1_needs_review, p2_needs_review]) == "needs_review"

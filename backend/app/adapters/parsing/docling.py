@@ -158,6 +158,7 @@ class DoclingDocumentParser(DocumentParser):
             disable_model_download=self.disable_model_download,
             pinned_model_paths=self.pinned_model_paths,
         )
+        # pyrefly: ignore [missing-import]
         from docling.datamodel.base_models import DocumentStream
 
         stream = DocumentStream(

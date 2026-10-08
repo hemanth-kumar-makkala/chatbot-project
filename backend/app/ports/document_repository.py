@@ -5,6 +5,7 @@ Enforces tenant scoping on all operations.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 from uuid import UUID
 
 from app.ports.types import DocumentRecord, DocumentVersionRecord
@@ -119,6 +120,67 @@ class DocumentRepository(ABC):
         step: str,
         status: str,
         processing_version: str = "v1",
+        job_id: UUID | None = None,
     ) -> None:
         """Record an idempotent job step execution in job_steps."""
+        ...
+
+    @abstractmethod
+    async def create_table_data_batch(
+        self,
+        tenant_id: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Insert a batch of table_data rows idempotently (ON CONFLICT DO NOTHING)."""
+        ...
+
+    @abstractmethod
+    async def get_uncompleted_page_numbers(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        step: str = "page_pipeline",
+    ) -> list[int]:
+        """Retrieve page numbers that do not yet have a completed job_step."""
+        ...
+
+    @abstractmethod
+    async def lock_version_for_activation(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> tuple[DocumentRecord, DocumentVersionRecord, int, int, bool]:
+        """Lock version row (FOR UPDATE) and evaluate completion and review state.
+
+        Returns: (doc, version, total_pages, completed_pages, has_flagged_pages)
+        """
+        ...
+
+    @abstractmethod
+    async def execute_version_activation(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        branch: str,
+    ) -> str:
+        """Execute Branch A, Branch B, or Branch C activation in current transaction."""
+        ...
+
+    @abstractmethod
+    async def create_chunks_batch(
+        self,
+        tenant_id: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Insert a batch of chunks idempotently (ON CONFLICT DO NOTHING)."""
+        ...
+
+    @abstractmethod
+    async def flag_page_for_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> None:
+        """Mark a page as needs_review=True."""
         ...

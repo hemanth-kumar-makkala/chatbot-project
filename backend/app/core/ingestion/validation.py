@@ -26,6 +26,9 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Shared text encoding helper from ports (re-exported for backwards compatibility)
+from app.ports.encoding import decode_text_content  # noqa: E402
+
 
 def _sniff_and_validate(content: bytes, filename: str) -> tuple[str, str]:
     """Sniff MIME type and extension from raw content bytes."""
@@ -93,21 +96,13 @@ def _sniff_and_validate(content: bytes, filename: str) -> tuple[str, str]:
             raise FileValidationError("Corrupted or malformed zip archive") from exc
 
     # 6. CSV / Plain Text
-    raw_text_bytes = content[3:] if content.startswith(b"\xef\xbb\xbf") else content
-
     text_content: str | None = None
     try:
-        text_content = raw_text_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        try:
-            text_content = raw_text_bytes.decode("cp1252")
-        except UnicodeDecodeError:
-            text_content = None
+        text_content = decode_text_content(content)
+    except FileValidationError:
+        text_content = None
 
     if text_content is not None:
-        if "\x00" in text_content:
-            raise FileValidationError("Text file contains NUL bytes")
-
         # Reject binary data with control characters (< 32, excluding \t, \n, \r)
         control_chars = sum(1 for c in text_content if ord(c) < 32 and c not in ("\t", "\n", "\r"))
         if control_chars > 0:

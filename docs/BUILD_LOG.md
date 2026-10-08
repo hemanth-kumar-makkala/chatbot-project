@@ -810,3 +810,112 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - All 28 tests in `tests/unit/test_upload_validation.py` pass.
   - All 5 database integration tests in `test_migration_0005.py` pass against Postgres.
   - All pre-commit hooks pass on all files (`pre-commit run --all-files`).
+
+---
+
+### [2026-10-08] Task 2.6: Tabular Data Ingestion (CSV / XLSX Spreadsheets)
+
+- **Task ID**: Task 2.6
+- **What Was Built**:
+  - **Dependencies & Stubs**:
+    - Added `openpyxl==3.1.5` and `defusedxml==0.7.1` to runtime dependencies.
+    - Added typed stub packages `types-openpyxl==3.1.5.20260827` and `types-defusedxml==0.7.0.20260504` to `[dependency-groups] dev` (confirmed latest via PyPI JSON API). Zero mypy ignore overrides used; full strict typing enforced.
+    - Verified `openpyxl.xml.DEFUSEDXML is True` to guard against XML expansion and billion laughs attacks.
+  - **Encoding & Parsing Utilities** (`backend/app/ports/encoding.py`):
+    - Created shared `decode_text_content` in `app/ports/encoding.py` using standard library only.
+    - Robust decoding covering UTF-8, UTF-8 BOM (`\xef\xbb\xbf`), and Windows-1252 (`cp1252`) fallback, rejecting binary NUL bytes.
+  - **Port Interfaces** (`backend/app/ports/table_extractor.py`, `backend/app/ports/document_repository.py`):
+    - `ExtractedTableSheet`, `TableExtractionResult`, and `TableExtractor` port interfaces.
+    - Extended `DocumentRepository` port with `create_table_data_batch(tenant_id: str, records: list[dict[str, Any]]) -> None` and optional `job_id` parameter on `record_job_step`.
+  - **Table Extractor Adapter** (`backend/app/adapters/tables/builtin.py`):
+    - `BuiltinTableExtractor` implementing `TableExtractor` with dual-read openpyxl (`data_only=True` for cached values and `data_only=False` for formula detection).
+    - Distinguishes empty cells from uncalculated formulas cleanly: uncalculated formula cells store `None` in `row["cells"]` and list the column name in `row["unreadable"]`. Zero `#UNREADABLE_FORMULA#` strings in cell values.
+    - Numbers stored as native JSON numbers (int/float) without float precision loss. Negative numbers stored as written without formula escaping in the database.
+    - Cell `number_format` distinguishes date-only (`YYYY-MM-DD`) vs date-time (`YYYY-MM-DDTHH:MM:SS`).
+    - Merged cells preserved verbatim (top-left holds value, others None).
+    - Offset headers supported (skipping leading blank rows).
+    - Blank headers normalized to `Column_{idx}` and duplicate headers deduplicated to `Name`, `Name_2`.
+    - Hidden sheets skipped; count reported in `result.skipped_hidden_sheets_count`. Zero sheet names logged.
+    - Limits enforced: 200 columns (`MAX_COLUMNS`), 50,000 data rows (`MAX_ROWS_PER_SHEET`), 1,000,000 cells (`DEFAULT_MAX_WORKBOOK_CELLS`). Exceeding raises `FileValidationError`.
+    - CSV/TSV parsing: delimiter sniffing among `,`, `;`, `\t`; exact text preserved with zero type inference.
+  - **Core Ingestion Service** (`backend/app/core/ingestion/table_service.py`):
+    - `TableIngestionService`: orchestrates extraction, version status transitions (`received` -> `processing` -> `ready`), batch insertions of 1,000 rows into `tables_data`, and records `job_steps` with `step="table_ingestion"`, `status="completed"`, `page_number=None`. Zero ORM imports in core (Rule 4).
+  - **Database Repository Adapter** (`backend/app/adapters/db/postgres_document_repository.py`):
+    - `create_table_data_batch`: PostgreSQL insert with `ON CONFLICT ON CONSTRAINT uq_tables_data_idempotency DO NOTHING`.
+    - `record_job_step`: idempotent insert using PostgreSQL `ON CONFLICT DO NOTHING` on `uq_job_steps_idempotency`.
+  - **Wiring** (`backend/app/wiring.py`):
+    - Added `create_table_extractor()` and `create_table_ingestion_service(session)` factories.
+- **Tests Added**:
+  - `backend/tests/unit/test_table_ingestion.py`: 15 unit tests covering defusedxml activation, dual-read formula detection, clean row JSON, header deduplication, CSV exact text and zero inference, XLSX numbers, dates by format, hidden sheets skipped, merged cells verbatim, offset headers, total cell limits, delimiters (`;`, `\t`), encodings (BOM, cp1252), empty/header-only rejection, non-spreadsheet rejection, column limit (200), row limit (50,000), plus 1 slow memory benchmark test (`@pytest.mark.slow`).
+  - `backend/tests/integration/test_table_ingestion_service.py`: 4 integration tests against PostgreSQL testing idempotent re-runs, job steps recording status without sheet names and without metadata column, version status lifecycle (`processing` -> `ready`), and RLS multi-tenant isolation.
+- **Decisions Made**:
+  - Slow 50k-row memory benchmark marked with `@pytest.mark.slow` and excluded by default via `[tool.pytest.ini_options]` (`addopts = "-ra -q -m \"not models and not slow\""`). Runs on demand with `pytest -m slow`.
+  - Formula injection escaping deferred to client export endpoints/UI; database stores verbatim values.
+  - Shared text decoding placed in `app/ports/encoding.py` to preserve architecture boundary invariants (adapters never import core).
+- **Verification**:
+  - All 19 Task 2.6 tests pass: 15 unit tests + 4 integration tests (1 slow test deselected by default).
+  - All 191 unit tests across the test suite pass cleanly.
+  - All 24 boundary and migration invariants pass.
+  - Pre-commit passes 100% cleanly on all files (`pre-commit run --all-files`).
+
+---
+
+### [2026-10-08] Task 2.7: Ingestion Pipeline Worker & Version Activation
+
+- **Task ID**: Task 2.7
+- **What Was Built**:
+  - **Migration 0006 (`0006_procrastinate_schema.py`)**:
+    - Revision ID: `0006_procrastinate_schema` (25 characters, strictly $\le$ 32).
+    - Creates schema `procrastinate`.
+    - Generates and applies Procrastinate queue schema DDL inside `procrastinate` via `SchemaManager(connector=None).get_schema()`.
+    - Enforces least privilege grants: `USAGE` on schema (no `CREATE`), `SELECT, INSERT, UPDATE, DELETE` on tables (no `TRUNCATE`), `USAGE, SELECT` on sequences, and `EXECUTE` on functions (`procrastinate_defer_job_v1`, `procrastinate_finish_job_v1`, `procrastinate_retry_job_v2`, worker management functions, and triggers) to `app_user`.
+    - Configures `ALTER DEFAULT PRIVILEGES` matching least privilege grants.
+    - Strictly revokes `ALL` on schema `procrastinate` from `retriever_user`.
+    - Unapplied on shared DB as instructed.
+  - **Database Migration 0006 Integration Tests (`backend/tests/integration/test_migration_0006.py`)**:
+    - Runs in an isolated throwaway database (`isolated_throwaway_database()`) so it passes before 0006 is applied to the shared DB.
+    - Verifies queue tables exist exclusively in schema `procrastinate`, none in `public`.
+    - Verifies `app_user` can enqueue, fetch, update, and delete jobs in schema `procrastinate`.
+    - Verifies `app_user` cannot `TRUNCATE` tables (SQLSTATE 42501) and cannot `CREATE` tables (SQLSTATE 42501).
+    - Verifies `retriever_user` receives permission denied (`SQLSTATE 42501`) on schema `procrastinate`.
+  - **In-Process Worker End-to-End Test (`backend/tests/integration/test_procrastinate_worker_e2e.py`)**:
+    - Runs in an isolated throwaway database with head migrations applied.
+    - Defers `split_document_job` to the real Procrastinate queue in schema `procrastinate`.
+    - Executes the real Procrastinate worker in-process (`run_worker_async`).
+    - Verifies split job enqueues per-page jobs, worker processes all pages, and `VersionActivationService` activates the version (`ready`), flipping `documents.active_version_id` and activating all chunks (`is_active=True`).
+  - **Worker / Tenant Session Separation (`backend/app/db/session.py`)**:
+    - `tenant_session(tenant_ctx: TenantContext)`: strictly typed to `TenantContext`. API code cannot pass a `WorkerContext`.
+    - `worker_tenant_session(worker_ctx: WorkerContext)`: dedicated session function strictly accepting `WorkerContext`, setting `app.current_tenant_id` while operating under worker system authority.
+  - **Worker Audit Actor (`backend/app/ports/audit.py`, `backend/app/observability/audit.py`)**:
+    - Added `record_worker(worker_ctx, action, event_type, resource_id)` on `AuditLoggerPort` and `AuditLogger`.
+    - Explicitly sets `user_id=None` (nullable in `audit_events`) representing system worker actor rather than a fabricated user UUID.
+  - **Split Job Crash Recovery & Idempotency (`backend/app/worker.py`, `backend/app/core/ingestion/pipeline.py`)**:
+    - `enqueue_uncompleted_page_jobs`: inspects `job_steps` under version lock and enqueues jobs for every page lacking a completed `page_pipeline` step.
+    - Deterministic chunk UUIDs generated using `uuid5(NAMESPACE_URL, f"{tenant_id}:{document_version_id}:{page_number}:{i}")` combined with PostgreSQL `ON CONFLICT (id) DO NOTHING` on `chunks`.
+  - **Version Row Locking & Atomic Activation (`backend/app/core/ingestion/activation.py`, `backend/app/adapters/db/postgres_document_repository.py`)**:
+    - Row-level lock via `SELECT ... FOR UPDATE` on `document_versions`.
+    - Calculates uncompleted page numbers dynamically from `job_steps` (`WHERE step = 'page_pipeline' AND status = 'completed'`).
+    - Implements MECE branches:
+      - Branch A: All pages completed, 0 flagged for review -> updates version to `ready`, flips `documents.active_version_id` to current version, sets current version chunks to `is_active=True`, and retires previous active version chunks (`is_active=False`) and status (`retired`) atomically in one transaction.
+      - Branch B: All pages accounted for, $\ge$ 1 page flagged for review -> updates version to `needs_review`.
+      - Branch C: Incomplete pages remaining -> version remains `processing`.
+    - Concurrent activation safety: second concurrent activation sees version already activated and exits cleanly.
+  - **Page Pipeline Service Error Classification (`backend/app/core/ingestion/pipeline.py`)**:
+    - Permanent errors flag page for review (`flag_page_for_review`), record `status="failed"` in `job_steps`, and do not re-raise (preventing infinite retry loops).
+    - Transient errors (`ProviderTimeout`, `ProviderUnavailable`, `QueueError`) are re-raised to trigger Procrastinate queue retry backoff.
+- **Tests Added**:
+  - `backend/tests/unit/test_worker_and_activation.py`: 7 unit tests (WorkerContext definition, session separation rejection, system worker audit actor, Branch A/B/C logic, page pipeline permanent review vs transient retry).
+  - `backend/tests/integration/test_version_activation.py`: 4 integration tests (atomic version activation and chunk activation, previous version retirement, review flagging transitions, concurrent activation row locking).
+  - `backend/tests/integration/test_pipeline_idempotency.py`: 4 integration tests (re-run duplicate chunk prevention, split job crash re-run recovery, RLS tenant isolation, failed page review flagging).
+  - `backend/tests/integration/test_migration_0006.py`: 1 comprehensive integration test in throwaway DB covering schema isolation, app_user queue capabilities, least privilege TRUNCATE/CREATE denial, and retriever_user denial.
+  - `backend/tests/integration/test_procrastinate_worker_e2e.py`: 1 end-to-end integration test running the real Procrastinate worker in-process and asserting document version activation.
+- **Decisions Made**:
+  - `pages` table remains immutable physical page artifact evidence; transient pipeline progress is tracked in `job_steps` under version row lock.
+  - Chunks generated with deterministic tenant-and-version-scoped UUIDs to ensure database-level idempotency on re-runs.
+  - Enforce strict global row lock order across all paths: parent `documents` row locked FIRST with `FOR UPDATE`, then child `document_versions` row locked SECOND with `FOR UPDATE`.
+  - Transaction separation: worker commits page processing (chunks and `job_steps`) in its own transaction first, releasing foreign key share locks before entering a separate short transaction for activation locking.
+  - Error classification: `is_retryable_error` classifies PostgreSQL `DeadlockDetected` (40P01) and `SerializationFailure` (40001) as transient errors for worker retry.
+- **Verification**:
+  - All 17 Task 2.7 tests pass.
+  - Concurrency test verified across 35 consecutive runs with 0 failures and 0 deadlocks.
+  - All 10 pre-commit hooks pass on all files (`pre-commit run --all-files`).

@@ -23,12 +23,15 @@ from app.core.graph import (
 )
 from app.core.ingestion.upload import UploadService
 from app.ports.audit import AuditLogger
+from app.ports.chunker import Chunker
 from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
+from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
 from app.ports.retriever import Retriever
 from app.ports.storage import StorageBackend
+from app.ports.table_extractor import TableExtractor
 from app.ports.tracer import Tracer
 from app.ports.types import TenantContext
 
@@ -236,3 +239,92 @@ def create_upload_service(
         malware_scanner=scanner,
         audit_logger=logger,
     )
+
+
+def create_table_extractor() -> TableExtractor:
+    """Instantiate BuiltinTableExtractor adapter."""
+    from app.adapters.tables.builtin import BuiltinTableExtractor
+
+    return BuiltinTableExtractor()
+
+
+def create_table_ingestion_service(
+    session: AsyncSession,
+) -> Any:
+    """Instantiate and wire TableIngestionService with repository and table extractor.
+
+    Note: session MUST be a tenant_session(ctx) AsyncSession,
+    never an unscoped_session(), to enforce PostgreSQL RLS policies.
+    """
+    from app.core.ingestion.table_service import TableIngestionService
+
+    repo = create_document_repository(session)
+    extractor = create_table_extractor()
+    return TableIngestionService(repository=repo, table_extractor=extractor)
+
+
+def create_chunker(profile: str) -> Chunker:
+    """Instantiate Chunker adapter based on profile.
+
+    MockChunker is strictly wired only in profile 'mock'.
+    Other profiles raise ConfigurationError until real chunker is built in Task 3.1.
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.chunking.mock import MockChunker
+
+        return MockChunker()
+
+    raise ConfigurationError(
+        f"Chunker is not yet implemented for profile '{profile}'. "
+        "Real chunker will be implemented in Task 3.1."
+    )
+
+
+def create_embedding_provider(profile: str) -> EmbeddingProvider:
+    """Instantiate EmbeddingProvider adapter based on profile.
+
+    MockEmbeddingProvider is strictly wired only in profile 'mock'.
+    Other profiles raise ConfigurationError until real BGE-M3 provider is built in Task 3.1.
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.embedding.mock import MockEmbeddingProvider
+
+        return MockEmbeddingProvider()
+
+    raise ConfigurationError(
+        f"EmbeddingProvider is not yet implemented for profile '{profile}'. "
+        "Real BGE-M3 embedding provider will be implemented in Task 3.1."
+    )
+
+
+def create_page_pipeline_service(
+    session: AsyncSession,
+    profile: str = "mock",
+) -> Any:
+    """Instantiate and wire PagePipelineService with repository, parser, chunker, and embedder."""
+    from app.core.ingestion.pipeline import PagePipelineService
+
+    repo = create_document_repository(session)
+    parser = create_document_parser(profile=profile)
+    chunker = create_chunker(profile=profile)
+    embedder = create_embedding_provider(profile=profile)
+    return PagePipelineService(
+        repository=repo,
+        parser=parser,
+        chunker=chunker,
+        embedding_provider=embedder,
+    )
+
+
+def create_version_activation_service(
+    session: AsyncSession,
+) -> Any:
+    """Instantiate and wire VersionActivationService with document repository."""
+    from app.core.ingestion.activation import VersionActivationService
+
+    repo = create_document_repository(session)
+    return VersionActivationService(repository=repo)

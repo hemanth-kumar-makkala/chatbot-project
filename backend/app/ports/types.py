@@ -25,6 +25,16 @@ class TenantContext(BaseModel):
     session_id: str
 
 
+class WorkerContext(BaseModel):
+    """Internal system/worker context for background ingestion jobs.
+
+    Not a user entity; scoped strictly to tenant_id for pipeline execution (ADR-0007).
+    """
+
+    tenant_id: str
+    job_id: str
+
+
 class EvidenceType(StrEnum):
     """Classification of grounded evidence source."""
 

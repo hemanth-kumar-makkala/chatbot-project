@@ -56,6 +56,26 @@ class MockAuditLogger(AuditLogger):
         )
         return event_id
 
+    async def record_worker(
+        self,
+        worker_ctx: Any,
+        action: str,
+        event_type: str,
+        resource_id: str | None = None,
+    ) -> UUID:
+        event_id = uuid4()
+        self.events.append(
+            {
+                "event_id": event_id,
+                "tenant_id": worker_ctx.tenant_id,
+                "user_id": None,
+                "action": action,
+                "event_type": event_type,
+                "resource_id": resource_id,
+            }
+        )
+        return event_id
+
 
 @pytest_asyncio.fixture
 async def upload_test_env(test_user_password_hash: str) -> tuple[TenantContext, TenantContext]:
@@ -545,6 +565,16 @@ async def test_upload_audit_failure_is_fail_closed_and_cleans_storage(
             resource_id: str | None = None,
         ) -> UUID:
             del tenant_ctx, action, event_type, resource_id
+            raise RuntimeError("Audit log store unavailable")
+
+        async def record_worker(
+            self,
+            worker_ctx: Any,
+            action: str,
+            event_type: str,
+            resource_id: str | None = None,
+        ) -> UUID:
+            del worker_ctx, action, event_type, resource_id
             raise RuntimeError("Audit log store unavailable")
 
     async with tenant_session(ctx_a) as session:

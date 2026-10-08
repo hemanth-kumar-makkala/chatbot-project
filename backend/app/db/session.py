@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.db.env_utils import load_dotenv
-from app.ports.types import TenantContext
+from app.ports.types import TenantContext, WorkerContext
 
 
 def get_database_url(role: str = "app_user") -> str:
@@ -94,18 +94,49 @@ def get_retriever_session_factory() -> async_sessionmaker[AsyncSession]:
     return _retriever_session_factory
 
 
-@asynccontextmanager
-async def tenant_session(tenant_ctx: TenantContext) -> AsyncIterator[AsyncSession]:
-    """Single authorized entrypoint to query tenant tables.
+def reset_session_engines() -> None:
+    """Reset cached engines and session factories (used for test isolation)."""
+    global _app_engine, _app_session_factory, _retriever_engine, _retriever_session_factory
+    _app_engine = None
+    _app_session_factory = None
+    _retriever_engine = None
+    _retriever_session_factory = None
 
-    Takes a typed TenantContext, begins a transaction, and sets the transaction-local
-    tenant setting via set_config(..., is_local=true).
+
+@asynccontextmanager
+async def tenant_session(
+    tenant_ctx: TenantContext,
+) -> AsyncIterator[AsyncSession]:
+    """Single authorized entrypoint for user/API requests to query tenant tables.
+
+    Takes a typed TenantContext, begins a transaction, and sets the
+    transaction-local tenant setting via set_config(..., is_local=true).
     """
     factory = get_app_session_factory()
     async with factory() as session, session.begin():
         await session.execute(
             text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
             {"tenant_id": str(tenant_ctx.tenant_id)},
+        )
+        yield session
+
+
+@asynccontextmanager
+async def worker_tenant_session(
+    worker_ctx: WorkerContext,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> AsyncIterator[AsyncSession]:
+    """Single authorized entrypoint for background worker jobs to query tenant tables.
+
+    Takes a typed WorkerContext, begins a transaction, and sets the
+    transaction-local tenant setting via set_config(..., is_local=true).
+    API endpoints can never call this function.
+    """
+    factory = session_factory or get_app_session_factory()
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(worker_ctx.tenant_id)},
         )
         yield session
 

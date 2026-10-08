@@ -6,18 +6,30 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Task 2.4**: Docling Parser Adapter & Tri-Path Extraction — **IN PROGRESS**
+- **Task 2.7**: Ingestion Pipeline Worker & Version Activation — **implementation done, awaiting verification**
+  - Completed: Alembic migration `0006_procrastinate_schema.py` (procrastinate schema, table grants for `app_user`, revoked for `retriever_user`, unapplied to shared DB), database tests in `test_migration_0006.py`, worker/tenant session separation (`worker_tenant_session(WorkerContext)` vs `tenant_session(TenantContext)`), system-worker audit actor (`user_id=None`), split job crash re-run recovery (`enqueue_uncompleted_page_jobs`), deterministic scoped chunk UUIDs, `PostgresDocumentRepository` version row lock (`SELECT ... FOR UPDATE`) and uncompleted page calculation, `PagePipelineService` with transient retry vs permanent review flagging, and atomic `VersionActivationService` (Branches A, B, C with atomic version flip and previous version retirement).
+- **Task 2.6**: Tabular Data Ingestion (CSV / Excel Worksheets into `tables_data`) — **COMPLETED**
+  - Completed: `BuiltinTableExtractor` with dual-read openpyxl distinguishing formulas lacking cached values (`unreadable` list in row JSON, zero sentinel strings in cell values), typed stubs (`types-openpyxl==3.1.5.20260827`, `types-defusedxml==0.7.0.20260504`), `defusedxml` XML bomb guard verified, CSV delimiters (`,`, `;`, `\t`), encodings (UTF-8, UTF-8 BOM, CP1252), strict limits (200 cols, 50,000 rows, 1,000,000 cells), date formatting by cell number format, merged cells verbatim retention, hidden sheet skip reporting, `TableIngestionService` with 1,000-row batching and `job_steps` recording (step recorded with status, zero sheet names), and `uq_tables_data_idempotency` re-run idempotency.
+- **Task 2.4**: Docling Parser Adapter & Tri-Path Extraction — **code complete, awaiting desktop verification**
   - Completed: Review policy with MECE coverage for all 4 page types, Migration 0005 applied to shared database (`0005_readings_table_cites`), database seeding test fixtures decoupled to `tests/fixtures/database_seeding.py`, parser profile matrix routing (`mock` -> `MockDocumentParser`, `office-cpu`/`desktop-gpu`/`home-gpu`/`dev-free-api` -> `DoclingDocumentParser`, `cloud` -> `DoclingDocumentParser` with offline/pinned models enforced), and adapter offline configuration (`EasyOCR` download disabled, model directory set, `HF_HUB_OFFLINE=1`).
-  - Pending: Manual execution of real-model desktop run (`desktop-gpu`) on the 32 GB workstation.
+
+## Desktop Verification Pending
+Phase 2 cannot pass its exit gate until this list is empty:
+1. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_ocr_spanish_scanned_page` (Spanish scanned page with EasyOCR OCR engine)
+2. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_digital_text_and_table_extraction` (Digital PDF text and structured table data extraction)
+3. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_multipage_confidence_and_review_detection` (Multi-page document per-page confidence scores and review gating)
+4. Real BGE-M3 embedding verification (Phase 2 Task 2.7 chunking and embedding real-model test)
 
 ## Next Task
-- **Task 2.5**: Document Chunker (Text Chunking, Metadata, Context Prefixes & Invariant 6 Enforcement)
+- **Task 2.5**: Vision Model Integration on Mock Provider (or Task 2.8: Review Flagging & Knowledge Admin UI)
 
 ## Pending Implementation Notes
 - **Upload API (Phase 2 upload API task)**: The upload endpoint must open `tenant_session(ctx)` itself and pass that session to `create_upload_service`. Add a test in that task proving uploads run with `app.current_tenant_id` set.
 - **Version Activation (Phase 2 activation task)**: Version activation must flip `documents.active_version_id` and `chunks.is_active` in one transaction, with a test, in the task that builds activation.
 - **Storage Adapter (Phase 2 storage task)**: `StorageKey` must take `tenant_id` from `TenantContext` as a UUID and reject `..`, absolute paths, and backslashes in Python as well.
 - **Parser Wiring Profile Guard**: `MockDocumentParser` is strictly wired only in profile `mock`. `office-cpu`, `desktop-gpu`, `home-gpu`, and `dev-free-api` wire `DoclingDocumentParser`. `cloud` profile strictly enforces `disable_model_download=True` and `pinned_model_paths` and forwards them to `DoclingDocumentParser`. All unknown profiles raise `ConfigurationError`.
+- **Table Export Formula Escaping**: In `tables_data`, cell values must be stored exactly as written (unmodified raw values, e.g. `-150`). Formula injection sanitization (prefixing risky leading characters `=`, `+`, `-`, `@`, `\t`, `\r` with `'`) must be applied strictly during client export to CSV/Excel in the export endpoint/UI, never in database storage.
+- **Knowledge Page Review Activation (Phase 2 Task 2.8)**: After an admin resolves flagged pages in the Knowledge page UI, version activation re-runs for that document version (allowing Branch A versions previously held in `needs_review` to become `ready` and retire the previous active version).
 ## Blockers
 - **None for Phase 1**: Phase 1 operates entirely on the `mock` profile with synthetic data on the 8 GB office PC (Docker memory capped at 3 GB).
 - **External Governance Gates (Phase 6/7 Prerequisites)**:

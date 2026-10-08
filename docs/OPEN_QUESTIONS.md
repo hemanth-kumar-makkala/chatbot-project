@@ -55,6 +55,7 @@ The following items from the spec's "Open decisions" remain open and require sta
 - [ ] **Office LAN Model Server** (Spec line 659): Confirmation whether the office network permits using the desktop GPU PC as a model server for the 8 GB office PC (IT check).
 - [ ] **Production Auth Provider** (Spec line 660): Authentication in production: built-in hashed sessions vs Identity Platform (checking BAA coverage).
 - [ ] **Extraction Schemas** (Spec line 661): Formal JSON schemas for the initial set of PHI document types (intake faxes, prior auth forms, clinical records).
+- [ ] **Spreadsheet Merged Cell Propagation** (Task 2.6): In `openpyxl` `read_only=True` mode, merged cell blocks contain data only in the top-left cell while remaining cells in the span evaluate to `None`. Ingestion preserves this verbatim in `tables_data`. To be revisited with real client documents if tabular QA requires forward-filling merged headers or values.
 
 ### 2.1 Platform Admin Cross-Tenant Query Topology (Architecture Design)
 - **Status**: **DOCUMENTED / OPEN FOR STAKEHOLDER REVIEW**

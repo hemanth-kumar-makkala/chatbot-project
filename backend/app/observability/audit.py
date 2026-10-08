@@ -15,9 +15,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.db.models import AuditEvent
-from app.db.session import tenant_session
+from app.db.session import tenant_session, worker_tenant_session
 from app.ports.audit import AuditLogger as AuditLoggerPort
-from app.ports.types import TenantContext
+from app.ports.types import TenantContext, WorkerContext
 
 logger = logging.getLogger(__name__)
 
@@ -78,3 +78,40 @@ class AuditLogger(AuditLoggerPort):
                 },
             )
             raise AuditError(f"Audit write failed: {exc}") from exc
+
+    async def record_worker(
+        self,
+        worker_ctx: WorkerContext,
+        action: str,
+        event_type: str,
+        resource_id: str | None = None,
+    ) -> UUID:
+        """Record an immutable compliance audit event on behalf of system worker.
+
+        Explicitly sets user_id=None (actor is system worker, not a user).
+        """
+        event_id = uuid4()
+        event = AuditEvent(
+            id=event_id,
+            tenant_id=UUID(worker_ctx.tenant_id),
+            user_id=None,
+            action=action,
+            event_type=event_type,
+            resource_id=resource_id,
+        )
+
+        try:
+            async with worker_tenant_session(worker_ctx) as session:
+                await self._insert_event(session, event)
+            return event_id
+        except Exception as exc:
+            logger.error(
+                "Worker audit write failed",
+                extra={
+                    "error_code": "ERR_AUDIT_WRITE_FAIL",
+                    "error_type": type(exc).__name__,
+                    "node": "audit",
+                    "status": "error",
+                },
+            )
+            raise AuditError(f"Worker audit write failed: {exc}") from exc

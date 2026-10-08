@@ -1,13 +1,15 @@
 """PostgreSQL adapter for DocumentRepository port."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, DocumentVersion, Job, JobStep, Page
+from app.db.models import Chunk, Document, DocumentVersion, Job, JobStep, Page, TableData
 from app.ports.document_repository import DocumentRepository
 from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
 from app.ports.types import DocumentRecord, DocumentVersionRecord
@@ -293,37 +295,356 @@ class PostgresDocumentRepository(DocumentRepository):
         step: str,
         status: str,
         processing_version: str = "v1",
+        job_id: UUID | None = None,
     ) -> None:
         """Record an idempotent job step execution in job_steps."""
-        job_stmt = (
-            select(Job)
-            .where(
+        if job_id is not None:
+            job_stmt = select(Job).where(
                 Job.tenant_id == UUID(str(tenant_id)),
-                Job.document_version_id == version_id,
+                Job.id == job_id,
             )
-            .order_by(Job.created_at.desc())
-        )
-        job_res = await self.session.execute(job_stmt)
-        job = job_res.scalars().first()
-        if job is None:
-            job = Job(
+            job_res = await self.session.execute(job_stmt)
+            job = job_res.scalars().first()
+            if job is None:
+                job = Job(
+                    id=job_id,
+                    tenant_id=UUID(str(tenant_id)),
+                    document_version_id=version_id,
+                    status="processing",
+                )
+                self.session.add(job)
+                await self.session.flush()
+            actual_job_id = job.id
+        else:
+            job_stmt = (
+                select(Job)
+                .where(
+                    Job.tenant_id == UUID(str(tenant_id)),
+                    Job.document_version_id == version_id,
+                )
+                .order_by(Job.created_at.desc())
+            )
+            job_res = await self.session.execute(job_stmt)
+            job = job_res.scalars().first()
+            if job is None:
+                job = Job(
+                    id=uuid4(),
+                    tenant_id=UUID(str(tenant_id)),
+                    document_version_id=version_id,
+                    status="processing",
+                )
+                self.session.add(job)
+                await self.session.flush()
+            actual_job_id = job.id
+
+        stmt = (
+            pg_insert(JobStep)
+            .values(
                 id=uuid4(),
                 tenant_id=UUID(str(tenant_id)),
+                job_id=actual_job_id,
                 document_version_id=version_id,
-                status="processing",
+                page_number=page_number,
+                step=step,
+                processing_version=processing_version,
+                status=status,
             )
-            self.session.add(job)
-            await self.session.flush()
-
-        step_row = JobStep(
-            id=uuid4(),
-            tenant_id=UUID(str(tenant_id)),
-            job_id=job.id,
-            document_version_id=version_id,
-            page_number=page_number,
-            step=step,
-            processing_version=processing_version,
-            status=status,
+            .on_conflict_do_nothing(
+                index_elements=[
+                    JobStep.tenant_id,
+                    JobStep.document_version_id,
+                    JobStep.page_number,
+                    JobStep.step,
+                    JobStep.processing_version,
+                ]
+            )
         )
-        self.session.add(step_row)
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def create_table_data_batch(
+        self,
+        tenant_id: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Insert a batch of table_data rows idempotently (ON CONFLICT DO NOTHING)."""
+        if not records:
+            return
+        clean_records: list[dict[str, Any]] = []
+        for r in records:
+            rec = dict(r)
+            rec["tenant_id"] = UUID(str(tenant_id))
+            if "id" not in rec or rec["id"] is None:
+                rec["id"] = uuid4()
+            clean_records.append(rec)
+
+        stmt = (
+            pg_insert(TableData)
+            .values(clean_records)
+            .on_conflict_do_nothing(constraint="uq_tables_data_idempotency")
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def get_uncompleted_page_numbers(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        step: str = "page_pipeline",
+    ) -> list[int]:
+        """Retrieve page numbers that do not yet have a completed job_step."""
+        tid = UUID(str(tenant_id))
+        all_pages_stmt = (
+            select(Page.page_number)
+            .where(Page.tenant_id == tid, Page.document_version_id == version_id)
+            .order_by(Page.page_number)
+        )
+        all_pages_res = await self.session.execute(all_pages_stmt)
+        all_pages = set(all_pages_res.scalars().all())
+
+        completed_stmt = select(JobStep.page_number).where(
+            JobStep.tenant_id == tid,
+            JobStep.document_version_id == version_id,
+            JobStep.step == step,
+            JobStep.status == "completed",
+            JobStep.page_number.is_not(None),
+        )
+        completed_res = await self.session.execute(completed_stmt)
+        completed_pages = set(completed_res.scalars().all())
+
+        return sorted(all_pages - completed_pages)
+
+    async def lock_version_for_activation(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> tuple[DocumentRecord, DocumentVersionRecord, int, int, bool]:
+        """Lock version row (FOR UPDATE) and evaluate completion and review state."""
+        tid = UUID(str(tenant_id))
+        # Strict global lock order: 1. Lock parent Document row first
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc_res = await self.session.execute(doc_stmt)
+        doc = doc_res.scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+
+        # Strict global lock order: 2. Lock child DocumentVersion row second
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver_res = await self.session.execute(ver_stmt)
+        ver = ver_res.scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        pages_stmt = select(Page).where(
+            Page.tenant_id == tid, Page.document_version_id == version_id
+        )
+        pages_res = await self.session.execute(pages_stmt)
+        pages = pages_res.scalars().all()
+        total_pages = len(pages)
+        has_flagged = any(p.needs_review for p in pages)
+
+        completed_stmt = select(func.count(func.distinct(JobStep.page_number))).where(
+            JobStep.tenant_id == tid,
+            JobStep.document_version_id == version_id,
+            JobStep.status == "completed",
+            JobStep.page_number.is_not(None),
+        )
+        completed_res = await self.session.execute(completed_stmt)
+        completed_pages = completed_res.scalar_one() or 0
+
+        doc_rec = DocumentRecord(
+            id=doc.id,
+            tenant_id=str(doc.tenant_id),
+            title=doc.title,
+            active_version_id=doc.active_version_id,
+            created_at=doc.created_at,
+        )
+        ver_rec = DocumentVersionRecord(
+            id=ver.id,
+            tenant_id=str(ver.tenant_id),
+            document_id=ver.document_id,
+            sha256=ver.sha256,
+            uploaded_by=str(ver.uploaded_by),
+            status=ver.status,
+            created_at=ver.created_at,
+        )
+        return doc_rec, ver_rec, total_pages, completed_pages, has_flagged
+
+    async def execute_version_activation(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        branch: str,
+    ) -> str:
+        """Execute Branch A, Branch B, or Branch C activation in current transaction."""
+        tid = UUID(str(tenant_id))
+        doc = (
+            (
+                await self.session.execute(
+                    select(Document).where(
+                        Document.tenant_id == tid,
+                        Document.id
+                        == (
+                            select(DocumentVersion.document_id)
+                            .where(
+                                DocumentVersion.tenant_id == tid,
+                                DocumentVersion.id == version_id,
+                            )
+                            .scalar_subquery()
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        ver = (
+            (
+                await self.session.execute(
+                    select(DocumentVersion).where(
+                        DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        old_active_id = doc.active_version_id
+
+        if branch == "Branch A":
+            ver.status = "needs_review"
+            await self.session.flush()
+            return "needs_review"
+
+        if branch == "Branch B":
+            doc.active_version_id = version_id
+            ver.status = "needs_review"
+            flagged_pages_stmt = select(Page.id).where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.needs_review.is_(True),
+            )
+            flagged_page_ids = set((await self.session.execute(flagged_pages_stmt)).scalars().all())
+
+            # Clean pages chunks active
+            if flagged_page_ids:
+                await self.session.execute(
+                    update(Chunk)
+                    .where(
+                        Chunk.tenant_id == tid,
+                        Chunk.document_version_id == version_id,
+                        Chunk.page_id.not_in(flagged_page_ids),
+                    )
+                    .values(is_active=True)
+                )
+                await self.session.execute(
+                    update(Chunk)
+                    .where(
+                        Chunk.tenant_id == tid,
+                        Chunk.document_version_id == version_id,
+                        Chunk.page_id.in_(flagged_page_ids),
+                    )
+                    .values(is_active=False)
+                )
+            else:
+                await self.session.execute(
+                    update(Chunk)
+                    .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                    .values(is_active=True)
+                )
+
+            await self.session.flush()
+            return "needs_review"
+
+        # Branch C: All pages clean
+        doc.active_version_id = version_id
+        ver.status = "ready"
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+            .values(is_active=True)
+        )
+        if old_active_id is not None and old_active_id != version_id:
+            await self.session.execute(
+                update(DocumentVersion)
+                .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == old_active_id)
+                .values(status="retired")
+            )
+            await self.session.execute(
+                update(Chunk)
+                .where(Chunk.tenant_id == tid, Chunk.document_version_id == old_active_id)
+                .values(is_active=False)
+            )
+
+        await self.session.flush()
+        return "ready"
+
+    async def create_chunks_batch(
+        self,
+        tenant_id: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Insert a batch of chunks idempotently (ON CONFLICT DO NOTHING)."""
+        if not records:
+            return
+        tid = UUID(str(tenant_id))
+        clean_records: list[dict[str, Any]] = []
+        for r in records:
+            rec = dict(r)
+            rec["tenant_id"] = tid
+            if "id" not in rec or rec["id"] is None:
+                rec["id"] = uuid4()
+            if rec.get("page_id") is None and "page_number" in rec and "document_version_id" in rec:
+                p_stmt = select(Page.id).where(
+                    Page.tenant_id == tid,
+                    Page.document_version_id == rec["document_version_id"],
+                    Page.page_number == rec["page_number"],
+                )
+                p_res = await self.session.execute(p_stmt)
+                rec["page_id"] = p_res.scalar_one_or_none()
+            rec.pop("page_number", None)
+            clean_records.append(rec)
+
+        stmt = (
+            pg_insert(Chunk).values(clean_records).on_conflict_do_nothing(index_elements=[Chunk.id])
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def flag_page_for_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> None:
+        """Mark a page as needs_review=True."""
+        stmt = (
+            update(Page)
+            .where(
+                Page.tenant_id == UUID(str(tenant_id)),
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .values(needs_review=True)
+        )
+        await self.session.execute(stmt)
         await self.session.flush()

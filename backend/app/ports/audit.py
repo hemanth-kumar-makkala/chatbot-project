@@ -10,7 +10,7 @@ Enforces:
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.ports.types import TenantContext
+from app.ports.types import TenantContext, WorkerContext
 
 
 class AuditLogger(ABC):
@@ -30,4 +30,15 @@ class AuditLogger(ABC):
         resource_id: str | None = None,
     ) -> UUID:
         """Record an immutable compliance audit event."""
+        ...
+
+    @abstractmethod
+    async def record_worker(
+        self,
+        worker_ctx: WorkerContext,
+        action: str,
+        event_type: str,
+        resource_id: str | None = None,
+    ) -> UUID:
+        """Record an immutable compliance audit event on behalf of system worker."""
         ...
