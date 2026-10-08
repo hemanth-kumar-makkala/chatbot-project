@@ -69,22 +69,40 @@ class TestLangGraphStudioConfiguration:
                 "LANGSMITH_TRACING=false must be present in .env"
             )
 
-    def test_runtime_guard_forces_langsmith_tracing_off(
+    def test_fastapi_app_entrypoint_forces_langsmith_tracing_off(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Startup forces LANGSMITH_TRACING and equivalent variables to false."""
+        """FastAPI entrypoint forces LANGSMITH_TRACING and equivalent variables to false."""
+        import importlib
         import os
-
-        from app.api.app import create_app
 
         monkeypatch.setenv("LANGSMITH_TRACING", "true")
         monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
         monkeypatch.setenv("LANGCHAIN_TRACING", "true")
 
-        # Act: startup of app
-        _ = create_app()
+        import app.api.app
 
-        # Assert: tracing variables forced off
+        importlib.reload(app.api.app)
+
+        assert os.environ.get("LANGSMITH_TRACING") == "false"
+        assert os.environ.get("LANGCHAIN_TRACING_V2") == "false"
+        assert os.environ.get("LANGCHAIN_TRACING") == "false"
+
+    def test_studio_entrypoint_forces_langsmith_tracing_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Studio entrypoint (studio.entry) forces LANGSMITH_TRACING to false on import."""
+        import importlib
+        import os
+
+        monkeypatch.setenv("LANGSMITH_TRACING", "true")
+        monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+        monkeypatch.setenv("LANGCHAIN_TRACING", "true")
+
+        import studio.entry
+
+        importlib.reload(studio.entry)
+
         assert os.environ.get("LANGSMITH_TRACING") == "false"
         assert os.environ.get("LANGCHAIN_TRACING_V2") == "false"
         assert os.environ.get("LANGCHAIN_TRACING") == "false"

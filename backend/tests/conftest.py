@@ -66,14 +66,23 @@ async def isolated_throwaway_database() -> AsyncIterator[ThrowawayDatabase]:
     password = os.getenv("POSTGRES_PASSWORD", "")
     throwaway_db_name = f"cka_test_throwaway_{uuid4().hex[:12]}"
 
-    admin_default_url = f"postgresql+psycopg://{user}:{password}@{host}:{port}/postgres"
-    admin_engine = create_async_engine(admin_default_url, isolation_level="AUTOCOMMIT")
+    admin_default_url = (
+        f"postgresql+psycopg://{user}:{password}@{host}:{port}/postgres?connect_timeout=3"
+    )
+    admin_engine = create_async_engine(
+        admin_default_url,
+        isolation_level="AUTOCOMMIT",
+        connect_args={"connect_timeout": 3},
+    )
 
     # 1. Create throwaway database
     async with admin_engine.connect() as conn:
         await conn.execute(text(f"CREATE DATABASE {throwaway_db_name};"))
 
-    throwaway_url = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{throwaway_db_name}"
+    throwaway_url = (
+        f"postgresql+psycopg://{user}:{password}@{host}:{port}/{throwaway_db_name}"
+        f"?connect_timeout=3"
+    )
     backend_dir = Path(__file__).resolve().parent.parent
     alembic_ini_path = backend_dir / "alembic.ini"
     cfg = Config(str(alembic_ini_path))

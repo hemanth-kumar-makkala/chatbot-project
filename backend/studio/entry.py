@@ -17,6 +17,10 @@ data when context is omitted, while preserving user-supplied context when explic
 
 from __future__ import annotations
 
+from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
+
+enforce_langsmith_tracing_disabled()
+
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from uuid import uuid4

@@ -1,12 +1,15 @@
 """FastAPI application factory and middleware configuration."""
 
+from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
+
+enforce_langsmith_tracing_disabled()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
 from app.api.routes import auth, health, questions
-from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.wiring import create_auth_provider
 
 

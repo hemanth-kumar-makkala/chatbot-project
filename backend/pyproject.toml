@@ -30,6 +30,9 @@ dev = [
     "httpx>=0.28.1,<1.0.0",
     "pypdf==6.19.0",
 ]
+parsing = [
+    "docling[easyocr]==2.135.0",
+]
 
 
 [build-system]
@@ -58,6 +61,12 @@ select = [
 ]
 ignore = []
 
+[tool.ruff.lint.per-file-ignores]
+"app/api/app.py" = ["E402"]
+"studio/entry.py" = ["E402"]
+"backend/app/api/app.py" = ["E402"]
+"backend/studio/entry.py" = ["E402"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
@@ -85,6 +94,23 @@ python_functions = ["test_*"]
 addopts = "-ra -q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "models: tests requiring real ML model weights (run on desktop-gpu only)",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+# CUDA wheel index URL: pending nvidia-smi confirmation from desktop (e.g. cu124 or cu126)
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [tool.pyrefly.errors]
 bad-specialization = false

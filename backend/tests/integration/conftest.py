@@ -26,9 +26,12 @@ def verify_shared_database_persistence_across_suite() -> Iterator[UUID]:
     db_name = os.getenv("POSTGRES_DB", "knowledge_assistant")
 
     marker_id = FIXED_SUITE_MARKER_TENANT_ID
-    conn_str = f"host={host} port={port} user={user} password={password} dbname={db_name}"
+    conn_str = (
+        f"host={host} port={port} user={user} password={password} "
+        f"dbname={db_name} connect_timeout=3"
+    )
 
-    # Setup: connect and insert fixed marker tenant row (must fail loudly if DB down)
+    # Setup: connect and insert fixed marker tenant row (must fail fast & loudly if DB down)
     with psycopg.connect(conn_str, autocommit=True) as conn, conn.cursor() as cur:
         # Upsert fixed marker tenant to handle previous test run artifacts cleanly
         cur.execute(

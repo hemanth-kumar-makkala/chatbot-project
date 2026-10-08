@@ -98,3 +98,8 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Status**: **DEFERRED TO PHASE 5 (HARDENING)**
 - **Context**: Task 1.8 implements per-IP sliding-window rate limiting (`LoginRateLimiter`) with HMAC client IP pseudonymization and Argon2 dummy timing attack mitigation.
 - **Decision Driver**: Per-account lockout protects against distributed credential stuffing attacks targeting specific high-privilege accounts from rotating IP pools. However, unmitigated per-account lockout can expose the application to denial-of-service (DoS) attacks against legitimate staff members. In Phase 5 ("Hardening"), a balanced per-account lockout mechanism (progressive backoff, CAPTCHA, or admin unlock workflows) will be specified alongside the Phase 5 security audit and Presidio exception scrubbing.
+
+### 3.4 CPU vs CUDA PyTorch for Linux Cloud Workers (Phase 6 Decision)
+- **Status**: **DEFERRED TO PHASE 6**
+- **Context**: Document parsing (Docling, EasyOCR) and vector embeddings (BGE-M3) utilize PyTorch. On the desktop GPU PC, CUDA acceleration is used. On GCP cloud deployments, workers could run either standard CPU wheels or GPU-accelerated workloads (e.g. Cloud Run with Nvidia L4 or GKE).
+- **Decision Driver**: CPU PyTorch wheels are ~200 MB, start quickly, and scale down to zero on Cloud Run at low compute cost within the <$100/mo cloud budget, but inference is slower. GPU instances provide sub-second OCR/embedding latency but incur higher idle and hourly costs. The choice between CPU-only vs CUDA PyTorch for Linux cloud workers will be evaluated and decided in Phase 6 based on batch ingestion volume and cloud spend telemetry.

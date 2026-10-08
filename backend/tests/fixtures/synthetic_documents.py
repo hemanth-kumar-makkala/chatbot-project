@@ -196,3 +196,27 @@ def create_synthetic_decompression_bomb_tiff(
     buf = io.BytesIO()
     img.save(buf, format="TIFF")
     return buf.getvalue()
+
+
+def create_synthetic_spanish_scanned_pdf(
+    text: str = "Atención médica: Paciente con diagnóstico de hipertensión arterial severa.",
+    num_pages: int = 1,
+) -> bytes:
+    """Generate a synthetic scanned PDF containing Spanish text rendered via Pillow default font."""
+    from PIL import ImageDraw, ImageFont
+
+    writer = pypdf.PdfWriter()
+    font = ImageFont.load_default(24)
+
+    for _ in range(num_pages):
+        img = Image.new("RGB", (612, 792), color=(245, 245, 245))
+        draw = ImageDraw.Draw(img)
+        draw.text((50, 100), text, fill=(20, 20, 20), font=font)
+        img_buf = io.BytesIO()
+        img.save(img_buf, format="PDF")
+        reader = pypdf.PdfReader(img_buf)
+        writer.add_page(reader.pages[0])
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()

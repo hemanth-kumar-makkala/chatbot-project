@@ -23,6 +23,7 @@ from app.core.graph import (
 )
 from app.core.ingestion.upload import UploadService
 from app.ports.audit import AuditLogger
+from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
 from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
@@ -125,6 +126,26 @@ def create_malware_scanner(profile: str) -> MalwareScanner:
         return MockMalwareScanner()
     raise ConfigurationError(
         f"MockMalwareScanner is forbidden in profile '{profile}'. "
+        f"Allowed synthetic profiles: {sorted(SYNTHETIC_LOCAL_PROFILES)}"
+    )
+
+
+def create_document_parser(profile: str) -> DocumentParser:
+    """Create a document parser adapter based on runtime profile.
+
+    MockDocumentParser is strictly permitted only in local synthetic profiles:
+    mock, office-cpu, desktop-gpu, home-gpu, dev-free-api.
+    Any other profile (e.g., 'cloud', 'frontier', or unknown) raises ConfigurationError.
+    Profile is required with no default to prevent fallback to 'mock'.
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile in SYNTHETIC_LOCAL_PROFILES:
+        from app.adapters.parsing.mock import MockDocumentParser
+
+        return MockDocumentParser()
+    raise ConfigurationError(
+        f"MockDocumentParser is forbidden in profile '{profile}'. "
         f"Allowed synthetic profiles: {sorted(SYNTHETIC_LOCAL_PROFILES)}"
     )
 

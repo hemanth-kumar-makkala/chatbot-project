@@ -760,3 +760,49 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `uv run --project backend pytest backend/tests/unit/test_page_splitting_and_classification.py`: 37 passed.
   - `uv run --project backend pytest backend/tests/integration/test_document_splitter_service.py`: 4 passed.
+
+---
+
+### [2026-10-08] Task 2.4: Docling Parser Adapter, Review Policy & Migration 0005
+
+- **Task ID**: Task 2.4
+- **What Was Built**:
+  - **Core Review Policy Domain** (`backend/app/core/ingestion/review_policy.py`):
+    - Pure Python implementation (zero vendor imports, AGENTS.md Build Rule 4).
+    - Strictly accepts `page_type: PageType` (raises `ValueError` for string or invalid inputs).
+    - Evaluates review gating under all 4 page types:
+      - `SCANNED`: OCR expected; if `ocr_score` is `NaN`, `None`, or `< 0.70`, flags `needs_review=True`.
+      - `IMAGE_HEAVY` without text layer: OCR expected, follows same rule as `SCANNED`.
+      - `IMAGE_HEAVY` with native text layer & `DIGITAL_TEXT`: not flagged for missing OCR (`needs_review=False`).
+      - `BLANK`: never flagged for review (`needs_review=False`), never indexed (`is_page_indexable` returns `False`).
+    - Enforces Invariant 6 (`is_page_indexable`) and version gating status (`evaluate_version_review_status`).
+  - **Database Migration 0005** (`backend/app/db/migrations/versions/0005_readings_table_cites.py`):
+    - Revision ID: `0005_readings_table_cites` (25 chars <= 32 char limit of `alembic_version.version_num`).
+    - Added `pages.ocr_confidence` (Float, nullable) and `pages.needs_review` (Boolean, default False).
+    - Added `tables_data.page_id` (UUID, nullable) and `table_index` (Integer, default 0).
+    - Added composite foreign key `(tenant_id, document_version_id, page_id) REFERENCES pages(tenant_id, document_version_id, id)` preventing cross-tenant citations (Invariant 8).
+    - Added unique constraint `uq_tables_data_idempotency` with `NULLS NOT DISTINCT` on `(tenant_id, document_version_id, sheet_name, page_id, table_index, row_index)` for duplicate spreadsheet re-run rejection.
+    - Added unique constraint `uq_page_readings_idempotency` on `(tenant_id, page_id, source, model_id, model_version)`.
+    - Updated SQLAlchemy declarative models in `backend/app/db/models.py`.
+  - **Docling Parser Adapter** (`backend/app/adapters/parsing/docling.py`):
+    - Implemented `DoclingDocumentParser` with lazy `docling` loading inside functions/methods.
+    - Strict error boundary: raises `ConfigurationError` when docling is not installed (zero safe fallback).
+    - Helper methods: `filter_indexable_pages` (Invariant 6), `build_page_reading_record`, `build_table_data_records`.
+  - **Mock Document Parser** (`backend/app/adapters/parsing/mock.py`):
+    - Implemented `MockDocumentParser` implementing `DocumentParser` for deterministic test fixtures.
+  - **Database Test Hardening**:
+    - Added `connect_timeout=3` parameter to `verify_shared_database_persistence_across_suite` and `isolated_throwaway_database` so a stopped PostgreSQL fails fast instead of hanging.
+- **Tests Added**:
+  - `backend/tests/invariants/test_migration_invariants.py`: Invariant test asserting all migration revision IDs in `versions/` are <= 32 characters.
+  - `backend/tests/unit/test_review_policy.py`: 18 pure Python unit tests verifying all 4 page types, NaN / None / threshold scores, blank page non-indexing, string/type validation rejection, and version evaluation. All 18 pass in CI.
+  - `backend/tests/integration/test_docling_parser.py`: Contract and idempotency tests verifying page reading unique keys, spreadsheet NULLS NOT DISTINCT re-runs, and Invariant 8 table page citations using `MockDocumentParser` and asserting `ConfigurationError` when docling is absent. Real-model tests marked with `@pytest.mark.models` and skipped when docling is not installed.
+  - `backend/tests/integration/test_migration_0005.py`: Integration tests in an isolated throwaway database testing upgrade/downgrade/upgrade lifecycle, duplicate page_readings rejection (23505), duplicate spreadsheet tables_data rejection with page_id NULL (23505), cross-tenant tables_data page reference rejection (23503), and pages.needs_review default false.
+- **Decisions Made**:
+  - Migration revision IDs capped strictly at 32 characters enforced by AST invariant test.
+  - Docling adapter raises `ConfigurationError` when optional parsing dependencies are not installed; tests use `MockDocumentParser`.
+  - Review policy logic strictly lives in `app/core/ingestion/review_policy.py` and takes `PageType` enum only.
+  - Real-model tests are gated behind `@pytest.mark.models` and run on the desktop GPU.
+- **Verification**:
+  - All 18 unit tests in `tests/unit/test_review_policy.py` pass.
+  - `test_migration_invariants.py` passes in 0.02s.
+  - All pre-commit hooks pass on all files (`pre-commit run --all-files`).

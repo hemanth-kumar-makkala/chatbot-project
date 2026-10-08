@@ -13,7 +13,11 @@ from app.ports.errors import (
     MalwareDetectedError,
 )
 from app.ports.types import StorageKey
-from app.wiring import create_malware_scanner, create_storage_backend
+from app.wiring import (
+    create_document_parser,
+    create_malware_scanner,
+    create_storage_backend,
+)
 
 
 # --- Helpers for creating valid synthetic file payloads in memory ---
@@ -298,6 +302,23 @@ def test_storage_backend_wiring_guard_profile_allowlist() -> None:
         create_storage_backend("some-unknown-profile")
 
 
+def test_document_parser_wiring_guard_profile_allowlist() -> None:
+    # Synthetic local profiles succeed
+    for profile in ["mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"]:
+        parser = create_document_parser(profile)
+        assert parser is not None
+
+    # Cloud, frontier, or unknown profiles MUST refuse to start
+    with pytest.raises(ConfigurationError):
+        create_document_parser("cloud")
+
+    with pytest.raises(ConfigurationError):
+        create_document_parser("frontier")
+
+    with pytest.raises(ConfigurationError):
+        create_document_parser("some-unknown-profile")
+
+
 def test_storage_key_path_traversal_sanitization() -> None:
     tenant_id = uuid4()
 
@@ -324,6 +345,9 @@ def test_wiring_factories_require_profile_argument_without_default() -> None:
 
     with pytest.raises(TypeError):
         create_malware_scanner()  # type: ignore[call-arg]
+
+    with pytest.raises(TypeError):
+        create_document_parser()  # type: ignore[call-arg]
 
     with pytest.raises(TypeError):
         create_storage_backend()  # type: ignore[call-arg]

@@ -376,6 +376,10 @@ class Page(Base):
     page_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     page_type: Mapped[str] = mapped_column(String(50), nullable=False)
     image_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_text("false"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -387,6 +391,14 @@ class PageReading(Base):
     __tablename__ = "page_readings"
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_page_readings_tenant_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "page_id",
+            "source",
+            "model_id",
+            "model_version",
+            name="uq_page_readings_idempotency",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "page_id"],
             ["pages.tenant_id", "pages.id"],
@@ -463,10 +475,26 @@ class TableData(Base):
     __tablename__ = "tables_data"
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_tables_data_tenant_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "document_version_id",
+            "sheet_name",
+            "page_id",
+            "table_index",
+            "row_index",
+            name="uq_tables_data_idempotency",
+            postgresql_nulls_not_distinct=True,
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "document_version_id"],
             ["document_versions.tenant_id", "document_versions.id"],
             name="fk_tables_data_document_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "page_id"],
+            ["pages.tenant_id", "pages.document_version_id", "pages.id"],
+            name="fk_tables_data_page",
             ondelete="RESTRICT",
         ),
     )
@@ -475,6 +503,10 @@ class TableData(Base):
     tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     document_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    page_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    table_index: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=sa_text("0"), nullable=False
+    )
     row_index: Mapped[int] = mapped_column(Integer, nullable=False)
     row_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
