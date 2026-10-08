@@ -24,7 +24,10 @@ _DOCLING_NOT_INSTALLED_ERROR = (
 )
 
 
-def _get_docling_converter() -> Any:
+def _get_docling_converter(
+    disable_model_download: bool = False,
+    pinned_model_paths: str | dict[str, str] | None = None,
+) -> Any:
     """Lazy import and factory for Docling DocumentConverter."""
     if not HAS_DOCLING:
         raise ConfigurationError(
@@ -32,6 +35,11 @@ def _get_docling_converter() -> Any:
             error_code="DOCLING_NOT_INSTALLED",
         )
     try:
+        import os
+
+        if disable_model_download:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+
         from docling.datamodel.base_models import InputFormat  # type: ignore[import-not-found]
         from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found]
             EasyOcrOptions,
@@ -42,13 +50,32 @@ def _get_docling_converter() -> Any:
             PdfFormatOption,
         )
 
+        model_dir = (
+            pinned_model_paths
+            if isinstance(pinned_model_paths, str)
+            else (
+                (pinned_model_paths.get("easyocr") or pinned_model_paths.get("models"))
+                if isinstance(pinned_model_paths, dict)
+                else None
+            )
+        )
+
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
-        pipeline_options.ocr_options = EasyOcrOptions(
-            lang=["es", "en"],
-            use_gpu=True,
-            confidence_threshold=0.5,
-        )
+        if model_dir:
+            pipeline_options.artifacts_path = model_dir
+
+        ocr_kwargs: dict[str, Any] = {
+            "lang": ["es", "en"],
+            "use_gpu": True,
+            "confidence_threshold": 0.5,
+        }
+        if disable_model_download:
+            ocr_kwargs["download_enabled"] = False
+        if model_dir:
+            ocr_kwargs["model_storage_directory"] = model_dir
+
+        pipeline_options.ocr_options = EasyOcrOptions(**ocr_kwargs)
 
         return DocumentConverter(
             format_options={
@@ -65,8 +92,42 @@ def _get_docling_converter() -> Any:
 class DoclingDocumentParser(DocumentParser):
     """Adapter implementing DocumentParser using IBM Docling."""
 
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        disable_model_download: bool = False,
+        pinned_model_paths: str | dict[str, str] | None = None,
+    ) -> None:
+        import os
+
+        self.disable_model_download = disable_model_download
+        self.pinned_model_paths = pinned_model_paths
+        self.easyocr_download_enabled = not disable_model_download
+
+        if isinstance(pinned_model_paths, str):
+            self.model_directory: str | None = pinned_model_paths
+        elif isinstance(pinned_model_paths, dict):
+            self.model_directory = (
+                pinned_model_paths.get("easyocr")
+                or pinned_model_paths.get("models")
+                or pinned_model_paths.get("artifacts_path")
+            )
+        else:
+            self.model_directory = None
+
+        if self.disable_model_download:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+
+    def get_configured_options(self) -> dict[str, Any]:
+        """Return resolved configuration options for testing/introspection."""
+        import os
+
+        return {
+            "disable_model_download": self.disable_model_download,
+            "pinned_model_paths": self.pinned_model_paths,
+            "easyocr_download_enabled": self.easyocr_download_enabled,
+            "model_directory": self.model_directory,
+            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
+        }
 
     async def split_pages(
         self,
@@ -93,7 +154,10 @@ class DoclingDocumentParser(DocumentParser):
                 error_code="DOCLING_NOT_INSTALLED",
             )
 
-        converter = _get_docling_converter()
+        converter = _get_docling_converter(
+            disable_model_download=self.disable_model_download,
+            pinned_model_paths=self.pinned_model_paths,
+        )
         from docling.datamodel.base_models import DocumentStream
 
         stream = DocumentStream(

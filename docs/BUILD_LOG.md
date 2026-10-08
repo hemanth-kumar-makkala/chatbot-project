@@ -802,7 +802,11 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Docling adapter raises `ConfigurationError` when optional parsing dependencies are not installed; tests use `MockDocumentParser`.
   - Review policy logic strictly lives in `app/core/ingestion/review_policy.py` and takes `PageType` enum only.
   - Real-model tests are gated behind `@pytest.mark.models` and run on the desktop GPU.
+  - `dev-free-api` uses `DoclingDocumentParser` (matching `office-cpu` CPU ingestion, as generation models alone use Gemini free tier; parsing is local).
+  - Production `cloud` parser requires offline flags and pinned model paths, forwarded directly to `DoclingDocumentParser` which sets `HF_HUB_OFFLINE=1`, disables EasyOCR downloads, and sets model directory paths.
 - **Verification**:
   - All 18 unit tests in `tests/unit/test_review_policy.py` pass.
   - `test_migration_invariants.py` passes in 0.02s.
+  - All 28 tests in `tests/unit/test_upload_validation.py` pass.
+  - All 5 database integration tests in `test_migration_0005.py` pass against Postgres.
   - All pre-commit hooks pass on all files (`pre-commit run --all-files`).

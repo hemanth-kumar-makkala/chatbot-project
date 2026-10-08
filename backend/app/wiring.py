@@ -130,23 +130,56 @@ def create_malware_scanner(profile: str) -> MalwareScanner:
     )
 
 
-def create_document_parser(profile: str) -> DocumentParser:
+def create_document_parser(
+    profile: str,
+    *,
+    disable_model_download: bool = False,
+    pinned_model_paths: str | dict[str, str] | None = None,
+) -> DocumentParser:
     """Create a document parser adapter based on runtime profile.
 
-    MockDocumentParser is strictly permitted only in local synthetic profiles:
-    mock, office-cpu, desktop-gpu, home-gpu, dev-free-api.
-    Any other profile (e.g., 'cloud', 'frontier', or unknown) raises ConfigurationError.
-    Profile is required with no default to prevent fallback to 'mock'.
+    Profiles:
+    - mock: MockDocumentParser
+    - office-cpu, desktop-gpu, home-gpu, dev-free-api: DoclingDocumentParser (real)
+    - cloud: DoclingDocumentParser (production), strictly requires model auto-download
+      disabled and pinned model paths configured. If missing, raises ConfigurationError.
+    - unknown profile: ConfigurationError
+    The mock parser must never be returned outside the mock profile.
     """
     from app.ports.errors import ConfigurationError
 
-    if profile in SYNTHETIC_LOCAL_PROFILES:
+    if profile == "mock":
         from app.adapters.parsing.mock import MockDocumentParser
 
         return MockDocumentParser()
+
+    if profile in ("office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"):
+        from app.adapters.parsing.docling import DoclingDocumentParser
+
+        return DoclingDocumentParser(
+            disable_model_download=disable_model_download,
+            pinned_model_paths=pinned_model_paths,
+        )
+
+    if profile == "cloud":
+        if not disable_model_download or not pinned_model_paths:
+            raise ConfigurationError(
+                "Cloud profile requires model auto-download disabled and pinned model paths "
+                "configured.",
+                error_code="CLOUD_PARSER_CONFIG_MISSING",
+            )
+        from app.adapters.parsing.docling import DoclingDocumentParser
+
+        return DoclingDocumentParser(
+            disable_model_download=disable_model_download,
+            pinned_model_paths=pinned_model_paths,
+        )
+
+    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
     raise ConfigurationError(
-        f"MockDocumentParser is forbidden in profile '{profile}'. "
-        f"Allowed synthetic profiles: {sorted(SYNTHETIC_LOCAL_PROFILES)}"
+        f"Unknown or unauthorized profile '{profile}' for document parser. "
+        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+        error_code="UNAUTHORIZED_PARSER_PROFILE",
     )
 
 

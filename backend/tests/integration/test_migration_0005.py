@@ -22,7 +22,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.conftest import isolated_throwaway_database
-from tests.integration.test_ingestion_schema import (
+from tests.fixtures.database_seeding import (
     seed_document,
     seed_page,
     seed_reading,
