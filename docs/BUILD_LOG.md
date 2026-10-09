@@ -917,5 +917,5 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Error classification: `is_retryable_error` classifies PostgreSQL `DeadlockDetected` (40P01) and `SerializationFailure` (40001) as transient errors for worker retry.
 - **Verification**:
   - All 17 Task 2.7 tests pass.
-  - Concurrency test verified across 35 consecutive runs with 0 failures and 0 deadlocks.
+  - Concurrency test verified across 30 consecutive runs with 0 failures and 0 deadlocks (stopping on first failure).
   - All 10 pre-commit hooks pass on all files (`pre-commit run --all-files`).

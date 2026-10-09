@@ -170,6 +170,24 @@ class QueueError(PortError):
         )
 
 
+class TransientIngestionError(PortError):
+    """Raised at job boundary when a database or network error is transient and retryable."""
+
+    def __init__(
+        self,
+        message: str = "Transient database or network error",
+        error_code: str = "TRANSIENT_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=503,
+            retryable=True,
+            details=details,
+        )
+
+
 class FileValidationError(PortError):
     """Raised when file format, header, size, or encoding validation fails."""
 

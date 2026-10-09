@@ -9,3 +9,4 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md` (Se
 - Database access boundary: The AI model and model adapters never receive database credentials or access. Only the `Retriever` port implementation queries chunk data.
 - Normalized visual comparison: Two vision readings never match word for word; visual validation compares normalized values (digits, dates, IDs, amounts) rather than raw prose.
 - Administrative scope: No generic admin dashboard; the Knowledge page and its review list are the only administrative screens.
+- Database row lock hierarchy: Always acquire row locks in top-down hierarchy: `documents`, then `document_versions`, then `pages` across all transactional paths to prevent concurrency deadlocks.

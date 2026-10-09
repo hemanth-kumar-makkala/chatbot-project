@@ -31,6 +31,7 @@ from app.ports.errors import (
     ProviderUnavailable,
     QueueError,
     StorageError,
+    TransientIngestionError,
 )
 from app.ports.job_queue import JobQueue
 from app.ports.malware_scanner import MalwareScanner
@@ -103,6 +104,7 @@ __all__ = [
     "StorageError",
     "ParseError",
     "QueueError",
+    "TransientIngestionError",
     # Core Port Types
     "UserRole",
     "TenantContext",

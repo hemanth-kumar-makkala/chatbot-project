@@ -14,14 +14,25 @@ import os
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from procrastinate import App, PsycopgConnector
+from procrastinate import App, JobContext, PsycopgConnector
+from procrastinate.retry import RetryStrategy
+from sqlalchemy import update
 
+from app.core.ingestion.pipeline import is_retryable_error
 from app.db.env_utils import load_dotenv
+from app.db.models import DocumentVersion
 from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.ports.document_repository import DocumentRepository
+from app.ports.errors import TransientIngestionError
 
 # Mandatory: enforce LangSmith tracing disabled at module import / worker startup
 enforce_langsmith_tracing_disabled()
+
+ingestion_retry_strategy = RetryStrategy(
+    max_attempts=5,
+    exponential_wait=2,
+    retry_exceptions=(TransientIngestionError,),
+)
 
 
 def get_procrastinate_connector(
@@ -55,8 +66,8 @@ def create_procrastinate_app(
 app = create_procrastinate_app()
 
 
-@app.task(queue="ingestion", retry=5)
-async def split_document_job(
+async def run_split_document_job(
+    context: JobContext,
     tenant_id: str,
     document_version_id: str,
 ) -> None:
@@ -73,17 +84,70 @@ async def split_document_job(
 
     v_id = UUID(document_version_id)
     worker_ctx = WorkerContext(tenant_id=tenant_id, job_id=str(uuid.uuid4()))
-    async with worker_tenant_session(worker_ctx) as session:
-        repo = create_document_repository(session)
-        await enqueue_uncompleted_page_jobs(
-            tenant_id=tenant_id,
-            document_version_id=v_id,
-            repository=repo,
-        )
+    try:
+        async with worker_tenant_session(worker_ctx) as session:
+            repo = create_document_repository(session)
+            await enqueue_uncompleted_page_jobs(
+                tenant_id=tenant_id,
+                document_version_id=v_id,
+                repository=repo,
+                session=session,
+            )
+    except Exception as exc:
+        if is_retryable_error(exc):
+            orig = getattr(exc, "orig", exc)
+            code = (
+                getattr(orig, "sqlstate", None)
+                or getattr(orig, "pgcode", None)
+                or "TRANSIENT_DB_ERROR"
+            )
+            transient_exc = TransientIngestionError(
+                message="Transient document split error",
+                error_code=code,
+            )
+            retry_decision = ingestion_retry_strategy.get_retry_decision(
+                exception=transient_exc,
+                job=context.job,
+            )
+            if retry_decision is not None:
+                # Re-raise with fixed message, SQLSTATE code only, from None (zero str(exc))
+                raise transient_exc from None
+
+        # Permanent failure or final retry exhausted: version must transition to 'failed'
+        async with worker_tenant_session(worker_ctx) as session:
+            repo = create_document_repository(session)
+            await session.execute(
+                update(DocumentVersion)
+                .where(
+                    DocumentVersion.tenant_id == UUID(tenant_id),
+                    DocumentVersion.id == v_id,
+                )
+                .values(status="failed")
+            )
+            await repo.record_job_step(
+                tenant_id=tenant_id,
+                version_id=v_id,
+                page_number=None,
+                step="split",
+                status="failed",
+            )
 
 
-@app.task(queue="ingestion", retry=5)
-async def process_page_job(
+@app.task(queue="ingestion", retry=ingestion_retry_strategy, pass_context=True)
+async def split_document_job(
+    context: JobContext,
+    tenant_id: str,
+    document_version_id: str,
+) -> None:
+    await run_split_document_job(
+        context=context,
+        tenant_id=tenant_id,
+        document_version_id=document_version_id,
+    )
+
+
+async def run_page_job(
+    context: JobContext,
     tenant_id: str,
     document_version_id: str,
     page_number: int,
@@ -95,7 +159,6 @@ async def process_page_job(
     1. Commits page processing (chunks and job_steps) in its own transaction.
     2. Runs completion check and version activation in a separate short transaction.
     """
-    import os
     import uuid
 
     from app.db.session import worker_tenant_session
@@ -108,12 +171,68 @@ async def process_page_job(
 
     # Transaction 1: Commit page work (chunks, job_steps) in its own transaction
     async with worker_tenant_session(worker_ctx) as session:
-        pipeline = create_page_pipeline_service(session, profile=profile)
-        await pipeline.process_page(
+        repo = create_page_pipeline_service(session, profile=profile).repository
+        # Idempotency check: if page is already terminal in job_steps, skip re-processing
+        uncompleted = await repo.get_uncompleted_page_numbers(
             tenant_id=tenant_id,
-            document_version_id=v_id,
-            page_number=page_number,
+            version_id=v_id,
+            step="chunking",
         )
+        if page_number in uncompleted:
+            pipeline = create_page_pipeline_service(session, profile=profile)
+            try:
+                await pipeline.process_page(
+                    tenant_id=tenant_id,
+                    document_version_id=v_id,
+                    page_number=page_number,
+                )
+            except Exception as exc:
+                if is_retryable_error(exc):
+                    orig = getattr(exc, "orig", exc)
+                    code = (
+                        getattr(orig, "sqlstate", None)
+                        or getattr(orig, "pgcode", None)
+                        or "TRANSIENT_DB_ERROR"
+                    )
+                    transient_exc = TransientIngestionError(
+                        message="Transient page processing error",
+                        error_code=code,
+                    )
+                    retry_decision = ingestion_retry_strategy.get_retry_decision(
+                        exception=transient_exc,
+                        job=context.job,
+                    )
+                    if retry_decision is None:
+                        # Final attempt: flag page (type and code only) and record failed step
+                        await repo.flag_page_for_review(
+                            tenant_id=tenant_id,
+                            version_id=v_id,
+                            page_number=page_number,
+                        )
+                        await repo.record_job_step(
+                            tenant_id=tenant_id,
+                            version_id=v_id,
+                            page_number=page_number,
+                            step="chunking",
+                            status="failed",
+                        )
+                    else:
+                        # Re-raise with fixed message, SQLSTATE code only, from None (zero str(exc))
+                        raise transient_exc from None
+                else:
+                    # Permanent error: flag page for review and record failed step
+                    await repo.flag_page_for_review(
+                        tenant_id=tenant_id,
+                        version_id=v_id,
+                        page_number=page_number,
+                    )
+                    await repo.record_job_step(
+                        tenant_id=tenant_id,
+                        version_id=v_id,
+                        page_number=page_number,
+                        step="chunking",
+                        status="failed",
+                    )
 
     # Transaction 2: Separate short transaction that acquires locks and activates if complete
     async with worker_tenant_session(worker_ctx) as session:
@@ -124,22 +243,51 @@ async def process_page_job(
         )
 
 
+@app.task(queue="ingestion", retry=ingestion_retry_strategy, pass_context=True)
+async def process_page_job(
+    context: JobContext,
+    tenant_id: str,
+    document_version_id: str,
+    page_number: int,
+) -> None:
+    await run_page_job(
+        context=context,
+        tenant_id=tenant_id,
+        document_version_id=document_version_id,
+        page_number=page_number,
+    )
+
+
 async def enqueue_uncompleted_page_jobs(
     tenant_id: str,
     document_version_id: UUID,
     repository: DocumentRepository,
     defer_fn: Callable[[str, str, int], Awaitable[None]] | None = None,
+    session: object | None = None,
 ) -> list[int]:
     """Identify pages without a completed step and enqueue them for processing.
 
     Guarantees that a re-run of a split job whose subsequent queue transaction crashed
     will safely pick up all unprocessed pages without duplicating completed ones.
+    If all pages are already accounted for, evaluates version activation immediately.
     """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     uncompleted = await repository.get_uncompleted_page_numbers(
         tenant_id=tenant_id,
         version_id=document_version_id,
         step="chunking",
     )
+    if not uncompleted and isinstance(session, AsyncSession):
+        from app.wiring import create_version_activation_service
+
+        activation_service = create_version_activation_service(session)
+        await activation_service.check_and_activate_if_complete(
+            tenant_id=tenant_id,
+            document_version_id=document_version_id,
+        )
+        return []
+
     for p_num in uncompleted:
         if defer_fn is not None:
             await defer_fn(tenant_id, str(document_version_id), p_num)
@@ -150,3 +298,39 @@ async def enqueue_uncompleted_page_jobs(
                 page_number=p_num,
             )
     return uncompleted
+
+
+async def run_stalled_job_sweep(
+    context: JobContext,
+    timestamp: int = 0,
+    seconds_since_heartbeat: float = 30,
+) -> int:
+    """Periodic sweep re-queueing stalled jobs in 'doing' whose worker heartbeat expired.
+
+    Only queries procrastinate_jobs queue table in procrastinate schema;
+    never queries tenant tables or scans across tenants.
+    """
+    _ = timestamp
+    stalled_jobs = await context.app.job_manager.get_stalled_jobs(
+        seconds_since_heartbeat=seconds_since_heartbeat,
+        queue="ingestion",
+    )
+    requeued = 0
+    for job in stalled_jobs:
+        await context.app.job_manager.retry_job(job=job)
+        requeued += 1
+    return requeued
+
+
+@app.periodic(cron="*/5 * * * *", periodic_id="stalled_job_sweep")
+@app.task(queue="builtin", pass_context=True)
+async def stalled_job_sweep_task(
+    context: JobContext,
+    timestamp: int = 0,
+    seconds_since_heartbeat: float = 30,
+) -> int:
+    return await run_stalled_job_sweep(
+        context=context,
+        timestamp=timestamp,
+        seconds_since_heartbeat=seconds_since_heartbeat,
+    )

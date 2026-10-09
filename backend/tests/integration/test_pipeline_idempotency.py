@@ -231,3 +231,294 @@ class TestPipelineExecutionAndIdempotency:
             )
             assert res2 == [3]
             assert enqueued == [3]
+
+    async def test_all_pages_done_stuck_processing_activated_by_recovery(
+        self, seeded_tenant_and_user: tuple[UUID, UUID]
+    ) -> None:
+        """Version stuck in processing when all pages are terminal is activated by recovery."""
+        from app.db.models import Document, DocumentVersion
+        from app.worker import enqueue_uncompleted_page_jobs
+        from tests.fixtures.database_seeding import seed_chunk, seed_job
+
+        tenant_id, user_id = seeded_tenant_and_user
+        worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+        async with worker_tenant_session(worker_ctx) as session:
+            doc_id = await seed_document(session, tenant_id=tenant_id, title="Stuck Recovery Doc")
+            ver_id = await seed_version(
+                session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+            )
+            p1 = await seed_page(session, tenant_id=tenant_id, ver_id=ver_id, page_number=1)
+            p2 = await seed_page(session, tenant_id=tenant_id, ver_id=ver_id, page_number=2)
+            await seed_chunk(
+                session, tenant_id=tenant_id, page_id=p1, ver_id=ver_id, is_active=False
+            )
+            await seed_chunk(
+                session, tenant_id=tenant_id, page_id=p2, ver_id=ver_id, is_active=False
+            )
+
+            # Both pages have terminal job_steps (1 completed, 1 failed)
+            await seed_job(
+                session, tenant_id=tenant_id, ver_id=ver_id, job_id=UUID(worker_ctx.job_id)
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO job_steps "
+                    "(id, tenant_id, job_id, document_version_id, page_number, step, "
+                    "processing_version, status) "
+                    "VALUES (:id1, :tid, :jid, :vid, 1, 'chunking', 'v1', 'completed'), "
+                    "       (:id2, :tid, :jid, :vid, 2, 'chunking', 'v1', 'failed') "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {
+                    "id1": uuid4(),
+                    "id2": uuid4(),
+                    "tid": tenant_id,
+                    "jid": UUID(worker_ctx.job_id),
+                    "vid": ver_id,
+                },
+            )
+            # Page 2 flagged for review
+            await session.execute(
+                text("UPDATE pages SET needs_review = true WHERE id = :pid"),
+                {"pid": p2},
+            )
+
+            repo = PostgresDocumentRepository(session)
+            # Recovery executes when 0 uncompleted pages remain
+            uncompleted = await enqueue_uncompleted_page_jobs(
+                tenant_id=str(tenant_id),
+                document_version_id=ver_id,
+                repository=repo,
+                session=session,
+            )
+            assert uncompleted == []
+
+            # Verify version activated and left 'processing'
+            ver_row = (
+                await session.execute(select(DocumentVersion).where(DocumentVersion.id == ver_id))
+            ).scalar_one()
+            assert ver_row.status == "needs_review"
+            doc_row = (
+                await session.execute(select(Document).where(Document.id == doc_id))
+            ).scalar_one()
+            assert doc_row.active_version_id == ver_id
+
+    async def test_stalled_job_sweep_retries_doing_job_and_version_leaves_processing(
+        self,
+        seeded_tenant_and_user: tuple[UUID, UUID],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stalled job in 'doing' with dead worker is retried by sweep, activating version."""
+        from procrastinate import JobContext
+        from procrastinate.jobs import Job, Status
+
+        from app.db.models import Document, DocumentVersion
+        from app.worker import (
+            app,
+            process_page_job,
+            run_page_job,
+            run_stalled_job_sweep,
+        )
+        from tests.fixtures.database_seeding import seed_chunk, seed_job
+
+        tenant_id, user_id = seeded_tenant_and_user
+        worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+        async with worker_tenant_session(worker_ctx) as session:
+            doc_id = await seed_document(session, tenant_id=tenant_id, title="Stalled Sweep Doc")
+            ver_id = await seed_version(
+                session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+            )
+            p1 = await seed_page(session, tenant_id=tenant_id, ver_id=ver_id, page_number=1)
+            await seed_chunk(
+                session, tenant_id=tenant_id, page_id=p1, ver_id=ver_id, is_active=False
+            )
+
+            # Page 1 has completed step in job_steps
+            await seed_job(
+                session, tenant_id=tenant_id, ver_id=ver_id, job_id=UUID(worker_ctx.job_id)
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO job_steps "
+                    "(id, tenant_id, job_id, document_version_id, page_number, step, "
+                    "processing_version, status) "
+                    "VALUES (:id, :tid, :jid, :vid, 1, 'chunking', 'v1', 'completed') "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {"id": uuid4(), "tid": tenant_id, "jid": UUID(worker_ctx.job_id), "vid": ver_id},
+            )
+
+        # 1. Simulate stalled last-page job stuck in 'doing' state
+        stalled_job = Job(
+            id=101,
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            task_kwargs={
+                "tenant_id": str(tenant_id),
+                "document_version_id": str(ver_id),
+                "page_number": 1,
+            },
+            status=Status.DOING.value,
+        )
+
+        retried_jobs: list[Job] = []
+
+        async def mock_get_stalled_jobs(
+            seconds_since_heartbeat: float = 30, queue: str | None = None
+        ) -> list[Job]:
+            _ = (seconds_since_heartbeat, queue)
+            return [stalled_job]
+
+        async def mock_retry_job(job: Job) -> None:
+            retried_jobs.append(job)
+
+        monkeypatch.setattr(app.job_manager, "get_stalled_jobs", mock_get_stalled_jobs)
+        monkeypatch.setattr(app.job_manager, "retry_job", mock_retry_job)
+
+        sweep_context = JobContext(
+            app=app,
+            job=stalled_job,
+            start_timestamp=0.0,
+            abort_reason=lambda: None,
+        )
+
+        # 2. Run stalled job sweep
+        requeued_count = await run_stalled_job_sweep(context=sweep_context)
+        assert requeued_count == 1
+        assert retried_jobs == [stalled_job]
+
+        # 3. Simulate execution of the retried job
+        retried_job = Job(
+            id=102,
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            task_kwargs=stalled_job.task_kwargs,
+            attempts=1,
+        )
+        page_job_context = JobContext(
+            app=app,
+            job=retried_job,
+            start_timestamp=0.0,
+            abort_reason=lambda: None,
+        )
+        await run_page_job(
+            context=page_job_context,
+            tenant_id=str(tenant_id),
+            document_version_id=str(ver_id),
+            page_number=1,
+        )
+
+        # 4. Verify version left 'processing' and activated
+        async with worker_tenant_session(worker_ctx) as session:
+            ver_row = (
+                await session.execute(select(DocumentVersion).where(DocumentVersion.id == ver_id))
+            ).scalar_one()
+            assert ver_row.status == "ready"
+
+            doc_row = (
+                await session.execute(select(Document).where(Document.id == doc_id))
+            ).scalar_one()
+            assert doc_row.active_version_id == ver_id
+
+            chunk_row = (
+                await session.execute(select(Chunk).where(Chunk.page_id == p1))
+            ).scalar_one()
+            assert chunk_row.is_active is True
+
+    async def test_transient_error_boundary_behavior_retries_then_activates(
+        self,
+        seeded_tenant_and_user: tuple[UUID, UUID],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Transient error at attempts=4 raises error; at attempts=5 flags page and activates."""
+        from procrastinate import JobContext
+        from procrastinate.jobs import Job
+
+        from app.core.ingestion.pipeline import PagePipelineService
+        from app.db.models import Document, DocumentVersion
+        from app.ports.errors import TransientIngestionError
+        from app.worker import app, process_page_job, run_page_job
+        from tests.fixtures.database_seeding import seed_chunk
+
+        tenant_id, user_id = seeded_tenant_and_user
+        worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+        async with worker_tenant_session(worker_ctx) as session:
+            doc_id = await seed_document(session, tenant_id=tenant_id, title="Boundary Doc")
+            ver_id = await seed_version(
+                session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+            )
+            p1 = await seed_page(session, tenant_id=tenant_id, ver_id=ver_id, page_number=1)
+            await seed_chunk(
+                session, tenant_id=tenant_id, page_id=p1, ver_id=ver_id, is_active=False
+            )
+
+        class TransientDeadlockError(Exception):
+            sqlstate = "40P01"
+            pgcode = "40P01"
+
+        async def failing_process_page(*args: Any, **kwargs: Any) -> None:
+            _ = (args, kwargs)
+            raise TransientDeadlockError("Deadlock detected")
+
+        monkeypatch.setattr(PagePipelineService, "process_page", failing_process_page)
+
+        # 1. Non-final attempt (attempts=4): get_retry_decision returns decision -> raises error
+        job_4 = Job(
+            id=201,
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            task_kwargs={
+                "tenant_id": str(tenant_id),
+                "document_version_id": str(ver_id),
+                "page_number": 1,
+            },
+            attempts=4,
+        )
+        ctx_4 = JobContext(app=app, job=job_4, start_timestamp=0.0, abort_reason=lambda: None)
+        with pytest.raises(TransientIngestionError) as exc_info:
+            await run_page_job(
+                context=ctx_4,
+                tenant_id=str(tenant_id),
+                document_version_id=str(ver_id),
+                page_number=1,
+            )
+        assert exc_info.value.error_code == "40P01"
+
+        # 2. Final attempt (attempts=5): get_retry_decision returns None -> activates version
+        job_5 = Job(
+            id=202,
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            task_kwargs=job_4.task_kwargs,
+            attempts=5,
+        )
+        ctx_5 = JobContext(app=app, job=job_5, start_timestamp=0.0, abort_reason=lambda: None)
+        # Does NOT raise TransientIngestionError
+        await run_page_job(
+            context=ctx_5,
+            tenant_id=str(tenant_id),
+            document_version_id=str(ver_id),
+            page_number=1,
+        )
+
+        # Version must have left 'processing' and transitioned to 'needs_review' (page was flagged)
+        async with worker_tenant_session(worker_ctx) as session:
+            ver_row = (
+                await session.execute(select(DocumentVersion).where(DocumentVersion.id == ver_id))
+            ).scalar_one()
+            assert ver_row.status == "needs_review"
+            doc_row = (
+                await session.execute(select(Document).where(Document.id == doc_id))
+            ).scalar_one()
+            assert doc_row.active_version_id == ver_id

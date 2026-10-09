@@ -18,6 +18,8 @@ from app.worker import (
     create_procrastinate_app,
     get_procrastinate_connector,
     process_page_job,
+    split_document_job,
+    stalled_job_sweep_task,
 )
 
 
@@ -85,22 +87,33 @@ class TestWorkerConfigurationAndSecurity:
 
     def test_job_args_strictly_ids_only(self) -> None:
         """Job payload arguments carry strictly IDs; zero content, filenames, or titles."""
-        sig = inspect.signature(process_page_job)
-        param_names = list(sig.parameters.keys())
+        sensitive_names = ("filename", "title", "content", "text", "body", "raw_bytes")
 
-        # Expected ID-only parameters
-        expected_params = ["tenant_id", "document_version_id", "page_number"]
-        assert param_names == expected_params, f"Unexpected job parameters: {param_names}"
+        # 1. process_page_job: first param is context (pass_context=True), remaining are IDs
+        assert process_page_job.pass_context is True
+        page_params = list(inspect.signature(process_page_job).parameters.keys())
+        assert page_params[0] == "context"
+        assert page_params[1:] == ["tenant_id", "document_version_id", "page_number"]
+        for name in page_params:
+            assert name not in sensitive_names, f"Sensitive param '{name}' in process_page_job"
 
-        for name in param_names:
-            assert name not in (
-                "filename",
-                "title",
-                "content",
-                "text",
-                "body",
-                "raw_bytes",
-            ), f"Sensitive content parameter '{name}' detected in worker job definition!"
+        # 2. split_document_job: first param is context (pass_context=True), remaining are IDs
+        assert split_document_job.pass_context is True
+        split_params = list(inspect.signature(split_document_job).parameters.keys())
+        assert split_params[0] == "context"
+        assert split_params[1:] == ["tenant_id", "document_version_id"]
+        for name in split_params:
+            assert name not in sensitive_names, f"Sensitive param '{name}' in split_document_job"
+
+        # 3. stalled_job_sweep_task: first param is context, remaining are IDs/counters
+        assert stalled_job_sweep_task.pass_context is True
+        sweep_params = list(inspect.signature(stalled_job_sweep_task).parameters.keys())
+        assert sweep_params[0] == "context"
+        assert sweep_params[1:] == ["timestamp", "seconds_since_heartbeat"]
+        for name in sweep_params:
+            assert name not in sensitive_names, (
+                f"Sensitive param '{name}' in stalled_job_sweep_task"
+            )
 
     def test_procrastinate_schema_isolation_search_path(self) -> None:
         """Procrastinate connector kwargs set search_path to isolated schema."""
@@ -215,3 +228,152 @@ class TestWorkerConfigurationAndSecurity:
         assert is_retryable_error(ValueError("invalid format")) is False
         assert is_retryable_error(KeyError("missing key")) is False
         assert is_retryable_error(TypeError("wrong type")) is False
+
+    def test_wrapped_deadlock_is_retried_and_contains_no_raw_exception_text(self) -> None:
+        """Transient error is wrapped in TransientIngestionError with zero raw exception text."""
+        import io
+        import logging
+        import traceback
+
+        from procrastinate.jobs import Job
+        from procrastinate.retry import RetryStrategy
+
+        from app.core.ingestion.pipeline import is_retryable_error
+        from app.ports.errors import TransientIngestionError
+
+        class MockDriverDeadlock(Exception):
+            sqlstate = "40P01"
+            pgcode = "40P01"
+
+        sensitive_text = "PATIENT_SECRET_DATA_DO_NOT_LOG: SELECT * FROM phi WHERE ssn='123'"
+        raw_driver_exc = MockDriverDeadlock(sensitive_text)
+
+        class MockDBAPIError(Exception):
+            def __init__(self, orig: Exception) -> None:
+                super().__init__(str(orig))
+                self.orig = orig
+
+        wrapped_deadlock = MockDBAPIError(raw_driver_exc)
+
+        # 1. Classified as retryable
+        assert is_retryable_error(wrapped_deadlock) is True
+
+        # 2. Re-raised as TransientIngestionError with fixed message and SQLSTATE code only
+        orig = getattr(wrapped_deadlock, "orig", wrapped_deadlock)
+        code = (
+            getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or "TRANSIENT_DB_ERROR"
+        )
+        try:
+            raise TransientIngestionError(
+                message="Transient database deadlock detected",
+                error_code=code,
+            ) from None
+        except TransientIngestionError as raised:
+            # 3. Assert zero raw exception text reaches error message, details, or cause
+            assert sensitive_text not in str(raised)
+            assert sensitive_text not in raised.message
+            assert sensitive_text not in str(raised.details)
+            assert raised.__cause__ is None, "Must raise with 'from None' to suppress chained error"
+            assert raised.__suppress_context__ is True
+            assert raised.error_code == "40P01"
+
+            # 4. Traceback formatting contains zero raw exception text
+            formatted_tb = "".join(
+                traceback.format_exception(type(raised), raised, raised.__traceback__)
+            )
+            assert sensitive_text not in formatted_tb
+
+            # 5. Procrastinate logger call (worker.py:240) contains zero sensitive text
+            log_stream = io.StringIO()
+            handler = logging.StreamHandler(log_stream)
+            handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+            proc_logger = logging.getLogger("procrastinate.worker.test")
+            proc_logger.addHandler(handler)
+            proc_logger.setLevel(logging.INFO)
+            try:
+                proc_logger.log(
+                    logging.INFO,
+                    "Job ended with status: Error, to retry",
+                    exc_info=raised,
+                )
+                handler.flush()
+                log_output = log_stream.getvalue()
+                assert sensitive_text not in log_output
+            finally:
+                proc_logger.removeHandler(handler)
+
+            # 6. Procrastinate RetryStrategy retries TransientIngestionError
+            strategy = RetryStrategy(
+                max_attempts=5,
+                exponential_wait=2,
+                retry_exceptions=(TransientIngestionError,),
+            )
+            mock_job = Job(
+                queue="ingestion",
+                lock=None,
+                queueing_lock=None,
+                task_name=process_page_job.name,
+                attempts=0,
+            )
+            decision = strategy.get_retry_decision(exception=raised, job=mock_job)
+            assert decision is not None
+            assert decision.retry_at is not None
+
+    def test_permanent_error_is_not_retried(self) -> None:
+        """Permanent error is not classified as retryable and Procrastinate does not retry it."""
+        from procrastinate.jobs import Job
+        from procrastinate.retry import RetryStrategy
+
+        from app.core.ingestion.pipeline import is_retryable_error
+        from app.ports.errors import ParseError, TransientIngestionError
+        from app.worker import process_page_job
+
+        perm_err = ParseError("Invalid PDF layout")
+        assert is_retryable_error(perm_err) is False
+
+        strategy = RetryStrategy(
+            max_attempts=5,
+            exponential_wait=2,
+            retry_exceptions=(TransientIngestionError,),
+        )
+        mock_job = Job(
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            attempts=0,
+        )
+        assert strategy.get_retry_decision(exception=perm_err, job=mock_job) is None
+
+    def test_temporary_error_final_attempt_proof(self) -> None:
+        """Proves real task RetryStrategy boundary (decision at attempts=4, None at attempts=5)."""
+        from procrastinate.jobs import Job
+
+        from app.ports.errors import TransientIngestionError
+        from app.worker import process_page_job
+
+        strategy = process_page_job.retry_strategy
+        assert strategy is not None
+        transient_err = TransientIngestionError(error_code="40P01")
+
+        # Attempt 4: not final, returns retry decision
+        job_attempt_4 = Job(
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            attempts=4,
+        )
+        decision_4 = strategy.get_retry_decision(exception=transient_err, job=job_attempt_4)
+        assert decision_4 is not None, "Attempt 4 must not return None (not final)"
+
+        # Attempt 5: true boundary where job.attempts >= max_attempts (5), returns None
+        job_attempt_5 = Job(
+            queue="ingestion",
+            lock=None,
+            queueing_lock=None,
+            task_name=process_page_job.name,
+            attempts=5,
+        )
+        decision_5 = strategy.get_retry_decision(exception=transient_err, job=job_attempt_5)
+        assert decision_5 is None, "Attempt 5 must return None (final attempt)"

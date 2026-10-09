@@ -96,7 +96,7 @@ class PagePipelineService:
                 tenant_id=tenant_id,
                 version_id=document_version_id,
                 page_number=page_number,
-                step="page_pipeline",
+                step="chunking",
                 status="failed",
             )
             return

@@ -390,7 +390,7 @@ class PostgresDocumentRepository(DocumentRepository):
         self,
         tenant_id: str,
         version_id: UUID,
-        step: str = "page_pipeline",
+        step: str = "chunking",
     ) -> list[int]:
         """Retrieve page numbers that do not yet have a completed job_step."""
         tid = UUID(str(tenant_id))
@@ -406,7 +406,7 @@ class PostgresDocumentRepository(DocumentRepository):
             JobStep.tenant_id == tid,
             JobStep.document_version_id == version_id,
             JobStep.step == step,
-            JobStep.status == "completed",
+            JobStep.status.in_(["completed", "failed"]),
             JobStep.page_number.is_not(None),
         )
         completed_res = await self.session.execute(completed_stmt)
@@ -464,7 +464,7 @@ class PostgresDocumentRepository(DocumentRepository):
         completed_stmt = select(func.count(func.distinct(JobStep.page_number))).where(
             JobStep.tenant_id == tid,
             JobStep.document_version_id == version_id,
-            JobStep.status == "completed",
+            JobStep.status.in_(["completed", "failed"]),
             JobStep.page_number.is_not(None),
         )
         completed_res = await self.session.execute(completed_stmt)

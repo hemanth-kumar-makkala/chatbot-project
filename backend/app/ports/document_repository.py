@@ -139,7 +139,7 @@ class DocumentRepository(ABC):
         self,
         tenant_id: str,
         version_id: UUID,
-        step: str = "page_pipeline",
+        step: str = "chunking",
     ) -> list[int]:
         """Retrieve page numbers that do not yet have a completed job_step."""
         ...
