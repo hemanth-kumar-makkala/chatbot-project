@@ -83,7 +83,7 @@ class PageReading(BaseModel):
     """Multimodal reading from question-time or upload-time vision read."""
 
     reading: str
-    confidence: float
+    confidence: float | None = None
     model_id: str
     model_version: str
     normalized_values: dict[str, Any] = Field(default_factory=dict)

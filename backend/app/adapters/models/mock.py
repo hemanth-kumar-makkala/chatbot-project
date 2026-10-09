@@ -133,6 +133,22 @@ class MockModelProvider(ModelProvider):
             usage_tokens=42,
         )
 
+    async def transcribe_page(
+        self,
+        role: ModelRole,
+        image: bytes,
+    ) -> PageReading:
+        del role, image
+        await self._check_failure()
+
+        return PageReading(
+            reading="Mock visual transcription of document page content.",
+            confidence=0.98,
+            model_id="mock-vision",
+            model_version="1.0",
+            normalized_values={"date": "2026-10-01", "observed_id": "12345"},
+        )
+
     async def read_page(
         self,
         role: ModelRole,

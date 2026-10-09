@@ -368,3 +368,22 @@ class PageLimitExceededError(PortError):
             retryable=False,
             details=details,
         )
+
+
+class ImageProcessingError(PortError):
+    """Raised when an image cannot be processed or downscaled under size constraints."""
+
+    def __init__(
+        self,
+        message: str = "Image processing failed or exceeded size limits",
+        code: str = "IMAGE_PROCESSING_FAILED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

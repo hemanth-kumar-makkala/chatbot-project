@@ -68,6 +68,7 @@ class TestMockModelProviderNormalOperation:
         )
 
         assert reading.reading != ""
+        assert reading.confidence is not None
         assert reading.confidence > 0.0
         assert reading.model_id == "mock-vision"
         assert reading.model_version == "1.0"

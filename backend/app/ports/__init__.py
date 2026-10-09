@@ -22,6 +22,7 @@ from app.ports.errors import (
     EmptyOutput,
     EncryptedDocumentError,
     FileValidationError,
+    ImageProcessingError,
     MalformedOutput,
     MalwareDetectedError,
     PageLimitExceededError,
@@ -33,6 +34,7 @@ from app.ports.errors import (
     StorageError,
     TransientIngestionError,
 )
+from app.ports.image_processor import ImageProcessor
 from app.ports.job_queue import JobQueue
 from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
@@ -99,12 +101,14 @@ __all__ = [
     "DuplicateVersionError",
     "EncryptedDocumentError",
     "FileValidationError",
+    "ImageProcessingError",
     "MalwareDetectedError",
     "PageLimitExceededError",
     "StorageError",
     "ParseError",
     "QueueError",
     "TransientIngestionError",
+    "ImageProcessor",
     # Core Port Types
     "UserRole",
     "TenantContext",

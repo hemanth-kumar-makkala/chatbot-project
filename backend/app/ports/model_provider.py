@@ -36,6 +36,15 @@ class ModelProvider(ABC):
         ...
 
     @abstractmethod
+    async def transcribe_page(
+        self,
+        role: ModelRole,
+        image: bytes,
+    ) -> PageReading:
+        """Perform multimodal visual transcription of a page image at upload time."""
+        ...
+
+    @abstractmethod
     async def read_page(
         self,
         role: ModelRole,
