@@ -70,6 +70,8 @@ async def seed_page(
     page_sha256: str = "sha-p1",
     page_type: str = "digital_text",
     image_key: str | None = None,
+    needs_review: bool = False,
+    review_reason: str | None = None,
 ) -> UUID:
     """Helper to insert a page row."""
     page_id = page_id or uuid4()
@@ -79,9 +81,9 @@ async def seed_page(
             """
             INSERT INTO pages (
                 id, tenant_id, document_version_id, page_number,
-                page_sha256, page_type, image_key
+                page_sha256, page_type, image_key, needs_review, review_reason
             )
-            VALUES (:id, :tid, :vid, :pnum, :psha, :ptype, :img_key);
+            VALUES (:id, :tid, :vid, :pnum, :psha, :ptype, :img_key, :nr, :rr);
             """
         ),
         {
@@ -92,6 +94,8 @@ async def seed_page(
             "psha": page_sha256,
             "ptype": page_type,
             "img_key": img_key,
+            "nr": needs_review,
+            "rr": review_reason,
         },
     )
     return page_id

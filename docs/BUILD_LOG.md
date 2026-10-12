@@ -967,3 +967,54 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - 28/28 affected tests pass in 1.51s.
   - All 10 pre-commit hooks pass cleanly on changed files.
+
+---
+
+### [2026-10-12] Task 2.8a Step 1: Knowledge Page Backend API (Upload & Status List)
+
+- **Task ID**: Task 2.8a (Step 1 of 3)
+- **Module**: `backend/app/api/routes/knowledge.py`, `backend/app/api/deps.py`, `backend/app/api/config.py`, `backend/app/adapters/db/postgres_document_repository.py`, `backend/app/ports/document_repository.py`, `backend/app/ports/types.py`, `backend/app/core/ingestion/pipeline.py`, `backend/app/db/session.py`
+- **Spec Section**: Task 2.8a Knowledge Admin API (Assistant-scoped routing, Upload streaming in RAM, Status List allowlist states, Zero owner role in request path, Zero polling audit, Anti-probing 404)
+- **What Was Built**:
+  - **Assistant-Scoped Routing Pattern**:
+    - Scoped routes under `/v1/assistants/{assistant_id}/knowledge/upload` and `/v1/assistants/{assistant_id}/knowledge/documents`, matching the Questions API pattern.
+    - Tenant resolved strictly via `lookup_assistant_tenant(assistant_id)` as `app_user` (`SECURITY DEFINER`).
+    - Membership verified via `auth_provider.roles(user_id, tenant_id)` under `app_user`. Unknown assistant or non-member returns `404 Not Found` (anti-probing); member with non-client-admin role (e.g. `staff`) returns `403 Forbidden`.
+    - Zero usage of database owner role (`cka_admin`) in request paths. Completely deleted `get_admin_engine` and `get_admin_session_factory` from `app/db/session.py`.
+  - **Memory-Only Streaming Upload Endpoint** (`POST /v1/assistants/{assistant_id}/knowledge/upload`):
+    - Reads upload bytes directly from `request.stream()` into an in-memory `bytearray` up to `settings.max_upload_bytes`.
+    - Strictly never instantiates Starlette's `SpooledTemporaryFile` or writes spool files to disk.
+    - Exceeding size cap raises `HTTP 413 Content Too Large` (`HTTP_413_CONTENT_TOO_LARGE`).
+    - Tenant isolation: opens `tenant_session(ctx)` directly in the endpoint.
+    - Anti-probing: when replacing an existing `document_id`, verifies tenant ownership inside `tenant_session(ctx)` and returns `HTTP 404 Not Found` if missing or cross-tenant.
+    - Response strictly returns IDs and status (`document_id`, `document_version_id`, `status`, `is_duplicate`), never filenames.
+    - Enqueues background split job with IDs only (`tenant_id`, `document_version_id`) via `split_document_job.defer_async()`.
+    - Compliance audit: records `AuditEvent` (`action="document_uploaded"`, `resource_id=document_version_id`) within the tenant transaction.
+  - **Derived UI State Status List** (`GET /v1/assistants/{assistant_id}/knowledge/documents`):
+    - Lists documents and versions for tenant scoped under `tenant_session(ctx)`.
+    - Explicit allowlist state mapping: `ready` -> `Ready`, `needs_review` -> `Ready (N pages need review)`, `failed` -> `Failed`, `retired` -> `Retired`, `received` -> `Queued`, `processing` -> `Scanning images` / `Reading` / `Queued`.
+    - Any unknown status raises `ValueError` and is logged by code only (`UNKNOWN_DOCUMENT_VERSION_STATUS`); never falls back to `Queued`.
+    - Compliance rule: zero audit events logged on status list polling.
+  - **Vision Job Step Start Telemetry** (`backend/app/core/ingestion/pipeline.py`):
+    - `PagePipelineService.process_page` records `step="vision"`, `status="processing"` in `job_steps` when vision is triggered, followed by completed/failed step upon finish.
+  - **CSRF Protection & Deprecation Hardening**:
+    - CSRF protection required on every state-changing POST and DELETE request via `validate_csrf`.
+    - Test harness sets cookies on `AsyncClient` instance directly, eliminating all `httpx` deprecation warnings.
+- **Tests Added**:
+  - `backend/tests/invariants/test_architecture_boundaries.py`:
+    - `test_invariant_api_never_uses_owner_role_session`: AST scan of `app/api/` ensuring no import or call of `cka_admin`, `admin_session`, `get_admin_engine`, or `get_admin_session_factory`.
+  - `backend/tests/integration/test_api_knowledge_endpoints.py`: 10 integration tests covering:
+    - `test_knowledge_upload_streaming_memory_no_tempfile`
+    - `test_knowledge_upload_streaming_size_limit_413`
+    - `test_knowledge_upload_csrf_required`
+    - `test_knowledge_upload_roles_staff_and_platform_admin_403`
+    - `test_knowledge_upload_cross_tenant_document_id_returns_404`
+    - `test_knowledge_multi_tenant_admin_and_staff_roles`
+    - `test_knowledge_documents_status_list_derived_states_all_five`
+    - `test_knowledge_documents_status_list_failed_and_unknown_status`
+    - `test_knowledge_documents_status_list_no_audit_logged`
+    - `test_knowledge_documents_roles_staff_and_platform_admin_403`
+- **Verification**:
+  - All 10 integration tests pass in 5.83s with 0 warnings.
+  - All 24 boundary invariant tests pass in 0.39s.
+  - All pre-commit hooks pass cleanly across all modified files.

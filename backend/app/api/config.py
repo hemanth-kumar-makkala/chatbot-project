@@ -42,3 +42,7 @@ class ApiSettings(BaseModel):
         default_factory=_default_auth_hmac_key,
         description="Secret key for HMAC-SHA256 client IP pseudonymization from .env.",
     )
+    max_upload_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        description="Maximum upload size in bytes (default 50MB).",
+    )

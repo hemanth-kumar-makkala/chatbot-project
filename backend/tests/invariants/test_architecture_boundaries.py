@@ -206,3 +206,33 @@ class TestRepoCodebaseScans:
         violations = scan_directory_boundaries(str(app_dir))
         msg = f"Found unexpected violations in app: {[str(v) for v in violations]}"
         assert violations == [], msg
+
+    def test_invariant_api_never_uses_owner_role_session(self) -> None:
+        """API must never import or call owner-role session (cka_admin) from request paths."""
+        import ast
+
+        backend_dir = Path(__file__).resolve().parents[2]
+        session_file = backend_dir / "app" / "db" / "session.py"
+        session_code = session_file.read_text(encoding="utf-8")
+        assert "get_admin_engine" not in session_code, (
+            "get_admin_engine must not exist in session.py"
+        )
+        assert "get_admin_session_factory" not in session_code, (
+            "get_admin_session_factory must not exist in session.py"
+        )
+
+        api_dir = backend_dir / "app" / "api"
+        for py_file in api_dir.rglob("*.py"):
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.names:
+                    for name in node.names:
+                        assert name.name not in (
+                            "get_admin_engine",
+                            "get_admin_session_factory",
+                            "admin_session",
+                        ), f"{py_file.name} imports forbidden owner session symbol {name.name}"
+                if isinstance(node, ast.Constant) and node.value == "cka_admin":
+                    raise AssertionError(
+                        f"{py_file.name} contains forbidden 'cka_admin' literal in request path"
+                    )

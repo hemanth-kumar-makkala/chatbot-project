@@ -235,6 +235,27 @@ class DocumentVersionRecord(BaseModel):
     created_at: datetime
 
 
+class VersionStatusInfo(BaseModel):
+    """Derived UI and lifecycle status for a single document version."""
+
+    version_id: str
+    ui_status: str
+    raw_status: str
+    flagged_pages_count: int
+    total_pages_count: int
+    created_at: datetime
+
+
+class DocumentStatusInfo(BaseModel):
+    """Status summary for a document and its version history within a tenant."""
+
+    document_id: str
+    title: str
+    active_version_id: str | None = None
+    created_at: datetime
+    versions: list[VersionStatusInfo]
+
+
 class PageRecord(BaseModel):
     """Domain record representing a single document page evidence row."""
 

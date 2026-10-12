@@ -6,6 +6,13 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Task 2.8a Step 1**: Knowledge Page Backend API (Upload Endpoint & Status List) — **COMPLETED**
+  - Completed: Assistant-scoped routes `/v1/assistants/{assistant_id}/knowledge/upload` and `/v1/assistants/{assistant_id}/knowledge/documents`.
+  - Completed: Tenant derived via `lookup_assistant_tenant` and client_admin role checked via `auth_provider.roles` strictly as `app_user` (zero owner role `cka_admin` connections in request paths).
+  - Completed: Invariant test `test_invariant_api_never_uses_owner_role_session` verifying AST ban of `cka_admin`, `admin_session`, `get_admin_engine`, and `get_admin_session_factory` in `app/api/`.
+  - Completed: `POST .../upload` with memory-only streaming up to `max_upload_bytes` (never invoking Starlette's `SpooledTemporaryFile`), CSRF double-submit verification, anti-probing 404 for cross-tenant replace and unknown assistant, compliance audit logging (`document_uploaded`), and Procrastinate split job dispatch with IDs only.
+  - Completed: `GET .../documents` status list deriving UI states from allowlist (`Queued`, `Reading`, `Scanning images`, `Ready`, `Ready (N pages need review)`, `Failed`, `Retired`), raising error on unknown status (never falling back to `Queued`), with zero audit events logged on status list polling.
+  - Completed: 10 integration tests in `tests/integration/test_api_knowledge_endpoints.py` and 24 boundary invariant tests passing with 0 warnings.
 - **Task 2.5**: Upload-Time Vision Integration (Mock Profile & Pipeline Wiring) — **COMPLETED**
   - Completed: `ADR-0011` (upload-time vision reading port method and optional confidence), `0007_chunks_reading_evidence.py` applied to shared database, `PillowImageProcessor` adapter and `ImageProcessor` port, `ReviewReason` required literal type, `PagePipelineService` per-page upload-time vision transcription, review flag recovery (Option A), dual reading selection rule (reliable text as text, vision as visual, low-OCR text never chunked), re-run idempotency, fail-closed non-mock wiring guards in `create_page_pipeline_service`, zero text leakage invariant (`test_upload_vision_zero_text_leakage_in_job_steps_and_audit`), Branch B activation on permanent vision error (`test_upload_vision_permanent_error_flags_review_and_activates_branch_b`), and 12 integration tests in `test_upload_vision.py`.
 - **Task 2.7**: Ingestion Pipeline Worker & Version Activation — **implementation done, awaiting verification**

@@ -14,7 +14,7 @@ from app.db.models import User
 from app.db.session import unscoped_session
 from app.ports.auth import AuthProvider
 from app.ports.errors import AuthenticationError
-from app.ports.types import SessionContext, TenantContext
+from app.ports.types import SessionContext, TenantContext, UserRole
 from app.wiring import create_auth_provider
 
 
@@ -166,3 +166,59 @@ async def require_platform_admin(
                 detail="Platform admin privileges required",
             )
     return session
+
+
+async def get_client_admin_tenant_context_for_assistant(
+    assistant_id: str,
+    session: Annotated[SessionContext, Depends(get_current_session)],
+    auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+) -> TenantContext:
+    """Derive TenantContext strictly from assistant lookup and client_admin membership.
+
+    1. Resolves tenant via lookup_assistant_tenant(asst_id) as app_user (SECURITY DEFINER).
+    2. If assistant does not exist or user lacks membership in assistant's tenant:
+       returns 404 Not Found (anti-probing).
+    3. If user has membership but lacks client_admin role:
+       returns 403 Forbidden.
+    """
+    try:
+        asst_uuid = UUID(assistant_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assistant not found",
+        ) from None
+
+    from sqlalchemy import text
+
+    async with unscoped_session() as db_session:
+        result = await db_session.execute(
+            text("SELECT lookup_assistant_tenant(:asst_id)"),
+            {"asst_id": asst_uuid},
+        )
+        tenant_uuid = result.scalar_one_or_none()
+        if tenant_uuid is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
+        tenant_id = str(tenant_uuid)
+
+    roles = await auth_provider.roles(session.user_id, tenant_id)
+    if not roles:
+        # Non-member returns 404 Not Found to prevent ID probing
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
+
+    if UserRole.CLIENT_ADMIN not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client admin privileges required",
+        )
+
+    return TenantContext(
+        tenant_id=tenant_id,
+        user_id=session.user_id,
+        role=UserRole.CLIENT_ADMIN,
+        session_id=session.session_id,
+    )
+
+
+# Alias for backward compatibility if referenced
+get_client_admin_tenant_context = get_client_admin_tenant_context_for_assistant

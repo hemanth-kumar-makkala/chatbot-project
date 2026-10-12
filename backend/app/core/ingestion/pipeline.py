@@ -214,6 +214,14 @@ class PagePipelineService:
                 )
                 return
 
+            await self.repository.record_job_step(
+                tenant_id=tenant_id,
+                version_id=document_version_id,
+                page_number=page_number,
+                step="vision",
+                status="processing",
+            )
+
             try:
                 vision_reading_dto = await self.model_provider.transcribe_page(
                     role=ModelRole.VISION,
@@ -223,6 +231,14 @@ class PagePipelineService:
                 if is_retryable_error(exc):
                     raise
                 vision_reading_dto = None
+
+            await self.repository.record_job_step(
+                tenant_id=tenant_id,
+                version_id=document_version_id,
+                page_number=page_number,
+                step="vision",
+                status="completed" if vision_reading_dto is not None else "failed",
+            )
 
             if (
                 vision_reading_dto is not None

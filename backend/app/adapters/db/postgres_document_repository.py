@@ -1,5 +1,4 @@
-"""PostgreSQL adapter for DocumentRepository port."""
-
+import logging
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -23,11 +22,15 @@ from app.ports.document_repository import DocumentRepository
 from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
 from app.ports.types import (
     DocumentRecord,
+    DocumentStatusInfo,
     DocumentVersionRecord,
     PageRecord,
     PageType,
     ReviewReason,
+    VersionStatusInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresDocumentRepository(DocumentRepository):
@@ -771,3 +774,149 @@ class PostgresDocumentRepository(DocumentRepository):
         )
         existing_res = await self.session.execute(existing_stmt)
         return existing_res.scalar_one()
+
+    @staticmethod
+    def _map_version_ui_status(
+        status: str,
+        flagged_count: int,
+        version_id: UUID,
+        completed_split_versions: set[UUID] | None = None,
+        processing_vision_versions: set[UUID] | None = None,
+        steps: list[JobStep] | None = None,
+    ) -> str:
+        """Map raw document_version status to explicit allowlist UI status.
+
+        Allowlist statuses:
+        - 'ready' -> 'Ready'
+        - 'needs_review' -> 'Ready (N pages need review)' (or 'Ready' if 0)
+        - 'failed' -> 'Failed'
+        - 'retired' -> 'Retired'
+        - 'received' -> 'Queued'
+        - 'processing' -> 'Scanning images' (if vision step processing),
+                          'Reading' (if split completed and chunking in progress),
+                          'Queued' (otherwise)
+
+        Any unknown status raises ValueError and is logged by code only.
+        Never falls back to 'Queued'.
+        """
+        if status == "ready":
+            return "Ready"
+        if status == "needs_review":
+            plural = "s" if flagged_count != 1 else ""
+            return f"Ready ({flagged_count} page{plural} need review)"
+        if status == "failed":
+            return "Failed"
+        if status == "retired":
+            return "Retired"
+        if status == "received":
+            return "Queued"
+        if status == "processing":
+            has_active_vision = False
+            has_split_completed = False
+            if steps is not None:
+                has_active_vision = any(
+                    s.step == "vision" and s.status == "processing" for s in steps
+                )
+                has_split_completed = any(
+                    s.step == "split" and s.status == "completed" for s in steps
+                )
+            if processing_vision_versions and version_id in processing_vision_versions:
+                has_active_vision = True
+            if completed_split_versions and version_id in completed_split_versions:
+                has_split_completed = True
+
+            if has_active_vision:
+                return "Scanning images"
+            if has_split_completed:
+                return "Reading"
+            return "Queued"
+
+        logger.error(
+            "UNKNOWN_DOCUMENT_VERSION_STATUS",
+            extra={"status_code": status, "version_id": str(version_id)},
+        )
+        raise ValueError(f"Unknown document version status: {status}")
+
+    async def list_documents_with_status(
+        self,
+        tenant_id: str,
+    ) -> list[DocumentStatusInfo]:
+        """Retrieve all documents and versions with derived UI states for tenant."""
+        tid = UUID(str(tenant_id))
+
+        doc_stmt = (
+            select(Document).where(Document.tenant_id == tid).order_by(Document.created_at.desc())
+        )
+        docs = (await self.session.execute(doc_stmt)).scalars().all()
+        if not docs:
+            return []
+
+        doc_ids = [doc.id for doc in docs]
+
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.document_id.in_(doc_ids))
+            .order_by(DocumentVersion.created_at.desc())
+        )
+        versions = (await self.session.execute(ver_stmt)).scalars().all()
+        ver_ids = [ver.id for ver in versions]
+
+        job_steps_by_ver: dict[UUID, list[JobStep]] = {}
+        if ver_ids:
+            steps_stmt = select(JobStep).where(
+                JobStep.tenant_id == tid, JobStep.document_version_id.in_(ver_ids)
+            )
+            all_steps = (await self.session.execute(steps_stmt)).scalars().all()
+            for step in all_steps:
+                job_steps_by_ver.setdefault(step.document_version_id, []).append(step)
+
+        page_stats: dict[UUID, tuple[int, int]] = {}
+        if ver_ids:
+            pages_stmt = (
+                select(
+                    Page.document_version_id,
+                    func.count(Page.id).label("total_pages"),
+                    func.count(Page.id).filter(Page.needs_review.is_(True)).label("flagged_pages"),
+                )
+                .where(Page.tenant_id == tid, Page.document_version_id.in_(ver_ids))
+                .group_by(Page.document_version_id)
+            )
+            for row in (await self.session.execute(pages_stmt)).all():
+                page_stats[row.document_version_id] = (int(row.total_pages), int(row.flagged_pages))
+
+        versions_by_doc: dict[UUID, list[VersionStatusInfo]] = {}
+        for ver in versions:
+            total_pages, flagged_pages = page_stats.get(ver.id, (0, 0))
+            steps = job_steps_by_ver.get(ver.id, [])
+
+            ui_status = self._map_version_ui_status(
+                status=ver.status,
+                flagged_count=flagged_pages,
+                version_id=ver.id,
+                steps=steps,
+            )
+
+            versions_by_doc.setdefault(ver.document_id, []).append(
+                VersionStatusInfo(
+                    version_id=str(ver.id),
+                    ui_status=ui_status,
+                    raw_status=ver.status,
+                    flagged_pages_count=flagged_pages,
+                    total_pages_count=total_pages,
+                    created_at=ver.created_at,
+                )
+            )
+
+        results: list[DocumentStatusInfo] = []
+        for doc in docs:
+            results.append(
+                DocumentStatusInfo(
+                    document_id=str(doc.id),
+                    title=doc.title,
+                    active_version_id=str(doc.active_version_id) if doc.active_version_id else None,
+                    created_at=doc.created_at,
+                    versions=versions_by_doc.get(doc.id, []),
+                )
+            )
+
+        return results

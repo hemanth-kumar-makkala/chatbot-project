@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.ports.types import (
     DocumentRecord,
+    DocumentStatusInfo,
     DocumentVersionRecord,
     PageRecord,
     PageType,
@@ -233,4 +234,12 @@ class DocumentRepository(ABC):
         model_version: str,
     ) -> UUID:
         """Insert a page_reading idempotently (ON CONFLICT DO NOTHING) and return reading ID."""
+        ...
+
+    @abstractmethod
+    async def list_documents_with_status(
+        self,
+        tenant_id: str,
+    ) -> list[DocumentStatusInfo]:
+        """Retrieve all documents and versions with derived UI states for tenant."""
         ...
