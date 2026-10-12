@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
 
-from app.ports.types import DocumentRecord, DocumentVersionRecord
+from app.ports.types import DocumentRecord, DocumentVersionRecord, PageType, ReviewReason
 
 
 class DocumentRepository(ABC):
@@ -102,6 +102,16 @@ class DocumentRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_page_type(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageType | None:
+        """Retrieve classified page type for a specific page."""
+        ...
+
+    @abstractmethod
     async def update_version_status(
         self,
         tenant_id: str,
@@ -181,6 +191,30 @@ class DocumentRepository(ABC):
         tenant_id: str,
         version_id: UUID,
         page_number: int,
+        reason: ReviewReason,
     ) -> None:
-        """Mark a page as needs_review=True."""
+        """Mark a page as needs_review=True with a required review_reason."""
+        ...
+
+    @abstractmethod
+    async def clear_page_review_flag(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> None:
+        """Clear review flag on a page: set needs_review=False and review_reason=NULL."""
+        ...
+
+    @abstractmethod
+    async def create_page_reading(
+        self,
+        tenant_id: str,
+        page_id: UUID,
+        source: str,
+        text: str,
+        model_id: str,
+        model_version: str,
+    ) -> UUID:
+        """Insert a page_reading idempotently (ON CONFLICT DO NOTHING) and return reading ID."""
         ...

@@ -151,7 +151,10 @@ class TestVersionActivationPolicies:
             p1_v2 = await seed_page(session, tenant_id=tenant_id, ver_id=v2_id, page_number=1)
             p2_v2 = await seed_page(session, tenant_id=tenant_id, ver_id=v2_id, page_number=2)
             await session.execute(
-                text("UPDATE pages SET needs_review = true WHERE id = :pid"),
+                text(
+                    "UPDATE pages SET needs_review = true, "
+                    "review_reason = 'low_ocr_confidence' WHERE id = :pid"
+                ),
                 {"pid": p2_v2},
             )
             await seed_chunk(
@@ -224,7 +227,10 @@ class TestVersionActivationPolicies:
             # Page 2: flagged (needs_review=True)
             p2 = await seed_page(session, tenant_id=tenant_id, ver_id=v1_id, page_number=2)
             await session.execute(
-                text("UPDATE pages SET needs_review = true WHERE id = :pid"),
+                text(
+                    "UPDATE pages SET needs_review = true, "
+                    "review_reason = 'low_ocr_confidence' WHERE id = :pid"
+                ),
                 {"pid": p2},
             )
             c2 = await seed_chunk(

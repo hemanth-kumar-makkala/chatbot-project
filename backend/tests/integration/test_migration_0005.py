@@ -362,10 +362,11 @@ async def test_pages_needs_review_defaults_to_false() -> None:
                     """
                     INSERT INTO pages (
                         id, tenant_id, document_version_id, page_number, page_sha256,
-                        page_type, image_key, needs_review, ocr_confidence
+                        page_type, image_key, needs_review, ocr_confidence, review_reason
                     )
                     VALUES (
-                        :p, :t, :v, 2, 'sha-p2', 'scanned', (:t || '/pages/2.png'), true, 0.62
+                        :p, :t, :v, 2, 'sha-p2', 'scanned', (:t || '/pages/2.png'),
+                        true, 0.62, 'low_ocr_confidence'
                     );
                     """
                 ),

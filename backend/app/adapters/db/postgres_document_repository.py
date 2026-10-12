@@ -9,10 +9,19 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chunk, Document, DocumentVersion, Job, JobStep, Page, TableData
+from app.db.models import (
+    Chunk,
+    Document,
+    DocumentVersion,
+    Job,
+    JobStep,
+    Page,
+    PageReading,
+    TableData,
+)
 from app.ports.document_repository import DocumentRepository
 from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
-from app.ports.types import DocumentRecord, DocumentVersionRecord
+from app.ports.types import DocumentRecord, DocumentVersionRecord, PageType, ReviewReason
 
 
 class PostgresDocumentRepository(DocumentRepository):
@@ -268,6 +277,22 @@ class PostgresDocumentRepository(DocumentRepository):
         )
         self.session.add(page)
         await self.session.flush()
+
+    async def get_page_type(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageType | None:
+        stmt = select(Page.page_type).where(
+            Page.tenant_id == UUID(str(tenant_id)),
+            Page.document_version_id == version_id,
+            Page.page_number == page_number,
+        )
+        res = (await self.session.execute(stmt)).scalar_one_or_none()
+        if res is None:
+            return None
+        return PageType(res)
 
     async def update_version_status(
         self,
@@ -635,8 +660,12 @@ class PostgresDocumentRepository(DocumentRepository):
         tenant_id: str,
         version_id: UUID,
         page_number: int,
+        reason: ReviewReason,
     ) -> None:
-        """Mark a page as needs_review=True."""
+        values: dict[str, Any] = {
+            "needs_review": True,
+            "review_reason": reason,
+        }
         stmt = (
             update(Page)
             .where(
@@ -644,7 +673,68 @@ class PostgresDocumentRepository(DocumentRepository):
                 Page.document_version_id == version_id,
                 Page.page_number == page_number,
             )
-            .values(needs_review=True)
+            .values(**values)
         )
         await self.session.execute(stmt)
         await self.session.flush()
+
+    async def clear_page_review_flag(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> None:
+        """Clear review flag on a page: set needs_review=False and review_reason=NULL."""
+        stmt = (
+            update(Page)
+            .where(
+                Page.tenant_id == UUID(str(tenant_id)),
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .values(needs_review=False, review_reason=None)
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def create_page_reading(
+        self,
+        tenant_id: str,
+        page_id: UUID,
+        source: str,
+        text: str,
+        model_id: str,
+        model_version: str,
+    ) -> UUID:
+        """Insert a page_reading idempotently (ON CONFLICT DO NOTHING) and return reading ID."""
+        tid = UUID(str(tenant_id))
+        rid = uuid4()
+        stmt = (
+            pg_insert(PageReading)
+            .values(
+                id=rid,
+                tenant_id=tid,
+                page_id=page_id,
+                source=source,
+                text=text,
+                model_id=model_id,
+                model_version=model_version,
+            )
+            .on_conflict_do_nothing(constraint="uq_page_readings_idempotency")
+            .returning(PageReading.id)
+        )
+        res = await self.session.execute(stmt)
+        inserted_id = res.scalar_one_or_none()
+        if inserted_id is not None:
+            await self.session.flush()
+            return inserted_id
+
+        existing_stmt = select(PageReading.id).where(
+            PageReading.tenant_id == tid,
+            PageReading.page_id == page_id,
+            PageReading.source == source,
+            PageReading.model_id == model_id,
+            PageReading.model_version == model_version,
+        )
+        existing_res = await self.session.execute(existing_stmt)
+        return existing_res.scalar_one()

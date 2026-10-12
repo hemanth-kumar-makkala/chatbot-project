@@ -208,6 +208,7 @@ async def run_page_job(
                             tenant_id=tenant_id,
                             version_id=v_id,
                             page_number=page_number,
+                            reason="processing_failed",
                         )
                         await repo.record_job_step(
                             tenant_id=tenant_id,
@@ -225,6 +226,7 @@ async def run_page_job(
                         tenant_id=tenant_id,
                         version_id=v_id,
                         page_number=page_number,
+                        reason="processing_failed",
                     )
                     await repo.record_job_step(
                         tenant_id=tenant_id,

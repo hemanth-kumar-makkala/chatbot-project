@@ -183,11 +183,11 @@ class TestVisionReviewFlagTransitions:
             prior_review_reason="low_ocr_confidence",
         )
         assert outcome.needs_review is True
-        assert outcome.review_reason == "vision_empty_reading"
+        assert outcome.review_reason == "vision_failed"
         assert outcome.is_indexable is False
 
     def test_permanent_vision_error_flags_page(self) -> None:
-        """Permanent vision failure flags page with specific error reason."""
+        """Permanent vision failure flags page with vision_failed reason."""
         outcome = evaluate_vision_reading_outcome(
             page_type=PageType.SCANNED,
             vision_reading=None,
@@ -196,7 +196,7 @@ class TestVisionReviewFlagTransitions:
             error_code="VISION_PERMANENT_FAILURE",
         )
         assert outcome.needs_review is True
-        assert outcome.review_reason == "vision_failed:VISION_PERMANENT_FAILURE"
+        assert outcome.review_reason == "vision_failed"
         assert outcome.is_indexable is False
 
     def test_vision_does_not_clear_unrelated_review_flag(self) -> None:
@@ -215,6 +215,24 @@ class TestVisionReviewFlagTransitions:
         )
         assert outcome.needs_review is True
         assert outcome.review_reason == "malware_quarantine"
+
+    def test_vision_does_not_clear_legacy_unspecified_flag(self) -> None:
+        """Vision reading must not clear legacy_unspecified review flag."""
+        reading = PageReading(
+            reading="Legitimate vision reading",
+            confidence=0.99,
+            model_id="mock-vision",
+            model_version="1.0",
+        )
+        outcome = evaluate_vision_reading_outcome(
+            page_type=PageType.SCANNED,
+            vision_reading=reading,
+            prior_needs_review=True,
+            prior_review_reason="legacy_unspecified",
+        )
+        assert outcome.needs_review is True
+        assert outcome.review_reason == "legacy_unspecified"
+        assert outcome.is_indexable is False
 
 
 class TestReadingSelectionForChunking:

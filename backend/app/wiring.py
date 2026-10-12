@@ -27,6 +27,7 @@ from app.ports.chunker import Chunker
 from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
 from app.ports.embedding_provider import EmbeddingProvider
+from app.ports.image_processor import ImageProcessor
 from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
 from app.ports.retriever import Retriever
@@ -328,3 +329,43 @@ def create_version_activation_service(
 
     repo = create_document_repository(session)
     return VersionActivationService(repository=repo)
+
+
+def create_model_provider(profile: str) -> ModelProvider:
+    """Create ModelProvider adapter based on runtime profile.
+
+    Profiles:
+    - mock: MockModelProvider
+    - office-cpu, desktop-gpu, home-gpu, dev-free-api, cloud: ConfigurationError
+      (real Ollama/Vertex vision providers will be implemented in their respective tasks)
+    - unknown profile: ConfigurationError
+    The mock model provider must never be returned outside the mock profile.
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.models.mock import MockModelProvider
+
+        return MockModelProvider()
+
+    if profile in ("office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"):
+        raise ConfigurationError(
+            f"ModelProvider is not yet implemented for profile '{profile}'. "
+            "Real Ollama/Vertex vision providers will be implemented in subsequent tasks.",
+            error_code="MODEL_PROVIDER_NOT_IMPLEMENTED",
+        )
+
+    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
+    raise ConfigurationError(
+        f"Unknown or unauthorized profile '{profile}' for ModelProvider. "
+        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+        error_code="UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
+    )
+
+
+def create_image_processor(profile: str = "mock") -> ImageProcessor:
+    """Instantiate ImageProcessor adapter."""
+    _ = profile
+    from app.adapters.images.pillow import PillowImageProcessor
+
+    return PillowImageProcessor()

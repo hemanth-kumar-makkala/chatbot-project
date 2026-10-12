@@ -86,16 +86,17 @@ def evaluate_vision_reading_outcome(
     if not isinstance(page_type, PageType):
         raise ValueError(f"Invalid page_type: {page_type!r}. Must be PageType enum.")
 
+    _ = error_code
+
     if vision_reading is None:
-        reason = f"vision_failed:{error_code}" if error_code else "vision_failed"
         return VisionReadingOutcome(
             needs_review=True,
-            review_reason=reason,
+            review_reason="vision_failed",
             is_indexable=False,
         )
 
     # Validate confidence
-    confidence = getattr(vision_reading, "confidence", None)
+    confidence = vision_reading.confidence
     if confidence is None or math.isnan(confidence):
         return VisionReadingOutcome(
             needs_review=True,
@@ -115,7 +116,7 @@ def evaluate_vision_reading_outcome(
     if not text or not text.strip():
         return VisionReadingOutcome(
             needs_review=True,
-            review_reason="vision_empty_reading",
+            review_reason="vision_failed",
             is_indexable=False,
         )
 

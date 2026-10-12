@@ -367,6 +367,17 @@ class Page(Base):
             "AND image_key NOT LIKE (tenant_id::text || '//%')",
             name="ck_pages_image_key",
         ),
+        CheckConstraint(
+            "review_reason IS NULL OR review_reason IN ("
+            "'low_ocr_confidence', 'vision_failed', 'vision_low_confidence', "
+            "'vision_confidence_missing', 'image_too_large', 'processing_failed', "
+            "'legacy_unspecified')",
+            name="ck_pages_review_reason",
+        ),
+        CheckConstraint(
+            "needs_review = false OR review_reason IS NOT NULL",
+            name="ck_pages_needs_review_reason",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -380,6 +391,7 @@ class Page(Base):
     needs_review: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa_text("false"), nullable=False
     )
+    review_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -431,8 +443,22 @@ class Chunk(Base):
             name="fk_chunks_page",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "page_reading_id"],
+            ["page_readings.tenant_id", "page_readings.id"],
+            name="fk_chunks_page_reading",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "ts_config IN ('english', 'spanish', 'simple')", name="ck_chunks_ts_config"
+        ),
+        CheckConstraint(
+            "evidence_type IN ('text', 'visual', 'table')",
+            name="ck_chunks_evidence_type",
+        ),
+        CheckConstraint(
+            "evidence_type != 'visual' OR page_reading_id IS NOT NULL",
+            name="ck_chunks_visual_requires_reading",
         ),
     )
 
@@ -464,6 +490,10 @@ class Chunk(Base):
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    page_reading_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    evidence_type: Mapped[str] = mapped_column(
+        String(50), default="text", server_default=sa_text("'text'"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

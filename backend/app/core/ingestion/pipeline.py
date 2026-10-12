@@ -91,6 +91,7 @@ class PagePipelineService:
                 tenant_id=tenant_id,
                 version_id=document_version_id,
                 page_number=page_number,
+                reason="processing_failed",
             )
             await self.repository.record_job_step(
                 tenant_id=tenant_id,
@@ -98,6 +99,38 @@ class PagePipelineService:
                 page_number=page_number,
                 step="chunking",
                 status="failed",
+            )
+            return
+
+        # Check 2.4 review policy for OCR confidence gating
+        from app.core.ingestion.review_policy import evaluate_page_review
+        from app.ports.types import PageType
+
+        page_type = await self.repository.get_page_type(
+            tenant_id=tenant_id,
+            version_id=document_version_id,
+            page_number=page_number,
+        )
+        if page_type is None:
+            page_type = PageType.DIGITAL_TEXT
+
+        needs_review, review_reason = evaluate_page_review(
+            page_type=page_type,
+            ocr_score=parsed.confidence,
+        )
+        if needs_review and review_reason:
+            await self.repository.flag_page_for_review(
+                tenant_id=tenant_id,
+                version_id=document_version_id,
+                page_number=page_number,
+                reason=review_reason,
+            )
+            await self.repository.record_job_step(
+                tenant_id=tenant_id,
+                version_id=document_version_id,
+                page_number=page_number,
+                step="chunking",
+                status="completed",
             )
             return
 

@@ -43,3 +43,9 @@ Adopt **Option 2**.
    - `read_page(role: ModelRole, image: bytes, question: str) -> PageReading`: Question-directed visual inspection at query time.
 2. In the `MockModelProvider`, `transcribe_page` returns deterministic mock visual transcription text with `model_id="mock-vision"`.
 3. In production adapters (`OllamaModelProvider`, `VertexModelProvider`), `transcribe_page` sends an unprompted transcription system prompt, while `read_page` injects the user question into the prompt template.
+
+## Confidence Score Contract in PageReading
+`PageReading.confidence` is typed as optional (`confidence: float | None = None`).
+- **Rationale**: Downstream multimodal visual transcription providers (e.g., local Ollama vision models) do not reliably return calibrated scalar token confidence scores without custom logprob parsing.
+- **Fail-Safe Policy**: Any `PageReading` where `confidence is None` (or `math.isnan(confidence)`) is strictly treated as *not confident* by `vision_policy.py` (`VisionReadingOutcome.needs_review = True`, `review_reason = "vision_confidence_missing"`, `is_indexable = False`). Non-empty text alone never counts as success when confidence is missing.
+- **Audit Confirmation**: Every caller inspecting `PageReading.confidence` treats `None` as unconfident.

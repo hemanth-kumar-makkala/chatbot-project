@@ -30,18 +30,19 @@ class TestPageReviewPolicyAllTypes:
             threshold=0.70,
         )
         assert flag is True
-        assert "nan" in reason.lower() or "unreadable" in reason.lower()
+        assert reason == "low_ocr_confidence"
         assert should_flag_page_for_review(PageType.SCANNED, False, float("nan"), 0.70) is True
 
     def test_scanned_none_ocr_score_flags_review(self) -> None:
         """Scanned page with None ocr_score must be flagged for review."""
-        flag, _ = evaluate_page_review(
+        flag, reason = evaluate_page_review(
             page_type=PageType.SCANNED,
             has_text_layer=False,
             ocr_score=None,
             threshold=0.70,
         )
         assert flag is True
+        assert reason == "low_ocr_confidence"
 
     def test_scanned_below_threshold_flags_review(self) -> None:
         """Scanned page with score < threshold must be flagged for review."""
@@ -52,7 +53,7 @@ class TestPageReviewPolicyAllTypes:
             threshold=0.70,
         )
         assert flag is True
-        assert "below threshold" in reason.lower()
+        assert reason == "low_ocr_confidence"
 
     def test_scanned_above_threshold_passes(self) -> None:
         """Scanned page with score >= threshold passes without review flag."""
@@ -75,27 +76,29 @@ class TestPageReviewPolicyAllTypes:
             threshold=0.70,
         )
         assert flag is True
-        assert "image-heavy" in reason.lower()
+        assert reason == "low_ocr_confidence"
 
     def test_image_heavy_without_text_layer_none_flags_review(self) -> None:
         """Image-heavy page without text layer and None ocr_score must be flagged."""
-        flag, _ = evaluate_page_review(
+        flag, reason = evaluate_page_review(
             page_type=PageType.IMAGE_HEAVY,
             has_text_layer=False,
             ocr_score=None,
             threshold=0.70,
         )
         assert flag is True
+        assert reason == "low_ocr_confidence"
 
     def test_image_heavy_without_text_layer_below_threshold_flags_review(self) -> None:
         """Image-heavy page without text layer and score < threshold must be flagged."""
-        flag, _ = evaluate_page_review(
+        flag, reason = evaluate_page_review(
             page_type=PageType.IMAGE_HEAVY,
             has_text_layer=False,
             ocr_score=0.45,
             threshold=0.70,
         )
         assert flag is True
+        assert reason == "low_ocr_confidence"
 
     def test_image_heavy_without_text_layer_above_threshold_passes(self) -> None:
         """Image-heavy page without text layer and score >= threshold passes."""

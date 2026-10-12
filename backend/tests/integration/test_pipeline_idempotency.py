@@ -16,7 +16,7 @@ from app.adapters.parsing.mock import MockDocumentParser
 from app.core.ingestion.pipeline import PagePipelineService, is_retryable_error
 from app.db.models import Chunk, Page
 from app.db.session import worker_tenant_session
-from app.ports.types import WorkerContext
+from app.ports.types import ParsedPageContent, WorkerContext
 from tests.fixtures.database_seeding import (
     seed_document,
     seed_page,
@@ -156,6 +156,59 @@ class TestPipelineExecutionAndIdempotency:
             assert page_row.needs_review is True, (
                 "Page with permanent failure must be flagged for review"
             )
+            assert page_row.review_reason == "processing_failed"
+
+    async def test_low_ocr_page_flagged_with_low_ocr_confidence_reason(
+        self, seeded_tenant_and_user: tuple[UUID, UUID]
+    ) -> None:
+        """Low-OCR page evaluated by pipeline has review_reason='low_ocr_confidence'."""
+        tenant_id, user_id = seeded_tenant_and_user
+        worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+        async with worker_tenant_session(worker_ctx) as session:
+            doc_id = await seed_document(session, tenant_id=tenant_id, title="Low OCR Scanned Doc")
+            ver_id = await seed_version(
+                session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+            )
+            page_id = await seed_page(
+                session,
+                tenant_id=tenant_id,
+                ver_id=ver_id,
+                page_number=1,
+                page_type="scanned",
+            )
+
+            repo = PostgresDocumentRepository(session)
+
+            class LowOcrParser(MockDocumentParser):
+                async def extract(self, *args: object, **kwargs: object) -> ParsedPageContent:
+                    _ = (args, kwargs)
+                    return ParsedPageContent(
+                        page_number=1,
+                        text="Unclear degraded blurry scan",
+                        confidence=0.45,
+                    )
+
+            pipeline = PagePipelineService(
+                repository=repo,
+                parser=LowOcrParser(),
+                chunker=MockChunker(),
+                embedding_provider=MockEmbeddingProvider(),
+            )
+
+            await pipeline.process_page(
+                tenant_id=str(tenant_id), document_version_id=ver_id, page_number=1
+            )
+
+            page_row = (await session.execute(select(Page).where(Page.id == page_id))).scalar_one()
+            assert page_row.needs_review is True
+            assert page_row.review_reason == "low_ocr_confidence"
+
+            # Assert chunks were excluded from indexing (Invariant 6)
+            chunk_count = (
+                await session.execute(select(func.count(Chunk.id)).where(Chunk.page_id == page_id))
+            ).scalar_one()
+            assert chunk_count == 0
 
     async def test_split_job_rerun_queues_jobs_for_pages_without_completed_step(
         self, seeded_tenant_and_user: tuple[UUID, UUID]
@@ -280,7 +333,10 @@ class TestPipelineExecutionAndIdempotency:
             )
             # Page 2 flagged for review
             await session.execute(
-                text("UPDATE pages SET needs_review = true WHERE id = :pid"),
+                text(
+                    "UPDATE pages SET needs_review = true, "
+                    "review_reason = 'low_ocr_confidence' WHERE id = :pid"
+                ),
                 {"pid": p2},
             )
 

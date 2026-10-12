@@ -14,8 +14,9 @@ Enforces:
 from __future__ import annotations
 
 import math
+from typing import Literal
 
-from app.ports.types import PageType
+from app.ports.types import PageType, ReviewReason
 
 
 def evaluate_page_review(
@@ -23,7 +24,7 @@ def evaluate_page_review(
     has_text_layer: bool = False,
     ocr_score: float | None = None,
     threshold: float = 0.70,
-) -> tuple[bool, str]:
+) -> tuple[bool, ReviewReason | Literal[""]]:
     """Evaluate whether an individual page requires manual review.
 
     Args:
@@ -43,26 +44,17 @@ def evaluate_page_review(
 
     if page_type == PageType.SCANNED:
         if ocr_score is None or math.isnan(ocr_score):
-            return True, "Scanned page has unreadable/unset OCR score (NaN)"
+            return True, "low_ocr_confidence"
         if ocr_score < threshold:
-            return (
-                True,
-                f"Scanned page OCR score {ocr_score:.2f} is below threshold {threshold:.2f}",
-            )
+            return True, "low_ocr_confidence"
         return False, ""
 
     if page_type == PageType.IMAGE_HEAVY:
         if not has_text_layer:
             if ocr_score is None or math.isnan(ocr_score):
-                return (
-                    True,
-                    "Image-heavy page without text layer has unreadable/unset OCR score (NaN)",
-                )
+                return True, "low_ocr_confidence"
             if ocr_score < threshold:
-                return (
-                    True,
-                    f"Image-heavy page score {ocr_score:.2f} is below threshold {threshold:.2f}",
-                )
+                return True, "low_ocr_confidence"
             return False, ""
         # Image-heavy page with native text layer is not flagged for missing OCR
         return False, ""

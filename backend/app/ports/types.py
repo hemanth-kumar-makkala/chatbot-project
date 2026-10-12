@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -122,6 +122,17 @@ class PageType(StrEnum):
     SCANNED = "scanned"
     IMAGE_HEAVY = "image_heavy"
     BLANK = "blank"
+
+
+ReviewReason = Literal[
+    "low_ocr_confidence",
+    "vision_failed",
+    "vision_low_confidence",
+    "vision_confidence_missing",
+    "image_too_large",
+    "processing_failed",
+    "legacy_unspecified",
+]
 
 
 class PageArtifact(BaseModel):
