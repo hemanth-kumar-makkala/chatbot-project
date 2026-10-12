@@ -8,7 +8,13 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
 
-from app.ports.types import DocumentRecord, DocumentVersionRecord, PageType, ReviewReason
+from app.ports.types import (
+    DocumentRecord,
+    DocumentVersionRecord,
+    PageRecord,
+    PageType,
+    ReviewReason,
+)
 
 
 class DocumentRepository(ABC):
@@ -109,6 +115,16 @@ class DocumentRepository(ABC):
         page_number: int,
     ) -> PageType | None:
         """Retrieve classified page type for a specific page."""
+        ...
+
+    @abstractmethod
+    async def get_page(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageRecord | None:
+        """Retrieve page evidence record by tenant, version, and page number."""
         ...
 
     @abstractmethod

@@ -51,3 +51,62 @@ class TestModelProviderWiringGuard:
         """Image processor factory returns PillowImageProcessor."""
         processor = create_image_processor("mock")
         assert isinstance(processor, PillowImageProcessor)
+
+
+class TestPagePipelineWiringGuard:
+    """Verifies that PagePipelineService wiring fails closed in non-mock profiles."""
+
+    @pytest.mark.parametrize(
+        "profile",
+        ["office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud", "unrecognized_profile"],
+    )
+    def test_page_pipeline_fails_closed_in_non_mock_profile(self, profile: str) -> None:
+        """In non-mock profiles, building the pipeline without provider/processor
+        raises ConfigurationError."""
+        from unittest.mock import MagicMock
+
+        from app.wiring import create_page_pipeline_service
+
+        mock_session = MagicMock()
+        with pytest.raises(ConfigurationError):
+            create_page_pipeline_service(mock_session, profile=profile)
+
+    def test_page_pipeline_fails_closed_without_model_provider_in_non_mock(self) -> None:
+        """Building page pipeline with explicit model_provider=None in non-mock profile
+        raises ConfigurationError."""
+        from unittest.mock import MagicMock
+
+        from app.wiring import create_page_pipeline_service
+
+        mock_session = MagicMock()
+        with pytest.raises(ConfigurationError, match="model provider"):
+            create_page_pipeline_service(
+                mock_session,
+                profile="office-cpu",
+                parser=MagicMock(),
+                chunker=MagicMock(),
+                embedding_provider=MagicMock(),
+                model_provider=None,
+                image_processor=MagicMock(),
+                storage=MagicMock(),
+            )
+
+    def test_page_pipeline_fails_closed_without_image_processor_in_non_mock(self) -> None:
+        """Building page pipeline with explicit image_processor=None in non-mock profile
+        raises ConfigurationError."""
+        from unittest.mock import MagicMock
+
+        from app.wiring import create_page_pipeline_service
+
+        mock_session = MagicMock()
+        with pytest.raises(ConfigurationError, match="image processor"):
+            create_page_pipeline_service(
+                mock_session,
+                profile="office-cpu",
+                parser=MagicMock(),
+                chunker=MagicMock(),
+                embedding_provider=MagicMock(),
+                model_provider=MagicMock(),
+                image_processor=None,
+                storage=MagicMock(),
+            )

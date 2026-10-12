@@ -919,3 +919,51 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - All 17 Task 2.7 tests pass.
   - Concurrency test verified across 30 consecutive runs with 0 failures and 0 deadlocks (stopping on first failure).
   - All 10 pre-commit hooks pass on all files (`pre-commit run --all-files`).
+
+---
+
+## 2026-10-12 - Task 2.5: Upload-Time Vision Reading & Pipeline Wiring
+
+- **Module**: `backend/app/core/ingestion/pipeline.py`, `backend/app/core/ingestion/vision_policy.py`, `backend/app/adapters/images/pillow.py`, `backend/app/adapters/db/postgres_document_repository.py`, `backend/app/wiring.py`
+- **Spec Section**: Task 2.5 Upload-Time Vision Reading (Option A Recovery, Dual Reading Selection, Migration 0007, Invariants 5, 6, 11)
+- **What Was Built**:
+  - `ADR-0011`: Documented `transcribe_page(role, image)` port method on `ModelProvider` without prompt question, downscaling via `ImageProcessor`, and optional `PageReading.confidence` (`float | None`).
+  - Migration 0007: Added `review_reason` allowlist (`low_ocr_confidence`, `vision_failed`, `vision_low_confidence`, `vision_confidence_missing`, `image_too_large`, `processing_failed`, `legacy_unspecified`), `ck_pages_needs_review_reason` valid check constraint, and composite foreign key `(tenant_id, page_reading_id)` with `evidence_type` on `chunks`.
+  - `ImageProcessor` port and `PillowImageProcessor` adapter: Enforced lossless PNG downscaling respecting max dimensions and bytes with safety floor.
+  - Pipeline Step 3 Wiring:
+    1. Docling extract, then 2.4 review policy (`evaluate_page_review` flags `low_ocr_confidence`).
+    2. Vision trigger rule (`should_trigger_vision_read`): prepares image via `ImageProcessor`, calls `transcribe_page`, and saves with `create_page_reading` (`source="vision_ingest"`).
+    3. Option A recovery: successful vision reading clears only `low_ocr_confidence`. Low/missing confidence or `ImageProcessingError` flags matching reason.
+    4. Reading selection rule (`select_readings_for_chunking`): reliable text as `evidence_type='text'`, vision reading as `evidence_type='visual'` with `page_reading_id`, low-OCR text never chunked.
+    5. Recorded `job_steps` only after vision evaluation.
+  - Idempotency & Retry: Re-runs produce zero duplicate chunks and zero duplicate readings. Transient vision errors re-raised for worker retry backoff.
+- **Tests Added**:
+  - `backend/tests/integration/test_upload_vision.py`: 10 integration tests covering recovery, re-run idempotency, image-heavy dual-indexing, high-OCR skip, digital text skip, empty vision failure, low confidence, missing confidence, image too large, and transient retry.
+  - `backend/tests/unit/test_upload_vision_policy.py`: 15 unit tests covering trigger rules, review flag transitions, and reading selection.
+  - `backend/tests/integration/test_migration_0007.py`: 4 database schema tests.
+  - `backend/tests/unit/test_wiring_profile_guards.py`: 8 profile guard tests.
+- **Decisions Made**:
+  - `ReviewReason` required literal type on `flag_page_for_review` in both port and adapter (zero silent default).
+  - Vision recovers low-OCR pages only; unrelated or legacy flags remain intact.
+- **Verification**:
+  - All 12 upload vision integration tests and 16 unit wiring tests pass (28 passed).
+  - All 10 pre-commit hooks pass cleanly (`uv run pre-commit run --files ...`).
+
+### 2026-10-12 - Task 2.5 Step 3: Additions & Fail-Closed Guards
+
+- **Module**: `backend/app/wiring.py`, `backend/tests/unit/test_wiring_profile_guards.py`, `backend/tests/integration/test_upload_vision.py`
+- **Spec Section**: Task 2.5 Step 3 Acceptance Additions (Leakage Invariant, Branch B Activation, Fail-Closed Wiring)
+- **What Was Built**:
+  - Fail-Closed Page Pipeline Wiring (`backend/app/wiring.py`):
+    - In any non-mock profile (`office-cpu`, `desktop-gpu`, `home-gpu`, `dev-free-api`, `cloud`, or unauthorized), building the page pipeline via `create_page_pipeline_service` without a model provider or image processor raises `ConfigurationError`.
+    - Removed `try/except ConfigurationError` silent fallback in `create_page_pipeline_service`.
+  - Zero Text Leakage Invariant:
+    - Added `test_upload_vision_zero_text_leakage_in_job_steps_and_audit` verifying synthetic transcription markers never appear in `job_steps`, `audit_events`, operational logs (`caplog`), or error messages. Confirmed stored only in `page_readings` content table.
+  - Branch B Activation on Permanent Vision Error:
+    - Added `test_upload_vision_permanent_error_flags_review_and_activates_branch_b` verifying permanent vision failure on a first version activates Branch B (version `needs_review`, `active_version_id` set, clean pages active, flagged page has zero active chunks).
+- **Tests Added**:
+  - `backend/tests/unit/test_wiring_profile_guards.py`: `TestPagePipelineWiringGuard` (non-mock profile refusal, explicit `model_provider=None` rejection, explicit `image_processor=None` rejection).
+  - `backend/tests/integration/test_upload_vision.py`: `test_upload_vision_zero_text_leakage_in_job_steps_and_audit`, `test_upload_vision_permanent_error_flags_review_and_activates_branch_b`.
+- **Verification**:
+  - 28/28 affected tests pass in 1.51s.
+  - All 10 pre-commit hooks pass cleanly on changed files.

@@ -302,22 +302,88 @@ def create_embedding_provider(profile: str) -> EmbeddingProvider:
     )
 
 
+_UNSET: Any = object()
+
+
 def create_page_pipeline_service(
     session: AsyncSession,
     profile: str = "mock",
+    *,
+    parser: Any = _UNSET,
+    chunker: Any = _UNSET,
+    embedding_provider: Any = _UNSET,
+    model_provider: Any = _UNSET,
+    image_processor: Any = _UNSET,
+    storage: Any = _UNSET,
+    max_image_dimension: int = 1024,
+    max_image_bytes: int = 4 * 1024 * 1024,
 ) -> Any:
-    """Instantiate and wire PagePipelineService with repository, parser, chunker, and embedder."""
+    """Instantiate and wire PagePipelineService with repository, parser, chunker, and vision.
+
+    Fail-closed policy:
+    In any non-mock profile, building the page pipeline without a model provider
+    or image processor must raise ConfigurationError. No silent skip.
+    """
     from app.core.ingestion.pipeline import PagePipelineService
+    from app.ports.errors import ConfigurationError
+
+    if profile != "mock":
+        if model_provider is None:
+            raise ConfigurationError(
+                f"Building page pipeline in non-mock profile '{profile}' "
+                "without a model provider is forbidden. Fail closed.",
+                error_code="PAGE_PIPELINE_MISSING_MODEL_PROVIDER",
+            )
+        if model_provider is _UNSET:
+            model_provider = create_model_provider(profile=profile)
+            if model_provider is None:
+                raise ConfigurationError(
+                    f"Building page pipeline in non-mock profile '{profile}' "
+                    "without a model provider is forbidden. Fail closed.",
+                    error_code="PAGE_PIPELINE_MISSING_MODEL_PROVIDER",
+                )
+
+        if image_processor is None:
+            raise ConfigurationError(
+                f"Building page pipeline in non-mock profile '{profile}' "
+                "without an image processor is forbidden. Fail closed.",
+                error_code="PAGE_PIPELINE_MISSING_IMAGE_PROCESSOR",
+            )
+        if image_processor is _UNSET:
+            image_processor = create_image_processor(profile=profile)
+            if image_processor is None:
+                raise ConfigurationError(
+                    f"Building page pipeline in non-mock profile '{profile}' "
+                    "without an image processor is forbidden. Fail closed.",
+                    error_code="PAGE_PIPELINE_MISSING_IMAGE_PROCESSOR",
+                )
 
     repo = create_document_repository(session)
-    parser = create_document_parser(profile=profile)
-    chunker = create_chunker(profile=profile)
-    embedder = create_embedding_provider(profile=profile)
+    if parser is _UNSET:
+        parser = create_document_parser(profile=profile)
+    if chunker is _UNSET:
+        chunker = create_chunker(profile=profile)
+    if embedding_provider is _UNSET:
+        embedder = create_embedding_provider(profile=profile)
+    else:
+        embedder = embedding_provider
+    if image_processor is _UNSET:
+        image_processor = create_image_processor(profile=profile)
+    if storage is _UNSET:
+        storage = create_storage_backend(profile=profile)
+    if model_provider is _UNSET:
+        model_provider = create_model_provider(profile=profile)
+
     return PagePipelineService(
         repository=repo,
         parser=parser,
         chunker=chunker,
         embedding_provider=embedder,
+        model_provider=model_provider,
+        image_processor=image_processor,
+        storage=storage,
+        max_image_dimension=max_image_dimension,
+        max_image_bytes=max_image_bytes,
     )
 
 

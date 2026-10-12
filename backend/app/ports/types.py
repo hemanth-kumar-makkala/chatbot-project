@@ -235,6 +235,21 @@ class DocumentVersionRecord(BaseModel):
     created_at: datetime
 
 
+class PageRecord(BaseModel):
+    """Domain record representing a single document page evidence row."""
+
+    id: UUID
+    tenant_id: str
+    document_version_id: UUID
+    page_number: int
+    page_sha256: str
+    page_type: PageType
+    image_key: str
+    ocr_confidence: float | None = None
+    needs_review: bool = False
+    review_reason: ReviewReason | None = None
+
+
 class UploadPayload(BaseModel):
     """Input payload for a document upload."""
 

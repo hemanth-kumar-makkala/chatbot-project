@@ -1,7 +1,7 @@
 """PostgreSQL adapter for DocumentRepository port."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
@@ -21,7 +21,13 @@ from app.db.models import (
 )
 from app.ports.document_repository import DocumentRepository
 from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
-from app.ports.types import DocumentRecord, DocumentVersionRecord, PageType, ReviewReason
+from app.ports.types import (
+    DocumentRecord,
+    DocumentVersionRecord,
+    PageRecord,
+    PageType,
+    ReviewReason,
+)
 
 
 class PostgresDocumentRepository(DocumentRepository):
@@ -293,6 +299,33 @@ class PostgresDocumentRepository(DocumentRepository):
         if res is None:
             return None
         return PageType(res)
+
+    async def get_page(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageRecord | None:
+        stmt = select(Page).where(
+            Page.tenant_id == UUID(str(tenant_id)),
+            Page.document_version_id == version_id,
+            Page.page_number == page_number,
+        )
+        p = (await self.session.execute(stmt)).scalars().first()
+        if p is None:
+            return None
+        return PageRecord(
+            id=p.id,
+            tenant_id=str(p.tenant_id),
+            document_version_id=p.document_version_id,
+            page_number=p.page_number,
+            page_sha256=p.page_sha256,
+            page_type=PageType(p.page_type),
+            image_key=p.image_key,
+            ocr_confidence=p.ocr_confidence,
+            needs_review=p.needs_review,
+            review_reason=cast(ReviewReason | None, p.review_reason),
+        )
 
     async def update_version_status(
         self,
