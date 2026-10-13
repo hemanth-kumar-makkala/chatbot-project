@@ -2111,16 +2111,16 @@ async def test_retry_refused_when_job_already_queued_or_running_returns_409(test
             session.add(job)
             await session.flush()
 
-            # Job step is currently in 'processing' status (active / queued)
+            # Page processing marker is currently active ('running')
             step = JobStep(
                 id=uuid4(),
                 tenant_id=t1_id,
                 job_id=job_id,
                 document_version_id=v_id,
                 page_number=1,
-                step="vision",
+                step="page_processing",
                 processing_version="v1",
-                status="processing",
+                status="running",
             )
             session.add(step)
             await session.flush()
@@ -2680,14 +2680,32 @@ async def test_retry_defer_failure_rolls_back_and_leaves_page_retryable(
             )
             assert res_fail.status_code == 500
 
-            # 2. Verify JobStep.status in DB was NOT committed as processing (rolled back to failed)
+            # 2. Verify page_processing marker was NOT committed (rolled back)
+            # and original step unchanged
             async with tenant_session(ctx) as session:
+                marker_check = (
+                    (
+                        await session.execute(
+                            select(JobStep).where(
+                                JobStep.tenant_id == t1_id,
+                                JobStep.document_version_id == v_id,
+                                JobStep.page_number == 1,
+                                JobStep.step == "page_processing",
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                assert marker_check is None
+
                 step_check = (
                     await session.execute(
                         select(JobStep.status).where(
                             JobStep.tenant_id == t1_id,
                             JobStep.document_version_id == v_id,
                             JobStep.page_number == 1,
+                            JobStep.step == "ocr",
                         )
                     )
                 ).scalar_one()
@@ -2708,7 +2726,7 @@ async def test_retry_defer_failure_rolls_back_and_leaves_page_retryable(
             assert res_retry.status_code == 200
             assert res_retry.json()["status"] == "retrying"
 
-            # Verify step is now processing
+            # Verify marker step is now queued
             async with tenant_session(ctx) as session:
                 step_check2 = (
                     await session.execute(
@@ -2716,10 +2734,11 @@ async def test_retry_defer_failure_rolls_back_and_leaves_page_retryable(
                             JobStep.tenant_id == t1_id,
                             JobStep.document_version_id == v_id,
                             JobStep.page_number == 1,
+                            JobStep.step == "page_processing",
                         )
                     )
                 ).scalar_one()
-                assert step_check2 == "processing"
+                assert step_check2 == "queued"
 
 
 @pytest.mark.asyncio

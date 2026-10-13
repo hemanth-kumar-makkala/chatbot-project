@@ -1172,3 +1172,35 @@ Append-only record of all completed tasks, architectural choices, and test recor
     - All 26 tests in `test_api_knowledge_step3.py` pass.
     - All 24 boundary invariant tests in `test_architecture_boundaries.py` pass.
     - Pre-commit hooks (`trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files`, `detect-private-key`, `mixed-line-ending`, `detect-secrets`, `ruff`, `ruff-format`, `mypy`, `boundary-invariants`) pass cleanly across all modified files.
+
+---
+
+### [2026-10-14] TASK A2: Per-Page Job Active Marker (`page_processing`)
+
+- **Task ID**: TASK A2
+- **What Was Built**:
+  - **Types & Port Contracts** (`backend/app/ports/types.py`, `backend/app/ports/document_repository.py`):
+    - Defined `JobStepStatus = Literal["queued", "processing", "running", "completed", "failed"]`. Kept `"processing"` because `pipeline.py:156` (`step="vision"`) and `splitter_service.py:72` (`step="split"`) write it.
+    - Defined `ACTIVE_PAGE_MARKER_STATUSES: frozenset[JobStepStatus] = frozenset({"queued", "running"})`.
+    - Defined `CURRENT_PROCESSING_VERSION: str = "v1"`.
+    - Declared `record_page_processing_marker(tenant_id, version_id, page_number, status, processing_version=CURRENT_PROCESSING_VERSION)` on `DocumentRepository` port.
+  - **Repository Implementation** (`backend/app/adapters/db/postgres_document_repository.py`):
+    - Implemented `record_page_processing_marker`: locks the `Page` row `FOR UPDATE`, then upserts into `job_steps` using `on_conflict_do_update` updating `status`, `job_id`, and `updated_at=func.now()`.
+    - Updated `_assert_no_active_page_job` to check strictly `JobStep.step == "page_processing"` and `JobStep.status.in_(ACTIVE_PAGE_MARKER_STATUSES)`. Other steps (such as `vision` or `chunking`) never block accept/exclude/retry.
+    - Updated `enqueue_page_retry` to record the marker as `"queued"` via `record_page_processing_marker` using `CURRENT_PROCESSING_VERSION` (eliminating guessed `"vision"`/`"ocr"` steps and hardcoded strings).
+  - **Worker Execution** (`backend/app/worker.py`):
+    - Transaction 0: Short transaction committing before page work starts, setting the marker to `"running"` if the page is uncompleted.
+    - Transaction 1: Sets marker to `"completed"` upon successful page processing; sets marker to `"failed"` on permanent errors and final retry attempts (`retry_decision is None`); leaves marker `"running"` on intermediate retries (re-raise rolls back Transaction 1 while preserving Transaction 0's committed `"running"` state).
+  - **Integration Tests** (`backend/tests/integration/test_page_processing_marker.py`):
+    - `test_page_processing_marker_running_blocks_accept`: verifies marker visible as `"running"` while page work runs (hooked `process_page`) and `accept_page_review` returns `PageJobConflictError`.
+    - `test_page_processing_successful_run_sets_marker_completed_and_accept_succeeds`: verifies marker ends `"completed"` and accept succeeds.
+    - `test_retry_sets_marker_queued_and_blocks_accept_and_second_retry`: verifies retry sets marker to `"queued"`, blocking both accept and a second retry with `PageJobConflictError`, and after worker runs it ends `"completed"` allowing accept.
+    - `test_leftover_vision_processing_step_does_not_block_accept`: verifies leftover `JobStep(step="vision", status="processing")` does not block accept.
+    - `test_final_retry_failure_sets_marker_failed`: verifies final-retry failure sets marker to `"failed"`.
+- **Verification**:
+  - `uv run pytest tests/integration/test_page_processing_marker.py` -> 5 passed.
+  - `uv run pytest tests/integration/test_accept_exclude_active_job_conflict.py` -> 3 passed.
+  - `uv run pytest tests/integration/test_job_step_status_updates.py` -> 3 passed.
+  - `uv run pytest tests/integration/test_pipeline_idempotency.py` -> 8 passed.
+  - `uv run pytest tests/integration/test_api_knowledge_step3.py -k retry` -> 13 passed.
+  - `uv run pre-commit run --files ...` -> clean pass across all modified files.

@@ -6,6 +6,14 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Task A2**: Per-Page Job Active Marker (`page_processing`) — **COMPLETED**
+  - Completed: `JobStepStatus` typed as `Literal["queued", "processing", "running", "completed", "failed"]` in `app/ports/types.py`. Kept `"processing"` because `pipeline.py:156` (`vision`) and `splitter_service.py:72` (`split`) still write it.
+  - Completed: `ACTIVE_PAGE_MARKER_STATUSES: frozenset[JobStepStatus] = frozenset({"queued", "running"})` and `CURRENT_PROCESSING_VERSION: str = "v1"` in `app/ports/types.py`.
+  - Completed: `_assert_no_active_page_job` checks ONLY `step="page_processing"` with `status in ACTIVE_PAGE_MARKER_STATUSES`. Other steps can never block accept/exclude/retry again.
+  - Completed: `record_page_processing_marker` added to port and `PostgresDocumentRepository` locking Page row FOR UPDATE and upserting via `on_conflict_do_update` (`status`, `job_id`, `updated_at=func.now()`).
+  - Completed: `enqueue_page_retry` sets marker to `"queued"` using `CURRENT_PROCESSING_VERSION` instead of hardcoded guessed steps.
+  - Completed: `worker.py run_page_job` Transaction 0 (short, own commit) sets marker to `"running"` before page work; Transaction 1 sets `"completed"` on success, `"failed"` on final retry attempt and permanent errors, and leaves `"running"` on intermediate retry.
+  - Completed: All 5 integration tests in `test_page_processing_marker.py`, all 3 in `test_accept_exclude_active_job_conflict.py`, all 3 in `test_job_step_status_updates.py`, all 8 in `test_pipeline_idempotency.py`, and all 13 in `test_api_knowledge_step3.py -k retry` pass cleanly.
 - **Task 2.8a Step 3 (a & b)**: Knowledge Review Actions, Promote & Retry — **COMPLETED**
   - Completed: Promote preconditions: promote is allowed strictly when version status is `needs_review`; `processing`, `failed`, `retired`, `received` return 409 `INVALID_VERSION_STATE`; promoting an already-active ready version is an idempotent no-op 200.
   - Completed: Retry route `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/retry` with client_admin RBAC, CSRF token validation, and assistant tenant anti-probing 404s.

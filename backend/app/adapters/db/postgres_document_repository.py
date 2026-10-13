@@ -31,10 +31,13 @@ from app.ports.errors import (
     RetryNotUsefulError,
 )
 from app.ports.types import (
+    ACTIVE_PAGE_MARKER_STATUSES,
     CLEARABLE_REVIEW_REASONS,
+    CURRENT_PROCESSING_VERSION,
     DocumentRecord,
     DocumentStatusInfo,
     DocumentVersionRecord,
+    JobStepStatus,
     PageRecord,
     PageType,
     ReviewPageInfo,
@@ -372,7 +375,7 @@ class PostgresDocumentRepository(DocumentRepository):
         page_number: int | None,
         step: str,
         status: str,
-        processing_version: str = "v1",
+        processing_version: str = CURRENT_PROCESSING_VERSION,
         job_id: UUID | None = None,
     ) -> None:
         """Record an idempotent job step execution in job_steps."""
@@ -424,6 +427,80 @@ class PostgresDocumentRepository(DocumentRepository):
                 document_version_id=version_id,
                 page_number=page_number,
                 step=step,
+                processing_version=processing_version,
+                status=status,
+            )
+            .on_conflict_do_update(
+                index_elements=[
+                    JobStep.tenant_id,
+                    JobStep.document_version_id,
+                    JobStep.page_number,
+                    JobStep.step,
+                    JobStep.processing_version,
+                ],
+                set_={
+                    "status": status,
+                    "job_id": actual_job_id,
+                    "updated_at": func.now(),
+                },
+            )
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def record_page_processing_marker(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        status: JobStepStatus,
+        processing_version: str = CURRENT_PROCESSING_VERSION,
+    ) -> None:
+        """Lock the Page row FOR UPDATE, then upsert the page_processing marker in job_steps."""
+        tid = UUID(str(tenant_id))
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise DocumentNotFoundError("Page not found in tenant")
+
+        job_stmt = (
+            select(Job)
+            .where(
+                Job.tenant_id == tid,
+                Job.document_version_id == version_id,
+            )
+            .order_by(Job.created_at.desc())
+        )
+        job_res = await self.session.execute(job_stmt)
+        job = job_res.scalars().first()
+        if job is None:
+            job = Job(
+                id=uuid4(),
+                tenant_id=tid,
+                document_version_id=version_id,
+                status="processing",
+            )
+            self.session.add(job)
+            await self.session.flush()
+        actual_job_id = job.id
+
+        stmt = (
+            pg_insert(JobStep)
+            .values(
+                id=uuid4(),
+                tenant_id=tid,
+                job_id=actual_job_id,
+                document_version_id=version_id,
+                page_number=page_number,
+                step="page_processing",
                 processing_version=processing_version,
                 status=status,
             )
@@ -1107,11 +1184,14 @@ class PostgresDocumentRepository(DocumentRepository):
             JobStep.tenant_id == tenant_id,
             JobStep.document_version_id == version_id,
             JobStep.page_number == page_number,
-            JobStep.status.in_(["processing", "todo", "doing"]),
+            JobStep.step == "page_processing",
+            JobStep.status.in_(ACTIVE_PAGE_MARKER_STATUSES),
         )
         active_step = (await self.session.execute(active_step_stmt)).scalars().first()
         if active_step is not None:
-            raise PageJobConflictError(f"A job for page {page_number} is already queued or running")
+            raise PageJobConflictError(
+                "A background processing job for this page is already queued or running"
+            )
 
     async def accept_page_review(
         self,
@@ -1596,7 +1676,7 @@ class PostgresDocumentRepository(DocumentRepository):
         page_number: int,
         current_model_id: str | None = None,
         current_model_version: str | None = None,
-        current_processing_version: str = "v1",
+        current_processing_version: str = CURRENT_PROCESSING_VERSION,
     ) -> None:
         """Validate whether a flagged page is eligible for retry under row locks."""
         tid = UUID(str(tenant_id))
@@ -1731,30 +1811,13 @@ class PostgresDocumentRepository(DocumentRepository):
         else:
             job.status = "processing"
 
-        step_stmt = (
-            select(JobStep)
-            .where(
-                JobStep.tenant_id == tid,
-                JobStep.document_version_id == version_id,
-                JobStep.page_number == page_number,
-            )
-            .order_by(JobStep.created_at.desc())
+        await self.record_page_processing_marker(
+            tenant_id=tenant_id,
+            version_id=version_id,
+            page_number=page_number,
+            status="queued",
+            processing_version=CURRENT_PROCESSING_VERSION,
         )
-        existing_step = (await self.session.execute(step_stmt)).scalars().first()
-        if existing_step is not None:
-            existing_step.status = "processing"
-        else:
-            new_step = JobStep(
-                id=uuid4(),
-                tenant_id=tid,
-                job_id=job.id,
-                document_version_id=version_id,
-                page_number=page_number,
-                step="vision" if page.review_reason and "vision" in page.review_reason else "ocr",
-                processing_version="v1",
-                status="processing",
-            )
-            self.session.add(new_step)
 
         # Page stays flagged until the retried run finishes!
         page.needs_review = True

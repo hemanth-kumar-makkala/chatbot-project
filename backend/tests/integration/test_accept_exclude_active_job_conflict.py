@@ -173,9 +173,9 @@ async def _setup_test_page_hierarchy(
                     job_id=job_id,
                     document_version_id=ver_id,
                     page_number=1,
-                    step="step_4",
+                    step="page_processing",
                     processing_version="v1",
-                    status="processing",
+                    status="running",
                 )
             )
         await session.flush()

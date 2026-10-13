@@ -9,9 +9,11 @@ from typing import Any
 from uuid import UUID
 
 from app.ports.types import (
+    CURRENT_PROCESSING_VERSION,
     DocumentRecord,
     DocumentStatusInfo,
     DocumentVersionRecord,
+    JobStepStatus,
     PageRecord,
     PageType,
     ReviewPageInfo,
@@ -147,10 +149,22 @@ class DocumentRepository(ABC):
         page_number: int | None,
         step: str,
         status: str,
-        processing_version: str = "v1",
+        processing_version: str = CURRENT_PROCESSING_VERSION,
         job_id: UUID | None = None,
     ) -> None:
         """Record an idempotent job step execution in job_steps."""
+        ...
+
+    @abstractmethod
+    async def record_page_processing_marker(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        status: JobStepStatus,
+        processing_version: str = CURRENT_PROCESSING_VERSION,
+    ) -> None:
+        """Record or update the per-page 'page_processing' active job marker under Page row lock."""
         ...
 
     @abstractmethod
@@ -308,7 +322,7 @@ class DocumentRepository(ABC):
         page_number: int,
         current_model_id: str | None = None,
         current_model_version: str | None = None,
-        current_processing_version: str = "v1",
+        current_processing_version: str = CURRENT_PROCESSING_VERSION,
     ) -> None:
         """Validate whether a flagged page is eligible for retry under row locks."""
         ...

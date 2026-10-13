@@ -163,11 +163,31 @@ async def run_page_job(
 
     from app.db.session import worker_tenant_session
     from app.ports.types import WorkerContext
-    from app.wiring import create_page_pipeline_service, create_version_activation_service
+    from app.wiring import (
+        create_document_repository,
+        create_page_pipeline_service,
+        create_version_activation_service,
+    )
 
     v_id = UUID(document_version_id)
     profile = os.getenv("APP_PROFILE", "mock")
     worker_ctx = WorkerContext(tenant_id=tenant_id, job_id=str(uuid.uuid4()))
+
+    # Transaction 0: Set marker to "running" before page work, only if page is uncompleted
+    async with worker_tenant_session(worker_ctx) as session:
+        repo = create_document_repository(session)
+        uncompleted = await repo.get_uncompleted_page_numbers(
+            tenant_id=tenant_id,
+            version_id=v_id,
+            step="chunking",
+        )
+        if page_number in uncompleted:
+            await repo.record_page_processing_marker(
+                tenant_id=tenant_id,
+                version_id=v_id,
+                page_number=page_number,
+                status="running",
+            )
 
     # Transaction 1: Commit page work (chunks, job_steps) in its own transaction
     async with worker_tenant_session(worker_ctx) as session:
@@ -185,6 +205,12 @@ async def run_page_job(
                     tenant_id=tenant_id,
                     document_version_id=v_id,
                     page_number=page_number,
+                )
+                await repo.record_page_processing_marker(
+                    tenant_id=tenant_id,
+                    version_id=v_id,
+                    page_number=page_number,
+                    status="completed",
                 )
             except Exception as exc:
                 if is_retryable_error(exc):
@@ -217,6 +243,12 @@ async def run_page_job(
                             step="chunking",
                             status="failed",
                         )
+                        await repo.record_page_processing_marker(
+                            tenant_id=tenant_id,
+                            version_id=v_id,
+                            page_number=page_number,
+                            status="failed",
+                        )
                     else:
                         # Re-raise with fixed message, SQLSTATE code only, from None (zero str(exc))
                         raise transient_exc from None
@@ -233,6 +265,12 @@ async def run_page_job(
                         version_id=v_id,
                         page_number=page_number,
                         step="chunking",
+                        status="failed",
+                    )
+                    await repo.record_page_processing_marker(
+                        tenant_id=tenant_id,
+                        version_id=v_id,
+                        page_number=page_number,
                         status="failed",
                     )
 

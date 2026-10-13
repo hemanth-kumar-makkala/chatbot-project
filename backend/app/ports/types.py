@@ -138,6 +138,12 @@ CLEARABLE_REVIEW_REASONS: frozenset[ReviewReason] = frozenset(
     {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
 )
 
+JobStepStatus = Literal["queued", "processing", "running", "completed", "failed"]
+
+ACTIVE_PAGE_MARKER_STATUSES: frozenset[JobStepStatus] = frozenset({"queued", "running"})
+
+CURRENT_PROCESSING_VERSION: str = "v1"
+
 
 class PageArtifact(BaseModel):
     """Extracted single page artifact ready for page-first processing."""
