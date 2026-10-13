@@ -3,12 +3,13 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AuditEvent,
     Chunk,
     Document,
     DocumentVersion,
@@ -19,7 +20,16 @@ from app.db.models import (
     TableData,
 )
 from app.ports.document_repository import DocumentRepository
-from app.ports.errors import DocumentNotFoundError, DuplicateVersionError
+from app.ports.errors import (
+    DocumentNotFoundError,
+    DocumentRetiredError,
+    DuplicateVersionError,
+    InvalidPageStateError,
+    InvalidVersionStateError,
+    NoUsableReadingError,
+    PageJobConflictError,
+    RetryNotUsefulError,
+)
 from app.ports.types import (
     DocumentRecord,
     DocumentStatusInfo,
@@ -705,10 +715,6 @@ class PostgresDocumentRepository(DocumentRepository):
         page_number: int,
         reason: ReviewReason,
     ) -> None:
-        values: dict[str, Any] = {
-            "needs_review": True,
-            "review_reason": reason,
-        }
         stmt = (
             update(Page)
             .where(
@@ -716,7 +722,13 @@ class PostgresDocumentRepository(DocumentRepository):
                 Page.document_version_id == version_id,
                 Page.page_number == page_number,
             )
-            .values(**values)
+            .values(
+                needs_review=True,
+                review_reason=case(
+                    (Page.review_reason == "legacy_unspecified", Page.review_reason),
+                    else_=reason,
+                ),
+            )
         )
         await self.session.execute(stmt)
         await self.session.flush()
@@ -888,8 +900,10 @@ class PostgresDocumentRepository(DocumentRepository):
                 .where(Page.tenant_id == tid, Page.document_version_id.in_(ver_ids))
                 .group_by(Page.document_version_id)
             )
-            for row in (await self.session.execute(pages_stmt)).all():
-                page_stats[row.document_version_id] = (int(row.total_pages), int(row.flagged_pages))
+            for ver_id, total_pages, flagged_pages in (
+                await self.session.execute(pages_stmt)
+            ).all():
+                page_stats[ver_id] = (int(total_pages), int(flagged_pages))
 
         versions_by_doc: dict[UUID, list[VersionStatusInfo]] = {}
         for ver in versions:
@@ -1052,3 +1066,818 @@ class PostgresDocumentRepository(DocumentRepository):
                 )
             )
         return results
+
+    @staticmethod
+    def _to_page_record(page: Page) -> PageRecord:
+        return PageRecord(
+            id=page.id,
+            tenant_id=str(page.tenant_id),
+            document_version_id=page.document_version_id,
+            page_number=page.page_number,
+            page_sha256=page.page_sha256,
+            page_type=PageType(page.page_type),
+            image_key=page.image_key,
+            ocr_confidence=page.ocr_confidence,
+            needs_review=page.needs_review,
+            review_reason=cast(ReviewReason | None, page.review_reason),
+            is_excluded=getattr(page, "is_excluded", False),
+        )
+
+    async def accept_page_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> tuple[PageRecord, bool]:
+        """Accept flagged page, index reading (visual or text), and evaluate auto-promotion."""
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot accept page for retired document {doc.id}")
+
+        # 2. Lock DocumentVersion
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # 3. Lock Page
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise DocumentNotFoundError(f"Page {page_number} for version {version_id} not found")
+
+        # Double-click idempotency: already accepted
+        if not page.needs_review and not getattr(page, "is_excluded", False):
+            return self._to_page_record(page), False
+
+        # Invalid page state (excluded or not flagged)
+        if getattr(page, "is_excluded", False) or not page.needs_review:
+            raise InvalidPageStateError(f"Page {page_number} is in invalid state")
+
+        # Look up readings
+        readings_stmt = select(PageReading).where(
+            PageReading.tenant_id == tid, PageReading.page_id == page.id
+        )
+        readings = (await self.session.execute(readings_stmt)).scalars().all()
+
+        vision_reading = next((r for r in readings if r.source == "vision_ingest"), None)
+        ocr_reading = next(
+            (r for r in readings if r.source in ("ocr", "docling_ocr", "digital_text")), None
+        )
+
+        if not vision_reading and not ocr_reading:
+            raise NoUsableReadingError(f"No usable reading found for page {page_number}")
+
+        is_live_version = doc.active_version_id == version_id
+
+        if vision_reading:
+            evidence_type = "visual"
+            page_reading_id = vision_reading.id
+            text = vision_reading.text
+        else:
+            evidence_type = "text"
+            page_reading_id = None
+            assert ocr_reading is not None
+            text = ocr_reading.text
+
+        # Create or update chunk
+        chunk_stmt = select(Chunk).where(
+            Chunk.tenant_id == tid,
+            Chunk.document_version_id == version_id,
+            Chunk.page_id == page.id,
+        )
+        chunk = (await self.session.execute(chunk_stmt)).scalars().first()
+
+        if chunk is not None:
+            chunk.evidence_type = evidence_type
+            chunk.page_reading_id = page_reading_id
+            chunk.text = text
+            if is_live_version:
+                chunk.is_active = True
+        else:
+            chunk = Chunk(
+                id=uuid4(),
+                tenant_id=tid,
+                page_id=page.id,
+                document_version_id=version_id,
+                text=text,
+                language="en",
+                ts_config="english",
+                evidence_type=evidence_type,
+                page_reading_id=page_reading_id,
+                is_active=is_live_version,
+            )
+            self.session.add(chunk)
+
+        # Clear needs_review, preserve review_reason
+        page.needs_review = False
+        await self.session.flush()
+
+        # Check remaining flagged pages
+        remaining_stmt = select(func.count(Page.id)).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.needs_review.is_(True),
+        )
+        remaining_flagged = (await self.session.execute(remaining_stmt)).scalar_one() or 0
+
+        auto_promoted = False
+        if remaining_flagged == 0:
+            if doc.active_version_id != version_id:
+                # Branch A auto-promote
+                old_active_id = doc.active_version_id
+                doc.active_version_id = version_id
+                ver.status = "ready"
+
+                if old_active_id is not None:
+                    old_ver_stmt = select(DocumentVersion).where(
+                        DocumentVersion.tenant_id == tid, DocumentVersion.id == old_active_id
+                    )
+                    old_ver = (await self.session.execute(old_ver_stmt)).scalars().first()
+                    if old_ver is not None:
+                        old_ver.status = "retired"
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == old_active_id)
+                        .values(is_active=False)
+                    )
+
+                excluded_pages_stmt = select(Page.id).where(
+                    Page.tenant_id == tid,
+                    Page.document_version_id == version_id,
+                    Page.is_excluded.is_(True),
+                )
+                excluded_page_ids = set(
+                    (await self.session.execute(excluded_pages_stmt)).scalars().all()
+                )
+
+                if excluded_page_ids:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(
+                            Chunk.tenant_id == tid,
+                            Chunk.document_version_id == version_id,
+                            Chunk.page_id.not_in(excluded_page_ids),
+                        )
+                        .values(is_active=True)
+                    )
+                else:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                        .values(is_active=True)
+                    )
+
+                auto_audit = AuditEvent(
+                    tenant_id=tid,
+                    user_id=None,
+                    event_type="knowledge_compliance",
+                    action="version_auto_promoted",
+                    resource_id=str(version_id),
+                )
+                self.session.add(auto_audit)
+                auto_promoted = True
+            else:
+                # Branch B status transition to ready
+                ver.status = "ready"
+
+        await self.session.flush()
+        return self._to_page_record(page), auto_promoted
+
+    async def exclude_page_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> tuple[PageRecord, bool]:
+        """Exclude flagged page, keep chunks inactive, and evaluate auto-promotion."""
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot exclude page for retired document {doc.id}")
+
+        # 2. Lock DocumentVersion
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # 3. Lock Page
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise DocumentNotFoundError(f"Page {page_number} for version {version_id} not found")
+
+        # Double-click idempotency: already excluded
+        if getattr(page, "is_excluded", False) and not page.needs_review:
+            return self._to_page_record(page), False
+
+        # Invalid page state (not flagged)
+        if not page.needs_review:
+            raise InvalidPageStateError(
+                f"Page {page_number} is not flagged for review (needs_review=False)"
+            )
+
+        page.is_excluded = True
+        page.needs_review = False
+
+        # Deactivate chunks for page
+        await self.session.execute(
+            update(Chunk)
+            .where(Chunk.tenant_id == tid, Chunk.page_id == page.id)
+            .values(is_active=False)
+        )
+        await self.session.flush()
+
+        # Check remaining flagged pages
+        remaining_stmt = select(func.count(Page.id)).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.needs_review.is_(True),
+        )
+        remaining_flagged = (await self.session.execute(remaining_stmt)).scalar_one() or 0
+
+        auto_promoted = False
+        if remaining_flagged == 0:
+            if doc.active_version_id != version_id:
+                # Branch A auto-promote
+                old_active_id = doc.active_version_id
+                doc.active_version_id = version_id
+                ver.status = "ready"
+
+                if old_active_id is not None:
+                    old_ver_stmt = select(DocumentVersion).where(
+                        DocumentVersion.tenant_id == tid, DocumentVersion.id == old_active_id
+                    )
+                    old_ver = (await self.session.execute(old_ver_stmt)).scalars().first()
+                    if old_ver is not None:
+                        old_ver.status = "retired"
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == old_active_id)
+                        .values(is_active=False)
+                    )
+
+                excluded_pages_stmt = select(Page.id).where(
+                    Page.tenant_id == tid,
+                    Page.document_version_id == version_id,
+                    Page.is_excluded.is_(True),
+                )
+                excluded_page_ids = set(
+                    (await self.session.execute(excluded_pages_stmt)).scalars().all()
+                )
+
+                if excluded_page_ids:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(
+                            Chunk.tenant_id == tid,
+                            Chunk.document_version_id == version_id,
+                            Chunk.page_id.not_in(excluded_page_ids),
+                        )
+                        .values(is_active=True)
+                    )
+                else:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                        .values(is_active=True)
+                    )
+
+                auto_audit = AuditEvent(
+                    tenant_id=tid,
+                    user_id=None,
+                    event_type="knowledge_compliance",
+                    action="version_auto_promoted",
+                    resource_id=str(version_id),
+                )
+                self.session.add(auto_audit)
+                auto_promoted = True
+            else:
+                ver.status = "ready"
+
+        await self.session.flush()
+        return self._to_page_record(page), auto_promoted
+
+    async def promote_version(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> DocumentVersionRecord:
+        """Promote version with exclusions and retire previous active version."""
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot promote version for retired document {doc.id}")
+
+        # 2. Lock DocumentVersion
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # Precondition: already active ready version is an idempotent no-op
+        if doc.active_version_id == version_id and ver.status == "ready":
+            return DocumentVersionRecord(
+                id=ver.id,
+                tenant_id=str(ver.tenant_id),
+                document_id=ver.document_id,
+                sha256=ver.sha256,
+                uploaded_by=str(ver.uploaded_by),
+                status=ver.status,
+                created_at=ver.created_at,
+            )
+
+        if ver.status != "needs_review":
+            raise InvalidVersionStateError(
+                f"Version {version_id} status '{ver.status}' is not eligible for promote; "
+                "must be 'needs_review'"
+            )
+
+        old_active_id = doc.active_version_id
+        doc.active_version_id = version_id
+
+        # Retire previous version and deactivate its chunks
+        if old_active_id is not None and old_active_id != version_id:
+            old_ver_stmt = select(DocumentVersion).where(
+                DocumentVersion.tenant_id == tid, DocumentVersion.id == old_active_id
+            )
+            old_ver = (await self.session.execute(old_ver_stmt)).scalars().first()
+            if old_ver is not None:
+                old_ver.status = "retired"
+            await self.session.execute(
+                update(Chunk)
+                .where(Chunk.tenant_id == tid, Chunk.document_version_id == old_active_id)
+                .values(is_active=False)
+            )
+
+        # Check remaining flagged pages
+        remaining_stmt = select(func.count(Page.id)).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.needs_review.is_(True),
+        )
+        remaining_flagged = (await self.session.execute(remaining_stmt)).scalar_one() or 0
+
+        if remaining_flagged > 0:
+            ver.status = "needs_review"
+        else:
+            ver.status = "ready"
+
+        # Inactive chunks for excluded or remaining flagged pages
+        inactive_pages_stmt = select(Page.id).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            (Page.is_excluded.is_(True)) | (Page.needs_review.is_(True)),
+        )
+        inactive_page_ids = set((await self.session.execute(inactive_pages_stmt)).scalars().all())
+
+        if inactive_page_ids:
+            await self.session.execute(
+                update(Chunk)
+                .where(
+                    Chunk.tenant_id == tid,
+                    Chunk.document_version_id == version_id,
+                    Chunk.page_id.not_in(inactive_page_ids),
+                )
+                .values(is_active=True)
+            )
+            await self.session.execute(
+                update(Chunk)
+                .where(
+                    Chunk.tenant_id == tid,
+                    Chunk.document_version_id == version_id,
+                    Chunk.page_id.in_(inactive_page_ids),
+                )
+                .values(is_active=False)
+            )
+        else:
+            await self.session.execute(
+                update(Chunk)
+                .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                .values(is_active=True)
+            )
+
+        await self.session.flush()
+        return DocumentVersionRecord(
+            id=ver.id,
+            tenant_id=str(ver.tenant_id),
+            document_id=ver.document_id,
+            sha256=ver.sha256,
+            uploaded_by=str(ver.uploaded_by),
+            status=ver.status,
+            created_at=ver.created_at,
+        )
+
+    async def check_page_retry_eligibility(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        current_model_id: str | None = None,
+        current_model_version: str | None = None,
+        current_processing_version: str = "v1",
+    ) -> None:
+        """Validate whether a flagged page is eligible for retry under row locks."""
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot retry page for retired document {doc.id}")
+
+        # 2. Lock DocumentVersion
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # 3. Lock Page
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise DocumentNotFoundError(f"Page {page_number} for version {version_id} not found")
+
+        # Flagged check
+        if not page.needs_review:
+            raise InvalidPageStateError(
+                f"Page {page_number} is not flagged for review (needs_review=False)"
+            )
+
+        # Active job check: Refuse with 409 PAGE_JOB_ALREADY_ACTIVE
+        # if a job for that page is already queued or running
+        active_step_stmt = select(JobStep).where(
+            JobStep.tenant_id == tid,
+            JobStep.document_version_id == version_id,
+            JobStep.page_number == page_number,
+            JobStep.status.in_(["processing", "todo", "doing"]),
+        )
+        active_step = (await self.session.execute(active_step_stmt)).scalars().first()
+        if active_step is not None:
+            raise PageJobConflictError(f"A job for page {page_number} is already queued or running")
+
+        # Check if processing version has changed on existing job step
+        step_stmt = (
+            select(JobStep)
+            .where(
+                JobStep.tenant_id == tid,
+                JobStep.document_version_id == version_id,
+                JobStep.page_number == page_number,
+            )
+            .order_by(JobStep.created_at.desc())
+        )
+        latest_step = (await self.session.execute(step_stmt)).scalars().first()
+
+        processing_version_changed = False
+        if latest_step is not None and latest_step.processing_version != current_processing_version:
+            processing_version_changed = True
+
+        if not processing_version_changed:
+            reading_stmt = select(PageReading).where(
+                PageReading.tenant_id == tid,
+                PageReading.page_id == page.id,
+            )
+            if current_model_id is not None:
+                reading_stmt = reading_stmt.where(PageReading.model_id == current_model_id)
+            if current_model_version is not None:
+                reading_stmt = reading_stmt.where(
+                    PageReading.model_version == current_model_version
+                )
+
+            existing_reading = (await self.session.execute(reading_stmt)).scalars().first()
+            if existing_reading is not None:
+                raise RetryNotUsefulError(
+                    f"Retry not useful: page reading already exists for page {page_number} "
+                    f"with model {existing_reading.model_id}:{existing_reading.model_version}"
+                )
+
+    async def enqueue_page_retry(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageRecord:
+        """Mark page as retry enqueued (page stays flagged) and record active job step."""
+        tid = UUID(str(tenant_id))
+
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise DocumentNotFoundError(f"Page {page_number} for version {version_id} not found")
+
+        job_stmt = select(Job).where(
+            Job.tenant_id == tid,
+            Job.document_version_id == version_id,
+        )
+        job = (await self.session.execute(job_stmt)).scalars().first()
+        if job is None:
+            job = Job(
+                id=uuid4(),
+                tenant_id=tid,
+                document_version_id=version_id,
+                status="processing",
+            )
+            self.session.add(job)
+            await self.session.flush()
+        else:
+            job.status = "processing"
+
+        step_stmt = (
+            select(JobStep)
+            .where(
+                JobStep.tenant_id == tid,
+                JobStep.document_version_id == version_id,
+                JobStep.page_number == page_number,
+            )
+            .order_by(JobStep.created_at.desc())
+        )
+        existing_step = (await self.session.execute(step_stmt)).scalars().first()
+        if existing_step is not None:
+            existing_step.status = "processing"
+        else:
+            new_step = JobStep(
+                id=uuid4(),
+                tenant_id=tid,
+                job_id=job.id,
+                document_version_id=version_id,
+                page_number=page_number,
+                step="vision" if page.review_reason and "vision" in page.review_reason else "ocr",
+                processing_version="v1",
+                status="processing",
+            )
+            self.session.add(new_step)
+
+        # Page stays flagged until the retried run finishes!
+        page.needs_review = True
+        await self.session.flush()
+        return self._to_page_record(page)
+
+    async def re_evaluate_version_after_retry(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> tuple[DocumentVersionRecord, bool]:
+        """Re-evaluate version completion after a retried page finishes under row locks."""
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot re-evaluate retry on retired document {doc.id}")
+
+        # 2. Lock DocumentVersion
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update()
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # Check remaining flagged pages (unexcluded pages that need review)
+        remaining_stmt = select(func.count(Page.id)).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.needs_review.is_(True),
+            Page.is_excluded.is_(False),
+        )
+        remaining_flagged = (await self.session.execute(remaining_stmt)).scalar_one() or 0
+
+        is_live_version = doc.active_version_id == version_id
+        auto_promoted = False
+
+        if is_live_version:
+            # Activate chunks for non-excluded, non-flagged pages on this version
+            inactive_stmt = select(Page.id).where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                (Page.is_excluded.is_(True)) | (Page.needs_review.is_(True)),
+            )
+            inactive_page_ids = set((await self.session.execute(inactive_stmt)).scalars().all())
+            if inactive_page_ids:
+                await self.session.execute(
+                    update(Chunk)
+                    .where(
+                        Chunk.tenant_id == tid,
+                        Chunk.document_version_id == version_id,
+                        Chunk.page_id.not_in(inactive_page_ids),
+                    )
+                    .values(is_active=True)
+                )
+            else:
+                await self.session.execute(
+                    update(Chunk)
+                    .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                    .values(is_active=True)
+                )
+
+            # Branch B transition: if no flagged pages remain, status goes to ready
+            if remaining_flagged == 0:
+                ver.status = "ready"
+        else:
+            # Branch A: if no flagged pages remain, auto-promote version
+            if remaining_flagged == 0:
+                old_active_id = doc.active_version_id
+                doc.active_version_id = version_id
+                ver.status = "ready"
+
+                if old_active_id is not None:
+                    old_ver_stmt = select(DocumentVersion).where(
+                        DocumentVersion.tenant_id == tid, DocumentVersion.id == old_active_id
+                    )
+                    old_ver = (await self.session.execute(old_ver_stmt)).scalars().first()
+                    if old_ver is not None:
+                        old_ver.status = "retired"
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == old_active_id)
+                        .values(is_active=False)
+                    )
+
+                excluded_pages_stmt = select(Page.id).where(
+                    Page.tenant_id == tid,
+                    Page.document_version_id == version_id,
+                    Page.is_excluded.is_(True),
+                )
+                excluded_page_ids = set(
+                    (await self.session.execute(excluded_pages_stmt)).scalars().all()
+                )
+                if excluded_page_ids:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(
+                            Chunk.tenant_id == tid,
+                            Chunk.document_version_id == version_id,
+                            Chunk.page_id.not_in(excluded_page_ids),
+                        )
+                        .values(is_active=True)
+                    )
+                else:
+                    await self.session.execute(
+                        update(Chunk)
+                        .where(Chunk.tenant_id == tid, Chunk.document_version_id == version_id)
+                        .values(is_active=True)
+                    )
+
+                auto_audit = AuditEvent(
+                    tenant_id=tid,
+                    user_id=None,
+                    event_type="knowledge_compliance",
+                    action="version_auto_promoted",
+                    resource_id=str(version_id),
+                )
+                self.session.add(auto_audit)
+                auto_promoted = True
+
+        await self.session.flush()
+        ver_rec = DocumentVersionRecord(
+            id=ver.id,
+            tenant_id=str(ver.tenant_id),
+            document_id=ver.document_id,
+            sha256=ver.sha256,
+            uploaded_by=str(ver.uploaded_by),
+            status=ver.status,
+            created_at=ver.created_at,
+        )
+        return ver_rec, auto_promoted

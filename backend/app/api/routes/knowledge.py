@@ -27,8 +27,14 @@ from app.db.session import tenant_session
 from app.ports.errors import (
     AuthorizationError,
     DocumentNotFoundError,
+    DocumentRetiredError,
     FileValidationError,
+    InvalidPageStateError,
+    InvalidVersionStateError,
     MalwareDetectedError,
+    NoUsableReadingError,
+    PageJobConflictError,
+    RetryNotUsefulError,
 )
 from app.ports.types import ReviewPageInfo, StorageKey, TenantContext, UploadPayload
 from app.wiring import (
@@ -37,7 +43,7 @@ from app.wiring import (
     create_upload_service,
 )
 from app.worker import app as worker_app
-from app.worker import split_document_job
+from app.worker import process_page_job, split_document_job
 
 router = APIRouter(prefix="/v1/assistants/{assistant_id}/knowledge", tags=["knowledge"])
 
@@ -67,6 +73,32 @@ class RetireDocumentResponse(BaseModel):
     document_id: str
     is_retired: bool
     status: str
+
+
+class PageActionResponse(BaseModel):
+    """Response returned upon resolving a page review action."""
+
+    version_id: str
+    page_number: int
+    status: str
+    auto_promoted: bool
+
+
+class VersionPromoteResponse(BaseModel):
+    """Response returned upon promoting a version with exclusions."""
+
+    version_id: str
+    status: str
+    is_active: bool = True
+
+
+class PageRetryResponse(BaseModel):
+    """Response returned upon enqueuing a page retry."""
+
+    version_id: str
+    page_number: int
+    needs_review: bool
+    status: str = "retrying"
 
 
 @router.post(
@@ -354,4 +386,238 @@ async def retire_document(
         document_id=str(doc.id),
         is_retired=doc.is_retired,
         status="retired",
+    )
+
+
+@router.post(
+    "/documents/{version_id}/pages/{page_number}/accept",
+    response_model=PageActionResponse,
+    dependencies=[Depends(validate_csrf)],
+)
+async def accept_page(
+    version_id: UUID,
+    page_number: int,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> PageActionResponse:
+    """Accept flagged page, index reading (visual or text), and evaluate auto-promotion."""
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            page, auto_promoted = await repo.accept_page_review(
+                tenant.tenant_id, version_id, page_number
+            )
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document, version, or page not found",
+            ) from None
+        except DocumentRetiredError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Document is retired",
+            ) from None
+        except InvalidPageStateError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+        except NoUsableReadingError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=exc.code,
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="page_accepted",
+            resource_id=f"{version_id}:{page_number}",
+        )
+        session.add(audit)
+        await session.flush()
+
+    return PageActionResponse(
+        version_id=str(version_id),
+        page_number=page.page_number,
+        status="accepted",
+        auto_promoted=auto_promoted,
+    )
+
+
+@router.post(
+    "/documents/{version_id}/pages/{page_number}/exclude",
+    response_model=PageActionResponse,
+    dependencies=[Depends(validate_csrf)],
+)
+async def exclude_page(
+    version_id: UUID,
+    page_number: int,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> PageActionResponse:
+    """Exclude flagged page, keep chunks inactive, and evaluate auto-promotion."""
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            page, auto_promoted = await repo.exclude_page_review(
+                tenant.tenant_id, version_id, page_number
+            )
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document, version, or page not found",
+            ) from None
+        except DocumentRetiredError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Document is retired",
+            ) from None
+        except InvalidPageStateError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="page_excluded",
+            resource_id=f"{version_id}:{page_number}",
+        )
+        session.add(audit)
+        await session.flush()
+
+    return PageActionResponse(
+        version_id=str(version_id),
+        page_number=page.page_number,
+        status="excluded",
+        auto_promoted=auto_promoted,
+    )
+
+
+@router.post(
+    "/documents/{version_id}/promote",
+    response_model=VersionPromoteResponse,
+    dependencies=[Depends(validate_csrf)],
+)
+async def promote_version(
+    version_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> VersionPromoteResponse:
+    """Promote version with exclusions and retire previous active version."""
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            ver = await repo.promote_version(tenant.tenant_id, version_id)
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document or version not found",
+            ) from None
+        except DocumentRetiredError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Document is retired",
+            ) from None
+        except InvalidVersionStateError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="version_promoted",
+            resource_id=str(version_id),
+        )
+        session.add(audit)
+        await session.flush()
+
+    return VersionPromoteResponse(
+        version_id=str(version_id),
+        status=ver.status,
+        is_active=True,
+    )
+
+
+@router.post(
+    "/documents/{version_id}/pages/{page_number}/retry",
+    response_model=PageRetryResponse,
+    dependencies=[Depends(validate_csrf)],
+)
+async def retry_page(
+    version_id: UUID,
+    page_number: int,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> PageRetryResponse:
+    """Retry failed extraction or processing step for a flagged page."""
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            await repo.check_page_retry_eligibility(tenant.tenant_id, version_id, page_number)
+            page = await repo.enqueue_page_retry(tenant.tenant_id, version_id, page_number)
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document, version, or page not found",
+            ) from None
+        except DocumentRetiredError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="DOCUMENT_RETIRED: Document is retired",
+            ) from None
+        except InvalidPageStateError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+        except PageJobConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+        except RetryNotUsefulError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="page_retry_enqueued",
+            resource_id=f"{version_id}:{page_number}",
+        )
+        session.add(audit)
+        await session.flush()
+
+        try:
+            try:
+                await process_page_job.defer_async(
+                    tenant_id=tenant.tenant_id,
+                    document_version_id=str(version_id),
+                    page_number=page_number,
+                )
+            except Exception:
+                async with worker_app.open_async():
+                    await process_page_job.defer_async(
+                        tenant_id=tenant.tenant_id,
+                        document_version_id=str(version_id),
+                        page_number=page_number,
+                    )
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to enqueue background retry job",
+            ) from None
+
+    return PageRetryResponse(
+        version_id=str(version_id),
+        page_number=page.page_number,
+        needs_review=page.needs_review,
+        status="retrying",
     )

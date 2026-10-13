@@ -6,6 +6,24 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Task 2.8a Step 3 (a & b)**: Knowledge Review Actions, Promote & Retry — **COMPLETED**
+  - Completed: Promote preconditions: promote is allowed strictly when version status is `needs_review`; `processing`, `failed`, `retired`, `received` return 409 `INVALID_VERSION_STATE`; promoting an already-active ready version is an idempotent no-op 200.
+  - Completed: Retry route `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/retry` with client_admin RBAC, CSRF token validation, and assistant tenant anti-probing 404s.
+  - Completed: Retry eligibility checks under row locks (`Document` -> `DocumentVersion` -> `Page`):
+    - Refuses with 409 `DocumentRetiredError` if document is retired.
+    - Refuses with 409 `INVALID_PAGE_STATE` if page is clean (`needs_review=False`).
+    - Refuses with 409 `PAGE_JOB_ALREADY_ACTIVE` if a background job for that page is already queued or running (`JobStep.status in ('processing', 'todo', 'doing')`).
+    - Refuses with 409 `RETRY_NOT_USEFUL` if a `page_readings` row exists for the failed step with current model/version and processing version unchanged.
+    - Allows retry when no reading exists for the failed step (e.g. `vision_failed`), or when processing version has changed (e.g. from `v0` to `v1`).
+  - Completed: Retry enqueuing keeps `page.needs_review = True` (stays flagged until retried run finishes) and records audit event `page_retry_enqueued`.
+  - Completed: Post-retry version re-evaluation under row locks (`Document` -> `DocumentVersion` -> `Page`):
+    - Live version: activates page chunks, and if 0 flagged pages remain, transitions version status from `needs_review` to `ready` (Branch B).
+    - Branch A version: if 0 flagged pages remain, auto-promotes version (`doc.active_version_id = version_id`, `ver.status = 'ready'`, retires prior version & deactivates prior chunks, activates clean chunks), and writes separate compliance audit event `version_auto_promoted` with actor recorded as system (`user_id=None`).
+  - Completed: Procrastinate deferral order: `retry_page` route dispatches `process_page_job.defer_async` inside the `tenant_session` transaction before commit, guaranteeing that a failed defer rolls back `JobStep.status = 'processing'` and leaves the page retryable without sticking in `PAGE_JOB_ALREADY_ACTIVE`.
+  - Completed: Worker pipeline integration: `VersionActivationService.check_and_activate_if_complete` invokes `re_evaluate_version_after_retry` upon retried page completion for `needs_review` and `ready` versions; verified via end-to-end integration test through `run_page_job`.
+  - Completed: Retry flag clearing constraints: passing retried page clears only reasons the re-run is responsible for (`processing_failed`, `vision_failed`, `image_too_large`, `low_ocr_confidence`), never clears `legacy_unspecified`, never replaces `legacy_unspecified` with another reason on re-runs (SQL `case` preservation), and never alters excluded pages.
+  - Completed: 26 integration tests in `test_api_knowledge_step3.py` and 24 invariant tests passing cleanly.
+  - Completed: Pre-commit checks pass on all modified files.
 - **Task 2.8a Step 2**: Knowledge Page Review List, Image Proxy & Retire — **COMPLETED**
   - Completed: Migration 0008 (`0008_excluded_and_retired.py`) with `pages.is_excluded`, `documents.is_retired`, and check constraint `ck_pages_excluded_needs_review` (`NOT (is_excluded = true AND needs_review = true)`). Tested on throwaway database only; unapplied to shared DB.
   - Completed: Review list endpoint (`GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/review`) returning flagged pages, review reasons, ocr confidence, readings, and image flag; compliance audit event (`review_inspected`).

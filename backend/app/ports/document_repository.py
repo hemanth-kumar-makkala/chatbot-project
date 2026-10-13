@@ -264,3 +264,73 @@ class DocumentRepository(ABC):
     ) -> list[ReviewPageInfo]:
         """Retrieve flagged pages and their readings for administrative review inspection."""
         ...
+
+    @abstractmethod
+    async def accept_page_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> tuple[PageRecord, bool]:
+        """Accept flagged page, index reading (visual or text), and evaluate auto-promotion.
+
+        Returns (page_record, auto_promoted).
+        """
+        ...
+
+    @abstractmethod
+    async def exclude_page_review(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> tuple[PageRecord, bool]:
+        """Exclude flagged page, deactivate chunks, and evaluate auto-promotion.
+
+        Returns (page_record, auto_promoted).
+        """
+        ...
+
+    @abstractmethod
+    async def promote_version(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> DocumentVersionRecord:
+        """Promote version with exclusions and retire previous active version."""
+        ...
+
+    @abstractmethod
+    async def check_page_retry_eligibility(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        current_model_id: str | None = None,
+        current_model_version: str | None = None,
+        current_processing_version: str = "v1",
+    ) -> None:
+        """Validate whether a flagged page is eligible for retry under row locks."""
+        ...
+
+    @abstractmethod
+    async def enqueue_page_retry(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+    ) -> PageRecord:
+        """Mark page as retry enqueued (page stays flagged) and record active job step."""
+        ...
+
+    @abstractmethod
+    async def re_evaluate_version_after_retry(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> tuple[DocumentVersionRecord, bool]:
+        """Re-evaluate version completion after a retried page finishes.
+
+        Returns (version_record, auto_promoted).
+        """
+        ...

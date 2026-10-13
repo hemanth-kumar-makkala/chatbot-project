@@ -405,3 +405,98 @@ class ImageProcessingError(PortError):
             details=details,
         )
         self.code = code
+
+
+class NoUsableReadingError(PortError):
+    """Raised when accepting a flagged page that has neither a vision reading nor an OCR reading."""
+
+    def __init__(
+        self,
+        message: str = "No usable reading found for page",
+        code: str = "NO_USABLE_READING",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=422,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class InvalidPageStateError(PortError):
+    """Raised when an accept or exclude review action is requested on an invalid page state."""
+
+    def __init__(
+        self,
+        message: str = "Page is not in a valid state for requested action",
+        code: str = "INVALID_PAGE_STATE",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=409,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class InvalidVersionStateError(PortError):
+    """Raised when promote is attempted on a version that is not in needs_review status."""
+
+    def __init__(
+        self,
+        message: str = "Document version is not in a valid state for promotion",
+        code: str = "INVALID_VERSION_STATE",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=409,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class RetryNotUsefulError(PortError):
+    """Raised when retrying a page would not produce a different outcome."""
+
+    def __init__(
+        self,
+        message: str = "Retry is not useful: reading already exists with current model and version",
+        code: str = "RETRY_NOT_USEFUL",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=409,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class PageJobConflictError(PortError):
+    """Raised when a background job for a page is already queued or running."""
+
+    def __init__(
+        self,
+        message: str = "A background processing job for this page is already queued or running",
+        code: str = "PAGE_JOB_ALREADY_ACTIVE",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=409,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

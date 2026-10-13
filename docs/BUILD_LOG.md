@@ -1066,3 +1066,109 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - All 25 boundary and migration invariant tests pass in 0.23s.
   - All pre-commit hooks pass cleanly across all modified files.
   - Migration 0008 tested on throwaway DB only, unapplied to shared DB.
+
+---
+
+### [2026-10-13] TASK 2.8a Step 3 (a): Knowledge Review Actions & Promote (Accept, Exclude, Promote)
+
+- **Task ID**: TASK 2.8a Step 3 (a)
+- **What Was Built**:
+  - **Domain Errors** (`backend/app/ports/errors.py`):
+    - Added `NoUsableReadingError` (status code 422, error code `"NO_USABLE_READING"`).
+    - Added `InvalidPageStateError` (status code 409, error code `"INVALID_PAGE_STATE"`).
+  - **Domain Port Extensions** (`backend/app/ports/document_repository.py`):
+    - Added `accept_page_review(tenant_id, version_id, page_number) -> tuple[PageRecord, bool]`: accepts a flagged page, indexes visual reading if available else text, clears `needs_review`, keeps `review_reason` for audit, and executes Branch A auto-promote or Branch B ready transition if last flag resolved.
+    - Added `exclude_page_review(tenant_id, version_id, page_number) -> tuple[PageRecord, bool]`: excludes a flagged page (`is_excluded=True`, `needs_review=False`), deactivates chunks, and executes Branch A auto-promote or Branch B ready transition if last flag resolved.
+    - Added `promote_version(tenant_id, version_id) -> DocumentVersionRecord`: manually promotes a version with exclusions, activates non-excluded chunks, retires previous active version, and sets status to `ready` (if no flagged pages remain) or retains `needs_review` (if flagged pages remain).
+  - **Repository Implementation** (`backend/app/adapters/db/postgres_document_repository.py`):
+    - Strict lock order: `SELECT ... FOR UPDATE` on `Document` row, then `DocumentVersion` row, then `Page` row.
+    - Document retirement refusal: raises `DocumentRetiredError` (409) if `doc.is_retired is True`.
+    - Double-click idempotency: returns immediately `(page_rec, False)` if page is already accepted or already excluded.
+    - Invalid page state validation: raises `InvalidPageStateError` (409) if page is not flagged (`needs_review=False`) and not in the requested state.
+    - Reading selection on accept: prefers visual reading from `page_readings` (`reading_type == "visual"`, referencing `page_reading_id`), falls back to OCR text reading (`reading_type == "text"`); raises `NoUsableReadingError` (422) if no usable reading exists.
+    - Auto-promote on last flag resolved: activates version, retires prior version and deactivates its chunks, activates clean chunks, sets version status to `ready`, and writes separate `version_auto_promoted` compliance audit event with actor recorded as system (`user_id=None`).
+    - Branch B transition: if version is already active and last flagged page is resolved, transitions status from `needs_review` to `ready`.
+  - **API Endpoints** (`backend/app/api/routes/knowledge.py`):
+    - `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/accept` -> `PageActionResponse`.
+    - `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/exclude` -> `PageActionResponse`.
+    - `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/promote` -> `VersionPromoteResponse`.
+    - All routes enforce `get_client_admin_tenant_context_for_assistant`, `validate_csrf` on POST, map domain errors to HTTP responses with specific detail codes (`INVALID_PAGE_STATE`, `NO_USABLE_READING`, `DOCUMENT_RETIRED`), and record compliance audit events (`page_accepted`, `page_excluded`, `version_promoted`).
+- **Tests Added**:
+  - `backend/tests/integration/test_api_knowledge_step3.py`: 11 integration tests covering:
+    - `test_accept_flagged_page_with_vision_reading_indexes_visual`
+    - `test_accept_flagged_page_with_ocr_reading_indexes_text`
+    - `test_accept_flagged_page_without_reading_returns_422_no_usable_reading`
+    - `test_accept_and_exclude_double_click_no_ops`
+    - `test_accept_or_exclude_invalid_page_state_returns_409`
+    - `test_exclude_flagged_page_keeps_chunks_inactive`
+    - `test_auto_promote_on_last_flagged_page_resolved_retires_previous_version`
+    - `test_branch_b_status_transitions_to_ready_when_last_flagged_page_resolved`
+    - `test_promote_with_exclusions_status_rules`
+    - `test_all_actions_refused_on_retired_document_returns_409`
+    - `test_cross_tenant_anti_probing_and_staff_rbac_and_csrf`
+- **Verification**:
+  - All 11 integration tests pass.
+  - All 24 boundary invariant tests pass.
+  - Pre-commit run passes cleanly on all modified files.
+
+---
+
+### [2026-10-13] TASK 2.8a Step 3 (b): Knowledge Page Review Actions (Retry & Promote Preconditions)
+
+- **Task ID**: TASK 2.8a Step 3 (b)
+- **What Was Built**:
+  - **Domain Errors** (`backend/app/ports/errors.py`):
+    - Added `InvalidVersionStateError` (HTTP 409, error code `"INVALID_VERSION_STATE"`).
+    - Added `RetryNotUsefulError` (HTTP 409, error code `"RETRY_NOT_USEFUL"`).
+    - Added `PageJobConflictError` (HTTP 409, error code `"PAGE_JOB_ALREADY_ACTIVE"`).
+  - **Port Interfaces** (`backend/app/ports/document_repository.py`):
+    - Added `check_page_retry_eligibility(tenant_id, version_id, page_number, current_model_id, current_model_version, current_processing_version) -> None`.
+    - Added `enqueue_page_retry(tenant_id, version_id, page_number) -> PageRecord`.
+    - Added `re_evaluate_version_after_retry(tenant_id, version_id) -> tuple[DocumentVersionRecord, bool]`.
+  - **Repository Implementation** (`backend/app/adapters/db/postgres_document_repository.py`):
+    - **Promote Preconditions**:
+      - Promoting version with status other than `needs_review` (e.g. `processing`, `failed`, `retired`, `received`) raises `InvalidVersionStateError` (409).
+      - Promoting an already-active ready version is an idempotent no-op returning 200 with the active version record.
+    - **Retry Eligibility** (`check_page_retry_eligibility`):
+      - Strict lock order: `Document` -> `DocumentVersion` -> `Page` with `FOR UPDATE`.
+      - Refuses with 409 `DocumentRetiredError` if document is retired.
+      - Refuses with 409 `InvalidPageStateError` if page is not flagged (`needs_review=False`).
+      - Refuses with 409 `PageJobConflictError` if a job step for that page is active or queued (`status in ('processing', 'todo', 'doing')`).
+      - Refuses with 409 `RetryNotUsefulError` if a reading already exists for the failed step with current model and version and the processing version has not changed.
+      - Allows retry if no reading row exists (e.g. `vision_failed`), or if the processing version has changed (e.g. from `v0` to `v1`).
+    - **Retry Enqueueing** (`enqueue_page_retry`):
+      - Creates or marks active job step with `status = "processing"`.
+      - Keeps `page.needs_review = True` (page stays flagged until retried run finishes).
+    - **Post-Retry Version Re-evaluation** (`re_evaluate_version_after_retry`):
+      - Strict lock order: locks `Document` then `DocumentVersion` row.
+      - On live version: activates clean page chunks; transitions version status to `ready` when 0 unexcluded flagged pages remain (Branch B).
+      - On non-live version (Branch A): if 0 unexcluded flagged pages remain, auto-promotes version (`active_version_id = version_id`, `status = "ready"`, retires old active version and deactivates old chunks, activates clean chunks), and logs separate compliance audit event `version_auto_promoted` with system actor (`user_id = None`).
+  - **API Endpoints** (`backend/app/api/routes/knowledge.py`):
+    - `POST /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/retry` -> `PageRetryResponse`.
+    - Enforces client_admin role, CSRF token validation, assistant tenant scoping (anti-probing 404), and maps domain errors to 409 detail codes (`PAGE_JOB_ALREADY_ACTIVE`, `RETRY_NOT_USEFUL`, `INVALID_PAGE_STATE`, `DOCUMENT_RETIRED`).
+    - Emits compliance audit event `page_retry_enqueued` with resource ID `{version_id}:{page_number}`.
+    - Updated `promote_version` route to map `InvalidVersionStateError` to 409 `INVALID_VERSION_STATE`.
+  - **Integration Tests** (`backend/tests/integration/test_api_knowledge_step3.py`):
+    - `test_promote_version_status_preconditions_409_invalid_version_state`
+    - `test_promote_already_active_ready_version_is_noop_200`
+    - `test_retry_page_not_flagged_returns_409_invalid_page_state`
+    - `test_retry_retired_document_returns_409`
+    - `test_retry_not_useful_when_reading_exists_with_current_model_and_version`
+    - `test_retry_allowed_when_no_reading_row_exists_for_failed_step`
+    - `test_retry_allowed_when_processing_version_changed`
+    - `test_retry_refused_when_job_already_queued_or_running_returns_409`
+    - `test_retry_success_on_live_version_activates_page_chunks`
+    - `test_retry_success_resolves_last_flag_on_branch_a_auto_promotes`
+    - `test_retry_cross_tenant_404_staff_403_csrf_required`
+    - `test_retry_defer_failure_rolls_back_and_leaves_page_retryable`
+    - `test_retry_end_to_end_through_run_page_job_activates_chunks_and_promotes`
+    - `test_retry_passing_run_does_not_clear_legacy_unspecified_flag`
+    - `test_retry_legacy_unspecified_hits_low_ocr_and_successful_vision_stays_flagged`
+  - **Worker & Route Wiring**:
+    - Dispatched `process_page_job.defer_async` in `retry_page` within `tenant_session` transaction with `raise HTTPException(...) from None` so failed defer aborts the session and rolls back `JobStep.status = 'processing'` without leaking connection traces, preventing the page from getting stuck in `PAGE_JOB_ALREADY_ACTIVE`.
+    - Wired `VersionActivationService.check_and_activate_if_complete` to call `re_evaluate_version_after_retry` on retried pages for `needs_review` and `ready` versions.
+    - Constrained pipeline review flag clearing: retried page can clear strictly reasons the re-run is responsible for (`processing_failed`, `vision_failed`, `image_too_large`, `low_ocr_confidence`), never clears `legacy_unspecified`, never replaces `legacy_unspecified` with another reason on re-runs (SQL `case` preservation), and never alters excluded pages.
+  - **Verification**:
+    - All 26 tests in `test_api_knowledge_step3.py` pass.
+    - All 24 boundary invariant tests in `test_architecture_boundaries.py` pass.
+    - Pre-commit hooks (`trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files`, `detect-private-key`, `mixed-line-ending`, `detect-secrets`, `ruff`, `ruff-format`, `mypy`, `boundary-invariants`) pass cleanly across all modified files.

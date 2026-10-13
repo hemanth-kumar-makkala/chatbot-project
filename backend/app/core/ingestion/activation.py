@@ -48,6 +48,11 @@ class VersionActivationService:
             return False
 
         if ver.status != "processing":
+            if ver.status in ["needs_review", "ready"]:
+                await self.repository.re_evaluate_version_after_retry(
+                    tenant_id=tenant_id,
+                    version_id=document_version_id,
+                )
             return False
 
         if total_pages == 0 or completed_pages < total_pages:

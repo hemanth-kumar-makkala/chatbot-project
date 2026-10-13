@@ -42,6 +42,10 @@ from app.ports.types import (
     PageReading as PageReadingDTO,
 )
 
+CLEARABLE_RETRY_REASONS: frozenset[str] = frozenset(
+    {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
+)
+
 
 def is_retryable_error(exc: Exception) -> bool:
     """Classify whether an exception is transient (retryable) or permanent.
@@ -174,7 +178,10 @@ class PagePipelineService:
                 reason=review_reason,
             )
             prior_needs_review = True
-            prior_review_reason: str | None = review_reason
+            if page_rec and page_rec.review_reason == "legacy_unspecified":
+                prior_review_reason: str | None = "legacy_unspecified"
+            else:
+                prior_review_reason = review_reason
         else:
             prior_needs_review = page_rec.needs_review if page_rec else False
             prior_review_reason = page_rec.review_reason if page_rec else None
@@ -271,15 +278,37 @@ class PagePipelineService:
                 )
                 is_indexable = False
             else:
-                if prior_needs_review:
+                if page_rec and page_rec.is_excluded:
+                    is_indexable = False
+                elif prior_needs_review and prior_review_reason in CLEARABLE_RETRY_REASONS:
                     await self.repository.clear_page_review_flag(
                         tenant_id=tenant_id,
                         version_id=document_version_id,
                         page_number=page_number,
                     )
-                is_indexable = True
+                    is_indexable = True
+                elif prior_needs_review:
+                    is_indexable = False
+                else:
+                    is_indexable = True
         else:
-            is_indexable = not prior_needs_review
+            if page_rec and page_rec.is_excluded:
+                is_indexable = False
+            elif (
+                not needs_review
+                and prior_needs_review
+                and prior_review_reason in CLEARABLE_RETRY_REASONS
+            ):
+                await self.repository.clear_page_review_flag(
+                    tenant_id=tenant_id,
+                    version_id=document_version_id,
+                    page_number=page_number,
+                )
+                is_indexable = True
+            elif prior_needs_review:
+                is_indexable = False
+            else:
+                is_indexable = not prior_needs_review
 
         # 5. Chunk using reading selection rule
         if not is_indexable:

@@ -122,8 +122,13 @@ def evaluate_vision_reading_outcome(
 
     # Successful reading: check if prior flag can be cleared
     if prior_needs_review:
-        if prior_review_reason == "low_ocr_confidence":
-            # Vision was responsible for recovering low OCR confidence -> cleared!
+        if prior_review_reason in (
+            "low_ocr_confidence",
+            "vision_failed",
+            "image_too_large",
+            "processing_failed",
+        ):
+            # Vision was responsible for recovering -> cleared!
             return VisionReadingOutcome(
                 needs_review=False,
                 review_reason=None,
