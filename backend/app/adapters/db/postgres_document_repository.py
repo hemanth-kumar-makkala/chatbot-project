@@ -427,14 +427,19 @@ class PostgresDocumentRepository(DocumentRepository):
                 processing_version=processing_version,
                 status=status,
             )
-            .on_conflict_do_nothing(
+            .on_conflict_do_update(
                 index_elements=[
                     JobStep.tenant_id,
                     JobStep.document_version_id,
                     JobStep.page_number,
                     JobStep.step,
                     JobStep.processing_version,
-                ]
+                ],
+                set_={
+                    "status": status,
+                    "job_id": actual_job_id,
+                    "updated_at": func.now(),
+                },
             )
         )
         await self.session.execute(stmt)
