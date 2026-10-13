@@ -31,6 +31,7 @@ from app.ports.errors import (
     RetryNotUsefulError,
 )
 from app.ports.types import (
+    CLEARABLE_REVIEW_REASONS,
     DocumentRecord,
     DocumentStatusInfo,
     DocumentVersionRecord,
@@ -746,10 +747,17 @@ class PostgresDocumentRepository(DocumentRepository):
                 Page.tenant_id == UUID(str(tenant_id)),
                 Page.document_version_id == version_id,
                 Page.page_number == page_number,
+                Page.review_reason.in_(CLEARABLE_REVIEW_REASONS),
             )
             .values(needs_review=False, review_reason=None)
+            .returning(Page.id)
         )
-        await self.session.execute(stmt)
+        res = await self.session.execute(stmt)
+        updated_id = res.scalar_one_or_none()
+        if updated_id is None:
+            raise InvalidPageStateError(
+                "Review flag cannot be cleared: page not flagged with a clearable reason"
+            )
         await self.session.flush()
 
     async def create_page_reading(

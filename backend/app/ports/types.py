@@ -134,6 +134,10 @@ ReviewReason = Literal[
     "legacy_unspecified",
 ]
 
+CLEARABLE_REVIEW_REASONS: frozenset[ReviewReason] = frozenset(
+    {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
+)
+
 
 class PageArtifact(BaseModel):
     """Extracted single page artifact ready for page-first processing."""

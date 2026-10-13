@@ -15,7 +15,12 @@ import math
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.ports.types import PageReading, PageType, ReviewReason
+from app.ports.types import (
+    CLEARABLE_REVIEW_REASONS,
+    PageReading,
+    PageType,
+    ReviewReason,
+)
 
 
 @dataclass(frozen=True)
@@ -34,11 +39,6 @@ class VisionReadingSelection:
     evidence_type: str  # "text" or "visual"
     text: str
     page_reading_id: UUID | None
-
-
-CLEARABLE_REVIEW_REASONS: frozenset[ReviewReason] = frozenset(
-    {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
-)
 
 
 def should_trigger_vision_read(

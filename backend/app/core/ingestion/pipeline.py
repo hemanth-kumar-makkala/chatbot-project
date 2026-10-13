@@ -19,7 +19,6 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.core.ingestion.review_policy import evaluate_page_review
 from app.core.ingestion.vision_policy import (
-    CLEARABLE_REVIEW_REASONS,
     evaluate_vision_reading_outcome,
     select_readings_for_chunking,
     should_trigger_vision_read,
@@ -33,6 +32,7 @@ from app.ports.image_processor import ImageProcessor
 from app.ports.model_provider import ModelProvider
 from app.ports.storage import StorageBackend
 from app.ports.types import (
+    CLEARABLE_REVIEW_REASONS,
     ModelRole,
     PageArtifact,
     PageType,
