@@ -14,11 +14,12 @@ Handles:
 from __future__ import annotations
 
 import socket
-from typing import Any, cast
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.core.ingestion.review_policy import evaluate_page_review
 from app.core.ingestion.vision_policy import (
+    CLEARABLE_REVIEW_REASONS,
     evaluate_vision_reading_outcome,
     select_readings_for_chunking,
     should_trigger_vision_read,
@@ -40,10 +41,6 @@ from app.ports.types import (
 )
 from app.ports.types import (
     PageReading as PageReadingDTO,
-)
-
-CLEARABLE_RETRY_REASONS: frozenset[str] = frozenset(
-    {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
 )
 
 
@@ -170,6 +167,7 @@ class PagePipelineService:
             page_type=page_type,
             ocr_score=parsed.confidence,
         )
+        prior_review_reason: ReviewReason | None
         if needs_review and review_reason:
             await self.repository.flag_page_for_review(
                 tenant_id=tenant_id,
@@ -179,7 +177,7 @@ class PagePipelineService:
             )
             prior_needs_review = True
             if page_rec and page_rec.review_reason == "legacy_unspecified":
-                prior_review_reason: str | None = "legacy_unspecified"
+                prior_review_reason = "legacy_unspecified"
             else:
                 prior_review_reason = review_reason
         else:
@@ -274,13 +272,13 @@ class PagePipelineService:
                     tenant_id=tenant_id,
                     version_id=document_version_id,
                     page_number=page_number,
-                    reason=cast(ReviewReason, outcome.review_reason),
+                    reason=outcome.review_reason,
                 )
                 is_indexable = False
             else:
                 if page_rec and page_rec.is_excluded:
                     is_indexable = False
-                elif prior_needs_review and prior_review_reason in CLEARABLE_RETRY_REASONS:
+                elif prior_needs_review and prior_review_reason in CLEARABLE_REVIEW_REASONS:
                     await self.repository.clear_page_review_flag(
                         tenant_id=tenant_id,
                         version_id=document_version_id,
@@ -297,7 +295,7 @@ class PagePipelineService:
             elif (
                 not needs_review
                 and prior_needs_review
-                and prior_review_reason in CLEARABLE_RETRY_REASONS
+                and prior_review_reason in CLEARABLE_REVIEW_REASONS
             ):
                 await self.repository.clear_page_review_flag(
                     tenant_id=tenant_id,

@@ -12,12 +12,14 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from app.core.ingestion.vision_policy import (
     evaluate_vision_reading_outcome,
     select_readings_for_chunking,
     should_trigger_vision_read,
 )
-from app.ports.types import PageReading, PageType
+from app.ports.types import PageReading, PageType, ReviewReason
 
 
 class TestVisionTriggerRules:
@@ -199,8 +201,18 @@ class TestVisionReviewFlagTransitions:
         assert outcome.review_reason == "vision_failed"
         assert outcome.is_indexable is False
 
-    def test_vision_does_not_clear_unrelated_review_flag(self) -> None:
-        """Vision reading may only clear flags it is responsible for (low_ocr_confidence)."""
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "vision_low_confidence",
+            "vision_confidence_missing",
+            "legacy_unspecified",
+        ],
+    )
+    def test_confident_vision_does_not_clear_non_clearable_reason(
+        self, reason: ReviewReason
+    ) -> None:
+        """Confident vision reading does not clear reasons outside vision's recovery scope."""
         reading = PageReading(
             reading="Legitimate vision reading",
             confidence=0.99,
@@ -211,10 +223,36 @@ class TestVisionReviewFlagTransitions:
             page_type=PageType.SCANNED,
             vision_reading=reading,
             prior_needs_review=True,
-            prior_review_reason="malware_quarantine",
+            prior_review_reason=reason,
         )
         assert outcome.needs_review is True
-        assert outcome.review_reason == "malware_quarantine"
+        assert outcome.review_reason == reason
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "processing_failed",
+            "vision_failed",
+            "image_too_large",
+            "low_ocr_confidence",
+        ],
+    )
+    def test_confident_vision_clears_clearable_reason(self, reason: ReviewReason) -> None:
+        """Confident vision reading clears reasons within vision's recovery scope."""
+        reading = PageReading(
+            reading="Legitimate vision reading",
+            confidence=0.99,
+            model_id="mock-vision",
+            model_version="1.0",
+        )
+        outcome = evaluate_vision_reading_outcome(
+            page_type=PageType.SCANNED,
+            vision_reading=reading,
+            prior_needs_review=True,
+            prior_review_reason=reason,
+        )
+        assert outcome.needs_review is False
+        assert outcome.review_reason is None
 
     def test_vision_does_not_clear_legacy_unspecified_flag(self) -> None:
         """Vision reading must not clear legacy_unspecified review flag."""

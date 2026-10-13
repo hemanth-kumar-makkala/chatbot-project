@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.ports.types import PageReading, PageType
+from app.ports.types import PageReading, PageType, ReviewReason
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class VisionReadingOutcome:
     """Outcome of vision reading evaluation for page review and indexing status."""
 
     needs_review: bool
-    review_reason: str | None
+    review_reason: ReviewReason | None
     is_indexable: bool
 
 
@@ -34,6 +34,11 @@ class VisionReadingSelection:
     evidence_type: str  # "text" or "visual"
     text: str
     page_reading_id: UUID | None
+
+
+CLEARABLE_REVIEW_REASONS: frozenset[ReviewReason] = frozenset(
+    {"processing_failed", "vision_failed", "image_too_large", "low_ocr_confidence"}
+)
 
 
 def should_trigger_vision_read(
@@ -71,7 +76,7 @@ def evaluate_vision_reading_outcome(
     page_type: PageType,
     vision_reading: PageReading | None,
     prior_needs_review: bool = False,
-    prior_review_reason: str | None = None,
+    prior_review_reason: ReviewReason | None = None,
     threshold: float = 0.70,
     error_code: str | None = None,
 ) -> VisionReadingOutcome:
@@ -122,12 +127,7 @@ def evaluate_vision_reading_outcome(
 
     # Successful reading: check if prior flag can be cleared
     if prior_needs_review:
-        if prior_review_reason in (
-            "low_ocr_confidence",
-            "vision_failed",
-            "image_too_large",
-            "processing_failed",
-        ):
+        if prior_review_reason in CLEARABLE_REVIEW_REASONS:
             # Vision was responsible for recovering -> cleared!
             return VisionReadingOutcome(
                 needs_review=False,

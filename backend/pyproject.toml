@@ -106,8 +106,8 @@ markers = [
 
 [[tool.uv.index]]
 name = "pytorch-cuda"
-# CUDA wheel index URL: pending nvidia-smi confirmation from desktop (e.g. cu124 or cu126)
-url = "https://download.pytorch.org/whl/cu124"
+# CUDA 12.6 wheels; torch 2.14.1 and torchvision 0.29.1 confirmed for win_amd64 cp312
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
