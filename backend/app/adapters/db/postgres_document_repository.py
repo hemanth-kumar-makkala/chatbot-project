@@ -1091,6 +1091,23 @@ class PostgresDocumentRepository(DocumentRepository):
             is_excluded=getattr(page, "is_excluded", False),
         )
 
+    async def _assert_no_active_page_job(
+        self,
+        tenant_id: UUID,
+        version_id: UUID,
+        page_number: int,
+    ) -> None:
+        """Refuse with PageJobConflictError if a job for that page is already queued or running."""
+        active_step_stmt = select(JobStep).where(
+            JobStep.tenant_id == tenant_id,
+            JobStep.document_version_id == version_id,
+            JobStep.page_number == page_number,
+            JobStep.status.in_(["processing", "todo", "doing"]),
+        )
+        active_step = (await self.session.execute(active_step_stmt)).scalars().first()
+        if active_step is not None:
+            raise PageJobConflictError(f"A job for page {page_number} is already queued or running")
+
     async def accept_page_review(
         self,
         tenant_id: str,
@@ -1153,6 +1170,8 @@ class PostgresDocumentRepository(DocumentRepository):
         # Invalid page state (excluded or not flagged)
         if getattr(page, "is_excluded", False) or not page.needs_review:
             raise InvalidPageStateError(f"Page {page_number} is in invalid state")
+
+        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         # Look up readings
         readings_stmt = select(PageReading).where(
@@ -1348,6 +1367,8 @@ class PostgresDocumentRepository(DocumentRepository):
             raise InvalidPageStateError(
                 f"Page {page_number} is not flagged for review (needs_review=False)"
             )
+
+        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         page.is_excluded = True
         page.needs_review = False
@@ -1629,15 +1650,7 @@ class PostgresDocumentRepository(DocumentRepository):
 
         # Active job check: Refuse with 409 PAGE_JOB_ALREADY_ACTIVE
         # if a job for that page is already queued or running
-        active_step_stmt = select(JobStep).where(
-            JobStep.tenant_id == tid,
-            JobStep.document_version_id == version_id,
-            JobStep.page_number == page_number,
-            JobStep.status.in_(["processing", "todo", "doing"]),
-        )
-        active_step = (await self.session.execute(active_step_stmt)).scalars().first()
-        if active_step is not None:
-            raise PageJobConflictError(f"A job for page {page_number} is already queued or running")
+        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         # Check if processing version has changed on existing job step
         step_stmt = (

@@ -421,6 +421,11 @@ async def accept_page(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=exc.code,
             ) from None
+        except PageJobConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
         except NoUsableReadingError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -473,6 +478,11 @@ async def exclude_page(
                 detail="Document is retired",
             ) from None
         except InvalidPageStateError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exc.code,
+            ) from None
+        except PageJobConflictError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=exc.code,
