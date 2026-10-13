@@ -28,6 +28,8 @@ def api_settings() -> ApiSettings:
         idle_timeout_minutes=30,
         absolute_timeout_hours=24,
         allow_bearer_auth=False,
+        profile="mock",
+        storage_dir="storage",
     )
 
 

@@ -294,6 +294,9 @@ class Document(Base):
     )
     active_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_retired: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_text("false"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -378,6 +381,10 @@ class Page(Base):
             "needs_review = false OR review_reason IS NOT NULL",
             name="ck_pages_needs_review_reason",
         ),
+        CheckConstraint(
+            "NOT (is_excluded = true AND needs_review = true)",
+            name="ck_pages_excluded_needs_review",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -392,6 +399,9 @@ class Page(Base):
         Boolean, default=False, server_default=sa_text("false"), nullable=False
     )
     review_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_excluded: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_text("false"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

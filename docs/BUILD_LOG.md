@@ -1018,3 +1018,51 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - All 10 integration tests pass in 5.83s with 0 warnings.
   - All 24 boundary invariant tests pass in 0.39s.
   - All pre-commit hooks pass cleanly across all modified files.
+
+---
+
+### [2026-10-13] TASK 2.8a Step 2: Migration 0008, Review List, Page Image Proxy, Retire Endpoint, and Concurrency Gating
+
+- **Task ID**: TASK 2.8a Step 2
+- **What Was Built**:
+  - **Alembic Migration 0008** (`backend/app/db/migrations/versions/0008_excluded_and_retired.py`):
+    - Added `documents.is_retired` (Boolean, default False, server_default=False, nullable=False).
+    - Added `pages.is_excluded` (Boolean, default False, server_default=False, nullable=False).
+    - Added check constraint `ck_pages_excluded_needs_review` (`CHECK (NOT (is_excluded = true AND needs_review = true))`).
+    - Revision ID `0008_excluded_and_retired` (25 characters, strictly $\le 32$ characters).
+    - Tested exclusively in isolated throwaway databases; unapplied to the shared database.
+  - **SQLAlchemy Models Update** (`backend/app/db/models.py`):
+    - Added `is_retired` mapped column on `Document`.
+    - Added `is_excluded` mapped column and `ck_pages_excluded_needs_review` constraint on `Page`.
+  - **Domain Ports & Repository Methods**:
+    - Updated `DocumentRecord` and `DocumentStatusInfo` with `is_retired: bool = False`.
+    - Updated `PageRecord` with `is_excluded: bool = False`.
+    - Added `DocumentRetiredError` exception to `app.ports.errors`.
+    - Added `ReviewReadingInfo` and `ReviewPageInfo` data models to `app.ports.types`.
+    - Extended `DocumentRepository` port and `PostgresDocumentRepository` adapter with:
+      - `retire_document(tenant_id, document_id)`: locks Document row (`FOR UPDATE`), sets `is_retired = True`, clears `active_version_id = None`, sets `chunks.is_active = False` across all document chunks, and marks document versions `retired`.
+      - `get_version_review_pages(tenant_id, version_id)`: validates version tenant ownership (404 anti-probing), retrieves flagged pages where `needs_review.is_(True)`, loads page readings, and formats review payloads.
+  - **Version Activation Concurrency Gating** (`backend/app/core/ingestion/activation.py`):
+    - `VersionActivationService.check_and_activate_if_complete` checks `doc.is_retired` under row lock and refuses activation (`return False`).
+    - `VersionActivationService.activate_version` raises `DocumentRetiredError` if `doc.is_retired` is True.
+  - **API Endpoints** (`backend/app/api/routes/knowledge.py`):
+    - `GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/review`: client_admin only, assistant-scoped, returns flagged pages with readings, logs `AuditEvent(action="review_inspected")`.
+    - `GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/image`: client_admin only, retrieves image bytes via `storage.get()`, sets `Content-Type: image/png` and `Cache-Control: private, no-transform, max-age=3600`, logs `AuditEvent(action="page_image_viewed")`.
+    - `DELETE /v1/assistants/{assistant_id}/knowledge/documents/{document_id}`: client_admin only, CSRF double-submit token validated (`validate_csrf`), invokes `repo.retire_document()`, logs `AuditEvent(action="document_retired")`.
+    - Anti-probing: all endpoints return 404 for unknown assistant, cross-tenant assistant, cross-tenant document/version/page.
+    - RBAC: staff users return 403 Forbidden across all review, image proxy, and retire routes.
+- **Tests Added**:
+  - `backend/tests/integration/test_migration_0008.py`:
+    - `test_migration_0008_upgrade_downgrade_lifecycle`: upgrade -> downgrade -> upgrade in throwaway DB.
+    - `test_migration_0008_check_constraint_ck_pages_excluded_needs_review`: verifies rejection of `is_excluded=true AND needs_review=true` (SQLSTATE 23514).
+  - `backend/tests/integration/test_api_knowledge_step2.py`:
+    - `test_review_list_and_audit`: review list contents, reading text, image presence, compliance audit event.
+    - `test_page_image_proxy_headers_and_audit`: binary png delivery, image cache-control headers, compliance audit event.
+    - `test_retire_document_csrf_mutation_and_audit`: CSRF enforcement on DELETE, row lock mutation, active_version clearing, chunk deactivation, compliance audit event.
+    - `test_anti_probing_cross_tenant_and_staff_rbac`: anti-probing 404s for cross-tenant calls and 403s for staff users.
+    - `test_concurrency_retire_during_processing_never_goes_live`: document retired while version is processing -> completion activation refuses, active_version_id remains None, chunks stay inactive.
+- **Verification**:
+  - All 7 affected integration tests pass in 5.82s.
+  - All 25 boundary and migration invariant tests pass in 0.23s.
+  - All pre-commit hooks pass cleanly across all modified files.
+  - Migration 0008 tested on throwaway DB only, unapplied to shared DB.

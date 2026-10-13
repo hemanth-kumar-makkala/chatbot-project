@@ -61,6 +61,8 @@ def api_settings() -> ApiSettings:
         absolute_timeout_hours=24,
         allow_bearer_auth=False,
         max_upload_bytes=5 * 1024 * 1024,  # 5 MB for tests
+        profile="mock",
+        storage_dir="storage",
     )
 
 

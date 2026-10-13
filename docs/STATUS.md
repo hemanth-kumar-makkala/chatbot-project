@@ -6,6 +6,14 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Task 2.8a Step 2**: Knowledge Page Review List, Image Proxy & Retire — **COMPLETED**
+  - Completed: Migration 0008 (`0008_excluded_and_retired.py`) with `pages.is_excluded`, `documents.is_retired`, and check constraint `ck_pages_excluded_needs_review` (`NOT (is_excluded = true AND needs_review = true)`). Tested on throwaway database only; unapplied to shared DB.
+  - Completed: Review list endpoint (`GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/review`) returning flagged pages, review reasons, ocr confidence, readings, and image flag; compliance audit event (`review_inspected`).
+  - Completed: Page image proxy (`GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/pages/{page_number}/image`) returning image bytes via storage port with `Content-Type: image/png` and `Cache-Control: private, no-transform, max-age=3600`; compliance audit event (`page_image_viewed`).
+  - Completed: Retire document endpoint (`DELETE /v1/assistants/{assistant_id}/knowledge/documents/{document_id}`) with double-submit CSRF enforcement, setting `is_retired = True`, clearing `active_version_id = None`, deactivating all chunks, marking versions retired; compliance audit event (`document_retired`).
+  - Completed: Concurrency serialization: Version activation gated under document row lock (`doc.is_retired`), refusing activation if retired (`check_and_activate_if_complete` returns False, `activate_version` raises `DocumentRetiredError`). Tested concurrency race: document retired during processing -> version never goes live.
+  - Completed: Anti-probing 404s for cross-tenant version/doc/page/assistant and RBAC 403s for staff users across all routes.
+  - Completed: 2 migration tests (`test_migration_0008.py`) and 5 API/concurrency integration tests (`test_api_knowledge_step2.py`) passing.
 - **Task 2.8a Step 1**: Knowledge Page Backend API (Upload Endpoint & Status List) — **COMPLETED**
   - Completed: Assistant-scoped routes `/v1/assistants/{assistant_id}/knowledge/upload` and `/v1/assistants/{assistant_id}/knowledge/documents`.
   - Completed: Tenant derived via `lookup_assistant_tenant` and client_admin role checked via `auth_provider.roles` strictly as `app_user` (zero owner role `cka_admin` connections in request paths).

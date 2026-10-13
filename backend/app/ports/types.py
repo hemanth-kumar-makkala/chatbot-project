@@ -221,6 +221,7 @@ class DocumentRecord(BaseModel):
     title: str
     active_version_id: UUID | None = None
     created_at: datetime
+    is_retired: bool = False
 
 
 class DocumentVersionRecord(BaseModel):
@@ -253,6 +254,7 @@ class DocumentStatusInfo(BaseModel):
     title: str
     active_version_id: str | None = None
     created_at: datetime
+    is_retired: bool = False
     versions: list[VersionStatusInfo]
 
 
@@ -269,6 +271,31 @@ class PageRecord(BaseModel):
     ocr_confidence: float | None = None
     needs_review: bool = False
     review_reason: ReviewReason | None = None
+    is_excluded: bool = False
+
+
+class ReviewReadingInfo(BaseModel):
+    """Information about a page reading for administrative review."""
+
+    id: str
+    source: str
+    text: str
+    model_id: str
+    model_version: str
+    created_at: datetime
+
+
+class ReviewPageInfo(BaseModel):
+    """Summary of a flagged page for administrative review inspection."""
+
+    page_id: str
+    page_number: int
+    review_reason: str | None = None
+    ocr_confidence: float | None = None
+    page_type: str
+    is_excluded: bool = False
+    has_image: bool = True
+    readings: list[ReviewReadingInfo] = []
 
 
 class UploadPayload(BaseModel):

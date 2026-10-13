@@ -26,6 +26,8 @@ from app.ports.types import (
     DocumentVersionRecord,
     PageRecord,
     PageType,
+    ReviewPageInfo,
+    ReviewReadingInfo,
     ReviewReason,
     VersionStatusInfo,
 )
@@ -83,6 +85,7 @@ class PostgresDocumentRepository(DocumentRepository):
             title=row.title,
             active_version_id=row.active_version_id,
             created_at=row.created_at,
+            is_retired=getattr(row, "is_retired", False),
         )
 
     async def create_document(
@@ -110,6 +113,7 @@ class PostgresDocumentRepository(DocumentRepository):
             title=doc.title,
             active_version_id=doc.active_version_id,
             created_at=doc.created_at,
+            is_retired=getattr(doc, "is_retired", False),
         )
 
     async def create_version(
@@ -238,6 +242,7 @@ class PostgresDocumentRepository(DocumentRepository):
             title=doc.title,
             active_version_id=doc.active_version_id,
             created_at=doc.created_at,
+            is_retired=getattr(doc, "is_retired", False),
         ), DocumentVersionRecord(
             id=ver.id,
             tenant_id=str(ver.tenant_id),
@@ -328,6 +333,7 @@ class PostgresDocumentRepository(DocumentRepository):
             ocr_confidence=p.ocr_confidence,
             needs_review=p.needs_review,
             review_reason=cast(ReviewReason | None, p.review_reason),
+            is_excluded=getattr(p, "is_excluded", False),
         )
 
     async def update_version_status(
@@ -537,6 +543,7 @@ class PostgresDocumentRepository(DocumentRepository):
             title=doc.title,
             active_version_id=doc.active_version_id,
             created_at=doc.created_at,
+            is_retired=getattr(doc, "is_retired", False),
         )
         ver_rec = DocumentVersionRecord(
             id=ver.id,
@@ -915,8 +922,133 @@ class PostgresDocumentRepository(DocumentRepository):
                     title=doc.title,
                     active_version_id=str(doc.active_version_id) if doc.active_version_id else None,
                     created_at=doc.created_at,
+                    is_retired=getattr(doc, "is_retired", False),
                     versions=versions_by_doc.get(doc.id, []),
                 )
             )
 
+        return results
+
+    async def retire_document(
+        self,
+        tenant_id: str,
+        document_id: UUID,
+    ) -> DocumentRecord:
+        """Mark document as retired under row lock, clear active_version_id,
+        and deactivate chunks.
+        """
+        tid = UUID(str(tenant_id))
+        doc_stmt = (
+            select(Document)
+            .where(Document.tenant_id == tid, Document.id == document_id)
+            .with_for_update()
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(f"Document {document_id} not found in tenant {tenant_id}")
+
+        doc.is_retired = True
+        doc.active_version_id = None
+
+        # Deactivate all chunks belonging to versions of this document
+        chunk_stmt = (
+            update(Chunk)
+            .where(
+                Chunk.tenant_id == tid,
+                Chunk.document_version_id.in_(
+                    select(DocumentVersion.id).where(
+                        DocumentVersion.tenant_id == tid,
+                        DocumentVersion.document_id == document_id,
+                    )
+                ),
+            )
+            .values(is_active=False)
+        )
+        await self.session.execute(chunk_stmt)
+
+        # Mark all versions of this document as retired
+        ver_stmt = (
+            update(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.document_id == document_id)
+            .values(status="retired")
+        )
+        await self.session.execute(ver_stmt)
+        await self.session.flush()
+
+        return DocumentRecord(
+            id=doc.id,
+            tenant_id=str(doc.tenant_id),
+            title=doc.title,
+            active_version_id=doc.active_version_id,
+            created_at=doc.created_at,
+            is_retired=doc.is_retired,
+        )
+
+    async def get_version_review_pages(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> list[ReviewPageInfo]:
+        """Retrieve flagged pages and their readings for administrative review inspection."""
+        tid = UUID(str(tenant_id))
+        # Anti-probing: verify document version belongs to caller tenant
+        ver_stmt = select(DocumentVersion.id).where(
+            DocumentVersion.tenant_id == tid,
+            DocumentVersion.id == version_id,
+        )
+        ver_exists = (await self.session.execute(ver_stmt)).scalar_one_or_none()
+        if ver_exists is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # Query flagged pages
+        pages_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.needs_review.is_(True),
+            )
+            .order_by(Page.page_number)
+        )
+        pages = (await self.session.execute(pages_stmt)).scalars().all()
+        if not pages:
+            return []
+
+        page_ids = [p.id for p in pages]
+        readings_stmt = (
+            select(PageReading)
+            .where(
+                PageReading.tenant_id == tid,
+                PageReading.page_id.in_(page_ids),
+            )
+            .order_by(PageReading.created_at.asc())
+        )
+        readings = (await self.session.execute(readings_stmt)).scalars().all()
+        readings_by_page: dict[UUID, list[ReviewReadingInfo]] = {}
+        for r in readings:
+            readings_by_page.setdefault(r.page_id, []).append(
+                ReviewReadingInfo(
+                    id=str(r.id),
+                    source=r.source,
+                    text=r.text,
+                    model_id=r.model_id,
+                    model_version=r.model_version,
+                    created_at=r.created_at,
+                )
+            )
+
+        results: list[ReviewPageInfo] = []
+        for p in pages:
+            results.append(
+                ReviewPageInfo(
+                    page_id=str(p.id),
+                    page_number=p.page_number,
+                    review_reason=p.review_reason,
+                    ocr_confidence=p.ocr_confidence,
+                    page_type=p.page_type,
+                    is_excluded=getattr(p, "is_excluded", False),
+                    has_image=bool(p.image_key),
+                    readings=readings_by_page.get(p.id, []),
+                )
+            )
         return results

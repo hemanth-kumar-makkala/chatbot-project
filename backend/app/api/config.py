@@ -1,9 +1,21 @@
 """FastAPI application configuration and settings."""
 
 import os
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+from app.ports.errors import ConfigurationError
+
+ApiProfile = Literal[
+    "mock",
+    "office-cpu",
+    "desktop-gpu",
+    "home-gpu",
+    "dev-free-api",
+    "cloud",
+    "frontier",
+]
 
 
 def _default_cookie_secure() -> bool:
@@ -46,3 +58,24 @@ class ApiSettings(BaseModel):
         default=50 * 1024 * 1024,
         description="Maximum upload size in bytes (default 50MB).",
     )
+    profile: ApiProfile = Field(
+        ...,
+        description="Runtime profile (mock, office-cpu, desktop-gpu, etc.).",
+    )
+    storage_dir: str = Field(
+        ...,
+        description="Storage directory for local storage backend. Required; no default.",
+    )
+
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            invalid_fields = sorted({str(err["loc"][0]) for err in exc.errors() if err.get("loc")})
+            field_str = ", ".join(invalid_fields) if invalid_fields else "unknown"
+            raise ConfigurationError(
+                f"INVALID_CONFIGURATION: invalid fields: {field_str}"
+            ) from None
+
+        if not self.storage_dir or not self.storage_dir.strip():
+            raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: storage_dir") from None

@@ -7,10 +7,11 @@ Architecture specification: `Client Knowledge Assistant Architecture and Build P
 ## Mandatory Task Protocol
 Before any task, read `docs/STATUS.md` and the current phase file (`docs/phases/PHASE-X.md`).
 Mandatory: All commands must execute in the foreground according to `.agents/rules/execution.md` (no background execution).
-Before reporting any task done: run `git add -A`, then `pre-commit run --all-files`, and report that output.
+Before reporting any task done: run uv run pre-commit run --files <changed files>. Never run git add, commit, or push. Srinath does that.
 After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.md`.
 
 ## Build Rules ("Working with Antigravity")
+0. Never view, grep, or open .env files or any file containing credentials.
 1. One module per task, with its section of the spec referenced.
 2. Interfaces and tests are written and reviewed first. Implementation starts only when tests exist and fail.
 3. Pin every library version. No new dependency without asking.

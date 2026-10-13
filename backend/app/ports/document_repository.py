@@ -14,6 +14,7 @@ from app.ports.types import (
     DocumentVersionRecord,
     PageRecord,
     PageType,
+    ReviewPageInfo,
     ReviewReason,
 )
 
@@ -242,4 +243,24 @@ class DocumentRepository(ABC):
         tenant_id: str,
     ) -> list[DocumentStatusInfo]:
         """Retrieve all documents and versions with derived UI states for tenant."""
+        ...
+
+    @abstractmethod
+    async def retire_document(
+        self,
+        tenant_id: str,
+        document_id: UUID,
+    ) -> DocumentRecord:
+        """Mark document as retired under row lock, clear active_version_id,
+        and deactivate chunks.
+        """
+        ...
+
+    @abstractmethod
+    async def get_version_review_pages(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> list[ReviewPageInfo]:
+        """Retrieve flagged pages and their readings for administrative review inspection."""
         ...

@@ -18,6 +18,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.ports.document_repository import DocumentRepository
+from app.ports.errors import DocumentRetiredError
 
 
 class VersionActivationService:
@@ -43,6 +44,9 @@ class VersionActivationService:
             completed_pages,
             has_flagged,
         ) = await self.repository.lock_version_for_activation(tenant_id, document_version_id)
+        if doc.is_retired:
+            return False
+
         if ver.status != "processing":
             return False
 
@@ -78,6 +82,8 @@ class VersionActivationService:
             completed_pages,
             has_flagged,
         ) = await self.repository.lock_version_for_activation(tenant_id, document_version_id)
+        if doc.is_retired:
+            raise DocumentRetiredError(f"Cannot activate version for retired document {doc.id}")
         has_prior_active = (
             doc.active_version_id is not None and doc.active_version_id != document_version_id
         )

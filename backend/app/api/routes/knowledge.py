@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -22,7 +22,7 @@ from app.api.deps import (
     get_client_admin_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.db.models import AuditEvent, Document
+from app.db.models import AuditEvent, Document, Page
 from app.db.session import tenant_session
 from app.ports.errors import (
     AuthorizationError,
@@ -30,8 +30,12 @@ from app.ports.errors import (
     FileValidationError,
     MalwareDetectedError,
 )
-from app.ports.types import TenantContext, UploadPayload
-from app.wiring import create_document_repository, create_upload_service
+from app.ports.types import ReviewPageInfo, StorageKey, TenantContext, UploadPayload
+from app.wiring import (
+    create_document_repository,
+    create_storage_backend,
+    create_upload_service,
+)
 from app.worker import app as worker_app
 from app.worker import split_document_job
 
@@ -48,6 +52,21 @@ class UploadResponse(BaseModel):
     document_version_id: str
     status: str
     is_duplicate: bool
+
+
+class VersionReviewResponse(BaseModel):
+    """Response returning flagged pages and readings for administrative review inspection."""
+
+    version_id: str
+    flagged_pages: list[ReviewPageInfo]
+
+
+class RetireDocumentResponse(BaseModel):
+    """Response returning retired document ID and status."""
+
+    document_id: str
+    is_retired: bool
+    status: str
 
 
 @router.post(
@@ -195,3 +214,144 @@ async def list_documents(
         doc_infos = await repo.list_documents_with_status(tenant.tenant_id)
 
     return {"documents": [doc.model_dump() for doc in doc_infos]}
+
+
+@router.get("/documents/{version_id}/review", response_model=VersionReviewResponse)
+async def get_version_review(
+    version_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> VersionReviewResponse:
+    """Retrieve flagged pages with review reasons and readings for version.
+
+    Logs compliance audit event (action="review_inspected").
+    """
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            pages = await repo.get_version_review_pages(tenant.tenant_id, version_id)
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document version not found",
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="review_inspected",
+            resource_id=str(version_id),
+        )
+        session.add(audit)
+        await session.flush()
+
+    return VersionReviewResponse(
+        version_id=str(version_id),
+        flagged_pages=pages,
+    )
+
+
+@router.get("/documents/{version_id}/pages/{page_number}/image")
+async def get_page_image(
+    version_id: UUID,
+    page_number: int,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> Response:
+    """Safely proxy page image bytes via storage port without public static path.
+
+    Headers: Content-Type: image/png, Cache-Control: no-store,
+             X-Content-Type-Options: nosniff, Content-Security-Policy: default-src 'none'.
+    Logs compliance audit event (action="page_image_viewed").
+    """
+    tid = UUID(tenant.tenant_id)
+    profile = getattr(settings, "profile", "mock")
+    storage_dir = getattr(settings, "storage_dir", "storage")
+
+    async with tenant_session(tenant) as session:
+        page_stmt = select(Page).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.page_number == page_number,
+        )
+        page = (await session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Page not found",
+            )
+
+        storage = create_storage_backend(profile=profile, base_dir=storage_dir)
+        path = page.image_key
+        if path.startswith(f"{tenant.tenant_id}/"):
+            path = path[len(f"{tenant.tenant_id}/") :]
+        key = StorageKey(tenant_id=tid, path=path)
+
+        try:
+            image_bytes = await storage.get(key)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Page image not found in storage",
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=tid,
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="page_image_viewed",
+            resource_id=f"{version_id}:{page_number}",
+        )
+        session.add(audit)
+        await session.flush()
+
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'",
+        },
+    )
+
+
+@router.delete(
+    "/documents/{document_id}",
+    response_model=RetireDocumentResponse,
+    dependencies=[Depends(validate_csrf)],
+)
+async def retire_document(
+    document_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+) -> RetireDocumentResponse:
+    """Retire document, clearing active version and deactivating search chunks under row lock.
+
+    Requires CSRF token on DELETE.
+    Logs compliance audit event (action="document_retired").
+    """
+    async with tenant_session(tenant) as session:
+        repo = create_document_repository(session)
+        try:
+            doc = await repo.retire_document(tenant.tenant_id, document_id)
+        except DocumentNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found",
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=UUID(tenant.tenant_id),
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="document_retired",
+            resource_id=str(document_id),
+        )
+        session.add(audit)
+        await session.flush()
+
+    return RetireDocumentResponse(
+        document_id=str(doc.id),
+        is_retired=doc.is_retired,
+        status="retired",
+    )

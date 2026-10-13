@@ -298,6 +298,24 @@ class DocumentNotFoundError(PortError):
         )
 
 
+class DocumentRetiredError(PortError):
+    """Raised when an operation targets or attempts to activate a retired document."""
+
+    def __init__(
+        self,
+        message: str = "Document is retired",
+        error_code: str = "DOCUMENT_RETIRED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+
+
 class EncryptedDocumentError(PortError):
     """Raised when an encrypted/password-protected document cannot be opened."""
 
