@@ -5,6 +5,7 @@ Enforces tenant scoping on all operations.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -355,5 +356,19 @@ class DocumentRepository(ABC):
         """Re-evaluate version completion after a retried page finishes.
 
         Returns (version_record, auto_promoted).
+        """
+        ...
+
+    @abstractmethod
+    async def fail_stale_page_marker(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        terminal_at: datetime,
+    ) -> bool:
+        """Lock documents, document_versions (KEY SHARE), and Page (UPDATE),
+        then fail active page_processing marker if older than terminal_at
+        and flag page processing_failed.
         """
         ...

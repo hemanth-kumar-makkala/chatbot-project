@@ -500,3 +500,22 @@ class PageJobConflictError(PortError):
             details=details,
         )
         self.code = code
+
+
+class MalformedTaskArgsError(PortError):
+    """Raised when background job task arguments are missing or malformed."""
+
+    def __init__(
+        self,
+        message: str = "Malformed task arguments",
+        code: str = "MALFORMED_TASK_ARGS",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

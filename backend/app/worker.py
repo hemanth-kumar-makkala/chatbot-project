@@ -12,18 +12,23 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable
-from uuid import UUID
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from procrastinate import App, JobContext, PsycopgConnector
 from procrastinate.retry import RetryStrategy
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 from app.core.ingestion.pipeline import is_retryable_error
 from app.db.env_utils import load_dotenv
 from app.db.models import DocumentVersion
+from app.db.session import unscoped_session, worker_tenant_session
 from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.ports.document_repository import DocumentRepository
-from app.ports.errors import TransientIngestionError
+from app.ports.errors import MalformedTaskArgsError, TransientIngestionError
+from app.ports.types import WorkerContext
+from app.wiring import create_document_repository
 
 # Mandatory: enforce LangSmith tracing disabled at module import / worker startup
 enforce_langsmith_tracing_disabled()
@@ -378,3 +383,134 @@ async def stalled_job_sweep_task(
         timestamp=timestamp,
         seconds_since_heartbeat=seconds_since_heartbeat,
     )
+
+
+@dataclass(frozen=True)
+class FailedPageJobSweepResult:
+    repaired_count: int
+    skipped_count: int
+    malformed_args_count: int
+
+
+FAILED_PAGE_JOB_SWEEP_LOOKBACK_DAYS: int = 7
+FAILED_PAGE_JOB_SWEEP_LOOKBACK: timedelta = timedelta(days=FAILED_PAGE_JOB_SWEEP_LOOKBACK_DAYS)
+
+
+def _parse_page_task_args(args: object) -> tuple[UUID, UUID, int]:
+    """Parse and validate task arguments for process_page_job.
+
+    Raises MalformedTaskArgsError with fixed message on any missing or invalid field.
+    """
+    if not isinstance(args, dict):
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+
+    if "tenant_id" not in args:
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+    if "document_version_id" not in args:
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+    if "page_number" not in args:
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+
+    raw_tenant = args["tenant_id"]
+    raw_version = args["document_version_id"]
+    raw_page = args["page_number"]
+
+    if (
+        not isinstance(raw_tenant, str)
+        or not isinstance(raw_version, str)
+        or not isinstance(raw_page, int)
+    ):
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+
+    try:
+        tenant_id = UUID(raw_tenant)
+        version_id = UUID(raw_version)
+    except (ValueError, TypeError):
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+
+    if raw_page < 1:
+        raise MalformedTaskArgsError("Malformed task arguments") from None
+
+    return tenant_id, version_id, raw_page
+
+
+async def run_failed_page_job_sweep(
+    context: JobContext | None = None,
+    lookback_days: int = FAILED_PAGE_JOB_SWEEP_LOOKBACK_DAYS,
+) -> FailedPageJobSweepResult:
+    """Periodic sweep detecting page jobs that terminated in a failed/cancelled/aborted state.
+
+    1. Queries procrastinate schema (unscoped) for terminal page jobs within lookback_days.
+    2. Validates task args (counts MalformedTaskArgsError and continues).
+    3. Scopes to each tenant via worker_tenant_session and invokes repo.fail_stale_page_marker.
+    """
+    _ = context
+    lookback = timedelta(days=lookback_days)
+    cutoff = datetime.now(UTC) - lookback
+
+    terminal_jobs_stmt = text(
+        "SELECT j.id AS job_id, j.args AS task_args, MAX(e.at) AS terminal_at "
+        "FROM procrastinate.procrastinate_jobs j "
+        "JOIN procrastinate.procrastinate_events e ON e.job_id = j.id "
+        "WHERE j.task_name = :task_name "
+        "  AND j.status IN ('failed', 'cancelled', 'aborted') "
+        "  AND e.type IN ('failed', 'cancelled', 'aborted') "
+        "  AND e.at >= :cutoff "
+        "GROUP BY j.id, j.args "
+        "ORDER BY MAX(e.at) ASC"
+    )
+
+    async with unscoped_session() as session:
+        result = await session.execute(
+            terminal_jobs_stmt,
+            {
+                "task_name": process_page_job.name,
+                "cutoff": cutoff,
+            },
+        )
+        candidates = result.all()
+
+    repaired_count = 0
+    skipped_count = 0
+    malformed_args_count = 0
+
+    for row in candidates:
+        task_args: object = row.task_args
+        terminal_at: datetime = row.terminal_at
+
+        try:
+            tenant_id, version_id, page_number = _parse_page_task_args(task_args)
+        except MalformedTaskArgsError:
+            malformed_args_count += 1
+            continue
+
+        worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+        async with worker_tenant_session(worker_ctx) as session:
+            repo = create_document_repository(session)
+            repaired = await repo.fail_stale_page_marker(
+                tenant_id=str(tenant_id),
+                version_id=version_id,
+                page_number=page_number,
+                terminal_at=terminal_at,
+            )
+            if repaired:
+                repaired_count += 1
+            else:
+                skipped_count += 1
+
+    return FailedPageJobSweepResult(
+        repaired_count=repaired_count,
+        skipped_count=skipped_count,
+        malformed_args_count=malformed_args_count,
+    )
+
+
+@app.periodic(cron="*/5 * * * *", periodic_id="failed_page_job_sweep")
+@app.task(queue="builtin", pass_context=True)
+async def failed_page_job_sweep_task(
+    context: JobContext,
+    timestamp: int = 0,
+) -> int:
+    _ = timestamp
+    result = await run_failed_page_job_sweep(context=context)
+    return result.repaired_count

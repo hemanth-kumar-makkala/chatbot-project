@@ -2028,3 +2028,92 @@ class PostgresDocumentRepository(DocumentRepository):
             created_at=ver.created_at,
         )
         return ver_rec, auto_promoted
+
+    async def fail_stale_page_marker(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+        page_number: int,
+        terminal_at: datetime,
+    ) -> bool:
+        """Lock documents, document_versions (KEY SHARE), and Page (UPDATE),
+        then fail active page_processing marker if older than terminal_at
+        and flag page processing_failed.
+        """
+        tid = UUID(str(tenant_id))
+
+        # 1. Lock Document FOR KEY SHARE
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update(key_share=True)
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            return False
+
+        # 2. Lock DocumentVersion FOR KEY SHARE
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update(key_share=True)
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            return False
+
+        # 3. Lock Page FOR UPDATE
+        page_stmt = (
+            select(Page)
+            .where(
+                Page.tenant_id == tid,
+                Page.document_version_id == version_id,
+                Page.page_number == page_number,
+            )
+            .with_for_update()
+        )
+        page = (await self.session.execute(page_stmt)).scalars().first()
+        if page is None:
+            return False
+
+        # 4. Check active marker
+        marker_stmt = (
+            select(JobStep)
+            .where(
+                JobStep.tenant_id == tid,
+                JobStep.document_version_id == version_id,
+                JobStep.page_number == page_number,
+                JobStep.step == "page_processing",
+            )
+            .with_for_update()
+        )
+        marker = (await self.session.execute(marker_stmt)).scalars().first()
+        if marker is None:
+            return False
+
+        if marker.status not in ACTIVE_PAGE_MARKER_STATUSES:
+            return False
+
+        if marker.updated_at >= terminal_at:
+            return False
+
+        # 5. Fail marker and flag page processing_failed
+        marker.status = "failed"
+        marker.updated_at = func.now()
+
+        await self.flag_page_for_review(
+            tenant_id=tenant_id,
+            version_id=version_id,
+            page_number=page_number,
+            reason="processing_failed",
+        )
+        await self.session.flush()
+        return True
