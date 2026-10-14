@@ -1,0 +1,25 @@
+﻿ID,Phase,Area,What to test,Steps,Expected result,Result,Date tested,Tested by,Bug / notes
+UI-001,2,Login,Sign in with valid account,"Open /login, sign in as admin@clinic-a.local","Lands on Knowledge page, no error",Pass,10/14/2026,Srinath,Needed Windows event-loop fix in API start command
+UI-002,2,Login,Not logged in sends you to login,Open the Knowledge page URL in a fresh incognito window,Redirects to /login,Pass,10/14/2026,Srinath,
+UI-003,2,Login,Wrong password,Sign in with a wrong password,"Friendly error, no server text",Not run,,,
+UI-004,2,Login,Logout,"Account menu, Logout",Back to /login; Knowledge page needs login again,Not run,,,
+UI-005,2,Client access,Correct client opens,Open Clinic A Knowledge page,"Page loads, documents listed",Pass,10/14/2026,Srinath,Bug fixed: app used wrong assistant ID
+UI-006,2,Client access,Other client is hidden,"Logged in as Clinic A admin, open Clinic B assistant URL","Not found (404), no data shown",Not run,,,
+UI-007,2,Upload,Upload digital PDF,Upload 04_Maple_Ridge_Prior_Auth_Guide_v2.pdf,"Received, then Reading, then Ready; 3 pages",Pass,10/14/2026,Srinath,Bug fixed: split step was not wired to uploads
+UI-008,2,Upload,Upload scanned fax PDF,Upload 05_Scanned_Prior_Auth_Fax_Oct.pdf,"Ready, or Ready (1 page needs review) on GPU profile",Pass (mock),10/14/2026,Srinath,Retest on GPU profile: page 2 should be flagged
+UI-009,2,Upload,Upload CSV,Upload 06_Accepted_Insurance_Plans_Oct.csv,"Ready, table rows created",Pass,10/14/2026,Srinath,
+UI-010,2,Upload,Duplicate upload,Upload the same active file again,Message: duplicate of an existing upload,Pass,10/14/2026,Srinath,
+UI-011,2,Upload,Re-upload after retire,"Retire a document, upload the same file again",Accepted as a new document and processed,Fail,10/14/2026,Srinath,Bug: blocked as duplicate. Fix in progress (migration 0010)
+UI-012,2,Upload,File too large,Upload a file over 50 MB,Rejected before upload with friendly message,Not run,,,
+UI-013,2,Upload,Wrong file type,Upload a .docx or .zip,Rejected with friendly message,Not run,,,
+UI-014,2,Upload,Corrupt PDF,Upload a PDF renamed from a text file,"Status Failed, no pages",Not run,,,
+UI-015,2,Status,Live status updates,Upload a file and watch without refreshing,Chip changes on its own within ~5 seconds,Pass,10/14/2026,Srinath,
+UI-016,2,Retire,Retire a document,"Click Retire, confirm",Status Retired; action greyed out,Pass,10/14/2026,Srinath,
+UI-017,2,Retire,Cancel retire,"Click Retire, then Cancel or Escape",Nothing changes,Not run,,,
+UI-018,2,Review,Open review drawer,"On a document with pages to review, click Review",Flagged pages listed with reason and page image,Not run,,,Needs GPU profile to get a real flagged page
+UI-019,2,Review,Accept a flagged page,"In drawer, Accept",Page no longer flagged; status updates,Not run,,,
+UI-020,2,Review,Exclude a flagged page,"In drawer, Exclude",Page excluded from search; status updates,Not run,,,
+UI-021,2,Review,Retry a flagged page,"In drawer, Retry",Page re-processed; message if already running,Not run,,,
+UI-022,2,Review,Keyboard only,"Use Tab, Enter, Escape through upload, table and drawer",Every action reachable; Escape closes dialogs,Not run,,,
+UI-023,2,Layout,Narrow window,Resize browser to about 768 px wide,Nothing overlaps or breaks,Not run,,,
+UI-024,3,Chat,(added when the chat screen is built),,,Not run,,,

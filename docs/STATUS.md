@@ -6,6 +6,23 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Task 2.8c**: Wire Real Ingestion Path & Migration 0009 — **COMPLETED**
+  - Completed: Migration 0009 (`0009_version_file_extension`) adding `document_versions.file_extension` (String 20) with check constraint `ck_document_versions_file_extension` enforcing NULL or exact accepted upload extensions ('pdf', 'png', 'jpeg', 'tiff', 'xlsx', 'csv', 'txt'). Tested in throwaway DB.
+  - Completed: Storage backend wired to `LOCAL_STORAGE_PATH` env var with no default; missing or non-existent folder raises `ConfigurationError`.
+  - Completed: Worker `run_split_document_job` loads original file from storage using `ver.file_extension` with zero guessing.
+  - Completed: Path A (PDF): calls `DocumentSplitterService.split_document_version` creating `Page` rows and rendered page images, updates status to `processing`, and enqueues `process_page_job`.
+  - Completed: Path B (CSV / XLSX): calls `TableIngestionService.ingest_table_file`, populates `tables_data` rows, and transitions version to `ready` directly with zero page jobs.
+  - Completed: All 4 E2E tests in `test_procrastinate_worker_e2e.py` (with zero hand-seeded pages), 30 upload validation tests, 2 migration tests, and entire backend pytest suite (231 passed, 1 skipped) passing cleanly.
+- **Task 2.8b**: Knowledge Page Web App — **COMPLETED**
+  - Completed: Saved `docs/ui/KNOWLEDGE_PAGE_SPEC.md` with Staffingly brand tokens, screens, review reasons, and accessibility rules.
+  - Completed: Audited backend route implementations in `docs/ui/API_CONTRACT_NOTES.md` with file/line citations covering auth, cookies (`session_token`, `csrf_token`), `X-CSRF-Token`, knowledge routes, error codes, port 8000, and CORS origin settings.
+  - Completed: Scaffolded `web/` with Next.js App Router, React 19, TypeScript strict, and plain CSS variables. Pinned all 14 packages to exact stable versions published on or before 2026-09-30 (>= 14 days ago).
+  - Completed: Built `styles/tokens.css`, `styles/globals.css`, `lib/api.ts` (fetch wrapper with credentials include, CSRF token injection on POST/DELETE, typed error masking hiding raw server text), `lib/reviewReasons.ts`, and `lib/statusChips.ts`.
+  - Completed: Built `TopBar.tsx` with Staffingly wordmark, gradient, and logout menu, and `/login` page with cookie-based session and accessible error states.
+  - Completed: Built `/assistants/[assistantId]/knowledge` page with `UploadArea` (drag/drop, 50MB and PDF/XLSX/CSV pre-validation), `DocumentsTable` with status chips, `ConfirmDialog` for document retirement, and 5-second polling that stops when all documents are in final states (`ready`, `failed`, `retired`) or when the tab is hidden.
+  - Completed: Built `ReviewDrawer` displaying flagged pages, page images, extracted text, per-page Accept/Exclude/Retry actions, Promote Version action, 409 job-active message, and error sanitization hiding raw server text.
+  - Completed: 32 unit tests across `smoke.test.ts`, `foundations.test.ts`, `knowledge_page.test.tsx`, and `review_drawer.test.tsx`.
+  - Completed: Full documentation in `docs/ui/BUILD_NOTES.md`.
 - **Task A2**: Per-Page Job Active Marker (`page_processing`) — **COMPLETED**
   - Completed: `JobStepStatus` typed as `Literal["queued", "processing", "running", "completed", "failed"]` in `app/ports/types.py`. Kept `"processing"` because `pipeline.py:156` (`vision`) and `splitter_service.py:72` (`split`) still write it.
   - Completed: `ACTIVE_PAGE_MARKER_STATUSES: frozenset[JobStepStatus] = frozenset({"queued", "running"})` and `CURRENT_PROCESSING_VERSION: str = "v1"` in `app/ports/types.py`.
@@ -82,3 +99,10 @@ Phase 2 cannot pass its exit gate until this list is empty:
   - Pharmacy system Gemini key migration to Vertex AI under GCP BAA.
   - Formal retention periods agreement with Dan and compliance.
   - Pilot client practice BAA execution before live data ingestion.
+
+## UI backlog
+- Assistants list route and client picker, replacing DEV_DEFAULT_ASSISTANT_ID.
+- Login redirect accepts only relative paths starting with "/" and not "//".
+- scripts/run_dev_api.py so the API starts with one command (Windows SelectorEventLoop).
+- Upload accepts png, jpeg, tiff, txt in the backend but the UI and worker only handle PDF, CSV, XLSX: decide and align.
+- Tests write to the shared dev database and never clean up: move integration tests to throwaway databases.

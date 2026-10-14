@@ -95,8 +95,8 @@ async def throwaway_step2_environment() -> AsyncIterator[dict[str, Any]]:
     app_pass = os.getenv("DB_APP_PASSWORD", "")
 
     async with isolated_throwaway_database() as throwaway_db:
-        # Upgrade throwaway DB to migration 0008
-        command.upgrade(throwaway_db.cfg, "0008_excluded_and_retired")
+        # Upgrade throwaway DB to head
+        command.upgrade(throwaway_db.cfg, "head")
 
         app_url = f"postgresql+psycopg://{app_user}:{app_pass}@{host}:{port}/{throwaway_db.db_name}"
         old_db_url = os.environ.get("DATABASE_URL")

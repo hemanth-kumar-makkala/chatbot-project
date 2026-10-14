@@ -10,10 +10,9 @@ from uuid import UUID, uuid4
 
 from app.core.ingestion.validation import validate_file
 from app.ports.audit import AuditLogger
-from app.ports.document_repository import DocumentRepository
+from app.ports.document_repository import DocumentExtension, DocumentRepository
 from app.ports.errors import (
     AuthorizationError,
-    DuplicateVersionError,
     FileValidationError,
     MalwareDetectedError,
 )
@@ -82,9 +81,11 @@ class UploadService:
             )
             raise
 
-        # 3. Deduplication Lookup within Tenant Scope
+        # 3. Deduplication Lookup within Tenant Scope (serialized via advisory lock)
+        await self.document_repo.acquire_upload_lock(tenant.tenant_id, validated.sha256)
+
         existing_version = await self.document_repo.find_version_by_sha(
-            tenant.tenant_id, validated.sha256
+            tenant.tenant_id, validated.sha256, active_only=True
         )
 
         if self.after_duplicate_lookup_hook is not None:
@@ -125,11 +126,30 @@ class UploadService:
 
         # 5. Database Persistence
         try:
+            file_ext: DocumentExtension
+            if validated.extension == "pdf":
+                file_ext = "pdf"
+            elif validated.extension == "png":
+                file_ext = "png"
+            elif validated.extension == "jpeg":
+                file_ext = "jpeg"
+            elif validated.extension == "tiff":
+                file_ext = "tiff"
+            elif validated.extension == "xlsx":
+                file_ext = "xlsx"
+            elif validated.extension == "csv":
+                file_ext = "csv"
+            elif validated.extension == "txt":
+                file_ext = "txt"
+            else:
+                raise FileValidationError(f"Unsupported file extension: {validated.extension}")
+
             doc, ver = await self.document_repo.create_document_with_version(
                 tenant_id=tenant.tenant_id,
                 title=payload.filename,
                 sha256=validated.sha256,
                 uploaded_by=tenant.user_id,
+                file_extension=file_ext,
                 status="received",
                 document_id=payload.document_id,
                 version_id=version_id,
@@ -151,26 +171,6 @@ class UploadService:
                 is_duplicate=False,
             )
 
-        except DuplicateVersionError as exc:
-            # Concurrency race lost: clean up storage file
-            # Document and version were already rolled back by repository savepoint
-            await self.storage.delete(storage_key)
-            winner = exc.existing_version
-            winner_doc = await self.document_repo.get_document(tenant.tenant_id, winner.document_id)
-            await self.audit_logger.record(
-                tenant_ctx=tenant,
-                action="document_upload_duplicate",
-                event_type="INGESTION",
-                resource_id=str(winner.id),
-            )
-            return UploadResult(
-                document_id=winner.document_id,
-                document_version_id=winner.id,
-                sha256=validated.sha256,
-                title=winner_doc.title if winner_doc else "",
-                is_duplicate=True,
-                existing_document_id=winner.document_id,
-            )
         except Exception:
             # Failed insert, audit write, or not found: clean up storage file and re-raise
             await self.storage.delete(storage_key)

@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from procrastinate import App, JobContext, PsycopgConnector
 from procrastinate.retry import RetryStrategy
-from sqlalchemy import text, update
+from sqlalchemy import select, text
 
 from app.core.ingestion.pipeline import is_retryable_error
 from app.db.env_utils import load_dotenv
@@ -26,9 +26,23 @@ from app.db.models import DocumentVersion
 from app.db.session import unscoped_session, worker_tenant_session
 from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.ports.document_repository import DocumentRepository
-from app.ports.errors import MalformedTaskArgsError, TransientIngestionError
+from app.ports.errors import (
+    ConfigurationError,
+    DocumentVersionNotFoundError,
+    MalformedTaskArgsError,
+    TransientIngestionError,
+)
 from app.ports.types import WorkerContext
 from app.wiring import create_document_repository
+
+
+def _get_worker_profile() -> str:
+    """Retrieve APP_PROFILE environment variable. Required with no fallback default."""
+    profile = os.environ.get("APP_PROFILE")
+    if not profile or not profile.strip():
+        raise ConfigurationError("APP_PROFILE environment variable is not set")
+    return profile.strip()
+
 
 # Mandatory: enforce LangSmith tracing disabled at module import / worker startup
 enforce_langsmith_tracing_disabled()
@@ -84,17 +98,90 @@ async def run_split_document_job(
     import uuid
 
     from app.db.session import worker_tenant_session
-    from app.ports.types import WorkerContext
-    from app.wiring import create_document_repository
+    from app.ports.types import StorageKey, TenantContext, UserRole, WorkerContext
+    from app.wiring import (
+        create_document_repository,
+        create_document_splitter_service,
+        create_storage_backend,
+        create_table_ingestion_service,
+    )
 
     v_id = UUID(document_version_id)
     worker_ctx = WorkerContext(tenant_id=tenant_id, job_id=str(uuid.uuid4()))
     try:
         async with worker_tenant_session(worker_ctx) as session:
+            stmt = select(DocumentVersion).where(
+                DocumentVersion.tenant_id == UUID(tenant_id),
+                DocumentVersion.id == v_id,
+            )
+            ver = (await session.execute(stmt)).scalars().first()
+            if ver is None:
+                raise DocumentVersionNotFoundError(
+                    f"Document version {v_id} not found in tenant {tenant_id}"
+                )
+
             repo = create_document_repository(session)
+
+            # Rule: a version with file_extension NULL goes to "failed" with fixed error code
+            if ver.file_extension is None:
+                await repo.update_version_status(
+                    tenant_id=tenant_id,
+                    version_id=v_id,
+                    status="failed",
+                )
+                await repo.record_job_step(
+                    tenant_id=tenant_id,
+                    version_id=v_id,
+                    page_number=None,
+                    step="split",
+                    status="failed",
+                )
+                return
+
+            # Construct storage key using document_versions.file_extension with no guessing
+            storage_key = StorageKey(
+                tenant_id=UUID(tenant_id),
+                path=f"documents/{v_id}/original.{ver.file_extension}",
+            )
+            profile = _get_worker_profile()
+            storage = create_storage_backend(profile=profile)
+            file_bytes = await storage.get(storage_key)
+
             await repo.ensure_ingestion_job(
                 tenant_id=tenant_id,
                 version_id=v_id,
+            )
+
+            # Path B (CSV / XLSX): TableIngestionService then "ready" (no page jobs)
+            if ver.file_extension in ("csv", "xlsx"):
+                table_svc = create_table_ingestion_service(session)
+                await table_svc.ingest_table_file(
+                    tenant_id=UUID(tenant_id),
+                    document_version_id=v_id,
+                    file=file_bytes,
+                    extension=ver.file_extension,
+                    job_id=UUID(worker_ctx.job_id),
+                )
+                return
+
+            # Path A (PDF): DocumentSplitterService then status "processing" then page jobs
+            tenant_ctx = TenantContext(
+                tenant_id=tenant_id,
+                user_id=str(ver.uploaded_by),
+                role=UserRole.CLIENT_ADMIN,
+                session_id=str(uuid.uuid4()),
+            )
+            splitter_svc = create_document_splitter_service(session, profile=profile)
+            await splitter_svc.split_document_version(
+                ctx=tenant_ctx,
+                version_id=v_id,
+                file_bytes=file_bytes,
+                filename=f"original.{ver.file_extension}",
+            )
+            await repo.update_version_status(
+                tenant_id=tenant_id,
+                version_id=v_id,
+                status="processing",
             )
             await enqueue_uncompleted_page_jobs(
                 tenant_id=tenant_id,
@@ -102,6 +189,8 @@ async def run_split_document_job(
                 repository=repo,
                 session=session,
             )
+    except DocumentVersionNotFoundError:
+        raise
     except Exception as exc:
         if is_retryable_error(exc):
             orig = getattr(exc, "orig", exc)
@@ -125,13 +214,10 @@ async def run_split_document_job(
         # Permanent failure or final retry exhausted: version must transition to 'failed'
         async with worker_tenant_session(worker_ctx) as session:
             repo = create_document_repository(session)
-            await session.execute(
-                update(DocumentVersion)
-                .where(
-                    DocumentVersion.tenant_id == UUID(tenant_id),
-                    DocumentVersion.id == v_id,
-                )
-                .values(status="failed")
+            await repo.update_version_status(
+                tenant_id=tenant_id,
+                version_id=v_id,
+                status="failed",
             )
             await repo.record_job_step(
                 tenant_id=tenant_id,
@@ -179,7 +265,7 @@ async def run_page_job(
     )
 
     v_id = UUID(document_version_id)
-    profile = os.getenv("APP_PROFILE", "mock")
+    profile = _get_worker_profile()
     worker_ctx = WorkerContext(tenant_id=tenant_id, job_id=str(uuid.uuid4()))
 
     # Transaction 0: Set marker to "running" before page work, only if page is uncompleted

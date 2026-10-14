@@ -53,10 +53,7 @@ async def seeded_tenant_and_user() -> tuple[UUID, UUID]:
     return tenant_id, user_id
 
 
-@pytest.fixture(autouse=True)
-async def cleanup_procrastinate_page_jobs() -> AsyncIterator[None]:
-    """Clean up procrastinate page job rows after each test."""
-    yield
+async def _clean_page_jobs() -> None:
     async with unscoped_session() as session:
         await session.execute(text("SET LOCAL search_path TO public, procrastinate"))
         delete_events_stmt = text(
@@ -71,6 +68,16 @@ async def cleanup_procrastinate_page_jobs() -> AsyncIterator[None]:
             "WHERE task_name = 'app.worker.process_page_job'"
         )
         await session.execute(delete_jobs_stmt)
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_procrastinate_page_jobs() -> AsyncIterator[None]:
+    """Clean up procrastinate page job rows before and after each test."""
+    await _clean_page_jobs()
+    try:
+        yield
+    finally:
+        await _clean_page_jobs()
 
 
 async def _seed_procrastinate_job_and_event(

@@ -6,7 +6,7 @@ Enforces tenant scoping on all operations.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.ports.types import (
@@ -21,15 +21,28 @@ from app.ports.types import (
     ReviewReason,
 )
 
+DocumentExtension = Literal["pdf", "png", "jpeg", "tiff", "xlsx", "csv", "txt"]
+
 
 class DocumentRepository(ABC):
     """Abstract port for document and version persistence."""
+
+    @abstractmethod
+    async def acquire_upload_lock(
+        self,
+        tenant_id: str,
+        sha256: str,
+    ) -> None:
+        """Acquire a transaction-scoped advisory lock for the given (tenant_id, sha256)."""
+        ...
 
     @abstractmethod
     async def find_version_by_sha(
         self,
         tenant_id: str,
         sha256: str,
+        *,
+        active_only: bool = True,
     ) -> DocumentVersionRecord | None:
         """Find an existing document version by sha256 within the tenant."""
         ...
@@ -60,6 +73,7 @@ class DocumentRepository(ABC):
         document_id: UUID,
         sha256: str,
         uploaded_by: str,
+        file_extension: DocumentExtension,
         status: str = "received",
         version_id: UUID | None = None,
     ) -> DocumentVersionRecord:
@@ -73,6 +87,7 @@ class DocumentRepository(ABC):
         title: str,
         sha256: str,
         uploaded_by: str,
+        file_extension: DocumentExtension,
         status: str = "received",
         document_id: UUID | None = None,
         version_id: UUID | None = None,

@@ -36,6 +36,7 @@ async def seed_version(
     ver_id: UUID | None = None,
     sha256: str | None = None,
     status: str = "ready",
+    file_extension: str | None = None,
 ) -> UUID:
     """Helper to insert a document_version row."""
     ver_id = ver_id or uuid4()
@@ -44,9 +45,9 @@ async def seed_version(
         text(
             """
             INSERT INTO document_versions (
-                id, tenant_id, document_id, sha256, uploaded_by, status
+                id, tenant_id, document_id, sha256, uploaded_by, status, file_extension
             )
-            VALUES (:id, :tid, :doc_id, :sha, :uid, :status);
+            VALUES (:id, :tid, :doc_id, :sha, :uid, :status, :ext);
             """
         ),
         {
@@ -56,6 +57,7 @@ async def seed_version(
             "sha": actual_sha,
             "uid": UUID(str(user_id)),
             "status": status,
+            "ext": file_extension,
         },
     )
     return ver_id

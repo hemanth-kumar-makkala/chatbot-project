@@ -10,7 +10,7 @@ Enforces:
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -305,6 +305,9 @@ class Document(Base):
     )
 
 
+DocumentExtension = Literal["pdf", "png", "jpeg", "tiff", "xlsx", "csv", "txt"]
+
+
 class DocumentVersion(Base):
     """Immutable version of an ingested document."""
 
@@ -314,7 +317,7 @@ class DocumentVersion(Base):
         UniqueConstraint(
             "tenant_id", "document_id", "id", name="uq_document_versions_tenant_doc_id"
         ),
-        UniqueConstraint("tenant_id", "sha256", name="uq_document_versions_tenant_sha256"),
+        Index("ix_document_versions_tenant_sha256", "tenant_id", "sha256"),
         ForeignKeyConstraint(
             ["tenant_id", "document_id"],
             ["documents.tenant_id", "documents.id"],
@@ -324,6 +327,11 @@ class DocumentVersion(Base):
         CheckConstraint(
             "status IN ('received', 'processing', 'needs_review', 'ready', 'retired', 'failed')",
             name="ck_document_versions_status",
+        ),
+        CheckConstraint(
+            "file_extension IS NULL OR file_extension IN "
+            "('pdf', 'png', 'jpeg', 'tiff', 'xlsx', 'csv', 'txt')",
+            name="ck_document_versions_file_extension",
         ),
     )
 
@@ -335,6 +343,7 @@ class DocumentVersion(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False)
+    file_extension: Mapped[DocumentExtension | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

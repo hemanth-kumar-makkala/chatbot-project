@@ -1204,3 +1204,142 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run pytest tests/integration/test_pipeline_idempotency.py` -> 8 passed.
   - `uv run pytest tests/integration/test_api_knowledge_step3.py -k retry` -> 13 passed.
   - `uv run pre-commit run --files ...` -> clean pass across all modified files.
+
+---
+
+### [2026-10-14] TASK 2.8b: Knowledge Page Web App
+
+- **Task ID**: TASK 2.8b
+- **What Was Built**:
+  - **Spec & API Contracts** (`docs/ui/KNOWLEDGE_PAGE_SPEC.md`, `docs/ui/API_CONTRACT_NOTES.md`):
+    - Recorded exact UI spec with brand tokens, WCAG AA requirements, Barlow font stack, and screens.
+    - Audited backend FastAPI routes with quoted lines: auth endpoints, cookies (`session_token`, `csrf_token`), `X-CSRF-Token`, knowledge upload/status/review/action routes, and port 8000.
+    - Noted backend gap: no endpoint exists to list assistants or retrieve assistant name.
+  - **Scaffolding** (`web/`):
+    - Configured Next.js App Router, React 19, TypeScript strict, and Vitest + RTL + jsdom.
+    - Pinned all 14 packages to exact stable versions published on or before 2026-09-30 (>= 14 days ago).
+    - Configured `next.config.mjs` with rewrite from `/v1/:path*` to `${API_ORIGIN}/v1/:path*` enforcing `API_ORIGIN` env variable.
+  - **Foundations & Auth** (`web/styles/`, `web/lib/`, `web/app/login/`):
+    - `styles/tokens.css` with all brand CSS variables (#0037B2, #F5AF37, #A941C6 gradient, #293682, #5F3DBF, #D8C7FA, #C2DCFF, #BD7800, #FFF8F2, #F8F2FF, Barlow font stack).
+    - `styles/globals.css` with WCAG AA focus rings, accessible focus trap support, and responsive 1280px container.
+    - `lib/api.ts` fetch wrapper with `credentials: "include"`, automatic `X-CSRF-Token` injection on POST/PUT/PATCH/DELETE, typed response models, and error masking to `{ ok: false, status, code }` that hides raw server text.
+    - `lib/reviewReasons.ts` mapping 7 review reasons with fallback to "Needs review" and code-only console warning.
+    - `lib/statusChips.ts` mapping status values to chip labels and variants.
+    - `app/login/page.tsx` with cookie-based session (no tokens in localStorage/sessionStorage) and accessible error alerts.
+    - `components/TopBar.tsx` with Staffingly wordmark, gradient, and logout menu.
+  - **Knowledge Page** (`web/app/assistants/[assistantId]/knowledge/`):
+    - `components/StatusChip.tsx` with WCAG compliant colors.
+    - `components/ConfirmDialog.tsx` with focus trap and Escape handler.
+    - `components/UploadArea.tsx` with drag-and-drop / file browser, 50MB and PDF/XLSX/CSV client-side validation, duplicate detection, and friendly feedback.
+    - `components/DocumentsTable.tsx` rendering Title, Version, Status Chip, Uploaded Date, Review action, and Retire action with confirm dialog.
+    - Route `page.tsx` with 5-second polling that stops when all documents are final (`ready`, `failed`, `retired`) or when tab is hidden.
+  - **Review Drawer** (`web/components/ReviewDrawer.tsx`):
+    - Flagged pages list, page visual image proxy, reading text.
+    - Actions per page: Accept, Exclude, Retry.
+    - Version action: Promote Version.
+    - 409 conflict handling: displays "This page is being processed. Try again in a moment."
+    - Error handling: friendly message plus code (never raw server text).
+    - Keyboard accessibility: focus trap and Escape key listener.
+  - **Documentation** (`docs/ui/BUILD_NOTES.md`):
+    - Detailed breakdown per step, package version table with publish dates, local run instructions, and backend gaps.
+- **Verification**:
+  - `npm run typecheck` -> clean pass (0 errors).
+  - `npm test` -> 32 tests passing across 4 files (`smoke.test.ts`, `foundations.test.ts`, `knowledge_page.test.tsx`, `review_drawer.test.tsx`).
+  - `npm run build` -> clean Next.js production build with Turbopack.
+
+---
+
+### [2026-10-14] TASK 2.8b Hotfix: Assistant ID Alignment & Legacy URL Redirect
+
+- **Issue**:
+  - The seeded Assistant ID for Clinic A is `00000000-0000-0000-0002-000000000001` (4th segment `0002`), while early documentation and UI links used `00000000-0000-0002-0000-000000000001` (3rd segment `0002`). This caused 404 Not Found responses from the backend when browsing or uploading from the old URL.
+- **What Was Built**:
+  - Centralized default assistant ID as `DEV_DEFAULT_ASSISTANT_ID = "00000000-0000-0000-0002-000000000001"` in `web/lib/devDefaults.ts`.
+  - Configured Next.js HTTP 307 redirect from `/assistants/00000000-0000-0002-0000-000000000001/knowledge` to `/assistants/00000000-0000-0000-0002-000000000001/knowledge`.
+  - Added URL normalization in `web/lib/api.ts` (`apiFetch` and `getPageImageUrl`) to transparently map any requests containing the legacy typo ID to `DEV_DEFAULT_ASSISTANT_ID`, preventing 404s even if a stale client tab or component has the old ID.
+  - Added client-side `router.replace` in `web/app/assistants/[assistantId]/knowledge/page.tsx` to cleanly rewrite the browser address bar.
+  - Corrected local run URLs and assistant IDs in `docs/ui/BUILD_NOTES.md`.
+- **Verification**:
+  - `npm run typecheck` in `web/` -> clean pass (0 errors).
+  - `npm test` in `web/` -> 32 passed.
+  - Live HTTP validation: `GET /assistants/00000000-0000-0002-0000-000000000001/knowledge` returns 307 redirect; `GET /assistants/00000000-0000-0000-0002-000000000001/knowledge` returns 200 OK.
+  - `uv run pre-commit run --files ...` -> clean pass.
+
+---
+
+### [2026-10-14] TASK 2.8b Hotfix: Backend Response Normalization (DocumentsTable.map)
+
+- **Issue**:
+  - `TypeError: documents.map is not a function` occurred in `DocumentsTable.tsx` because the backend `GET /v1/assistants/{id}/knowledge/documents` returns an object envelope `{"documents": [...]}` containing domain records with nested version histories (`DocumentStatusInfo` / `VersionStatusInfo`), while the frontend expected a flat array of `DocumentItem`.
+- **What Was Built**:
+  - Added `normalizeDocumentItem` and updated `getDocuments` in `web/lib/api.ts` to unwrap `{"documents": [...]}` envelopes and derive flat `DocumentItem` records (`current_version`, `status`, `latest_version_id`, `flagged_pages_count`, `uploaded_at`).
+  - Added normalization in `uploadDocument` (`is_duplicate` / `document_version_id`) and `getReviewData` (`flagged_pages` and extracted `readings` text).
+  - Defensive array guards added across `DocumentsTable.tsx` and `KnowledgePage` (`Array.isArray(documents) ? documents : []`) preventing crashes on malformed data.
+  - Added 3 unit tests in `web/__tests__/foundations.test.ts` verifying `{ documents: [...] }` unwrapping, empty response handling, and flat record preservation.
+- **Verification**:
+
+---
+
+### [2026-10-14] TASK 2.8c: Wire Real Ingestion Path & Migration 0009
+
+- **Task ID**: TASK 2.8c
+- **What Was Built**:
+  - **Migration 0009** (`0009_version_file_extension.py`):
+    - Added `document_versions.file_extension` `String(20)` nullable column.
+    - Added `ck_document_versions_file_extension` CHECK constraint allowing `NULL` or exact accepted upload validation extensions (`'pdf', 'png', 'jpeg', 'tiff', 'xlsx', 'csv', 'txt'`).
+    - Tested upgrade/downgrade lifecycle, NULL allowance, and invalid extension rejection in throwaway database.
+  - **Model & Port Updates**:
+    - `app/db/models.py`: `DocumentExtension` Literal type and `file_extension: Mapped[DocumentExtension | None]` with CHECK constraint.
+    - `app/ports/document_repository.py` & `app/adapters/db/postgres_document_repository.py`: `file_extension` made a required parameter on `create_version` and `create_document_with_version`.
+    - `app/core/ingestion/upload.py`: `UploadService.upload_document` maps validated extension to `DocumentExtension` and sets `file_extension` on version creation.
+  - **Storage & Wiring Updates**:
+    - `app/wiring.py`: `create_storage_backend` wired to `LOCAL_STORAGE_PATH` environment variable with no default; missing or non-existent folder raises `ConfigurationError`.
+    - Added `create_document_splitter` and `create_document_splitter_service` in `wiring.py`.
+    - `app/core/ingestion/table_service.py`: Added `ingest_table_file` to `TableIngestionService`.
+  - **Worker Ingestion Wiring**:
+    - `app/worker.py`: `run_split_document_job` loads the original uploaded file from storage using `ver.file_extension` with zero guessing.
+    - Path A (PDF / paged): calls `DocumentSplitterService.split_document_version` generating `Page` rows and rendered images, marks version `processing`, and enqueues `process_page_job` per page.
+    - Path B (CSV / XLSX): calls `TableIngestionService.ingest_table_file`, inserts structured rows into `tables_data`, and transitions version to `ready` directly with zero page jobs.
+    - Path C (Corrupt / unparseable file): catches errors, marks version `failed`, and enqueues zero page jobs.
+    - Version with `file_extension` `NULL` immediately transitions to `failed` and enqueues zero page jobs.
+  - **Tests**:
+    - Verified `test_procrastinate_worker_e2e.py` failing first before worker wiring.
+    - 4 E2E tests in `test_procrastinate_worker_e2e.py` with zero hand-seeded pages: PDF end-to-end activation, CSV spreadsheet ingestion to `tables_data`, NULL extension failure, and corrupt file failure.
+    - Unit tests in `test_upload_validation.py` asserting `LOCAL_STORAGE_PATH_MISSING` and `LOCAL_STORAGE_PATH_NOT_FOUND`.
+    - Updated throwaway DB upgrade target from `0008_excluded_and_retired` to `head` in `test_api_knowledge_step2.py` and `test_api_knowledge_step3.py`.
+    - Isolated storage path via `tmp_path` in `test_api_knowledge_endpoints.py` and added pre-test cleanup in `test_worker_failed_page_job_sweep.py`.
+- **Verification**:
+  - `uv run pytest tests/integration/test_procrastinate_worker_e2e.py tests/unit/test_upload_validation.py -v` -> 34 passed in 4.41s.
+  - `uv run pytest tests/integration/test_migration_0009.py -v` -> 2 passed.
+  - `uv run pytest tests --tb=line -q` -> 100% passed (231 passed, 1 skipped).
+  - `npm test` in `web/` -> 35 passed.
+  - `uv run pre-commit run --files ...` -> clean pass on all modified files.
+
+---
+
+### [2026-10-15] TASK: Deduplication Rules on Retire/Failure, Advisory Lock & Worker Cleanups
+
+- **What Was Built**:
+  - **Migration 0010** (`0010_allow_reupload_after_retire_or_failure.py` / revision `0010_reupload_after_retire`):
+    - Dropped `uq_document_versions_tenant_sha256` constraint from `document_versions`.
+    - Added non-unique index `ix_document_versions_tenant_sha256` on `(tenant_id, sha256)`.
+    - Downgrade checks for duplicate `(tenant_id, sha256)` rows and blocks downgrade with a fixed error message if any exist; otherwise drops index and restores unique constraint.
+    - Verified lifecycle in `test_migration_0010.py` on an isolated throwaway database.
+  - **Deduplication Rules & Advisory Lock**:
+    - Serialized uploads per `(tenant, sha256)` using transaction-scoped `SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))` on `:lock_key = f"{tenant_id}:{sha256}"`.
+    - Updated `find_version_by_sha` in `DocumentRepository` port and `PostgresDocumentRepository` with `active_only=True` filter: an upload is a duplicate only if the same tenant already has a version with the same sha256 whose document is NOT retired (`doc.is_retired.is_(False)`) and whose version status is NOT `'failed'`.
+    - Removed `IntegrityError -> DuplicateVersionError` in repository and matching handling in `UploadService`; `DuplicateVersionError` retained in `app/ports/errors.py` as an unused exception.
+    - Verified 5 integration tests in `tests/integration/test_upload_dedup_rules.py` on a throwaway database (failing first, then passing).
+  - **Part B Cleanups**:
+    - Removed default profile `os.getenv("APP_PROFILE", "mock")` in `worker.py` and `profile="mock"` in `create_document_splitter_service`. Missing `APP_PROFILE` raises `ConfigurationError("APP_PROFILE environment variable is not set")`.
+    - `create_document_splitter` and `create_document_splitter_service` in `wiring.py` return their real types (`DocumentSplitter` and `DocumentSplitterService`).
+    - `run_split_document_job`: missing version raises typed `DocumentVersionNotFoundError(f"Document version {v_id} not found in tenant {tenant_id}")`, never a silent return.
+    - `ingest_table_file` in `TableIngestionService`: explicit dictionary map `table_mime_map = {"csv": ..., "xlsx": ...}`; any other extension raises `FileValidationError(f"Unsupported table file extension: {clean_ext}")`.
+    - `run_split_document_job` uses repository `update_version_status`, removing all raw `update(DocumentVersion)`.
+    - Added 5 unit tests in `tests/unit/test_worker_and_table_cleanup.py`.
+  - **Part D Backlog**:
+    - Added `## UI backlog` section to `docs/STATUS.md`.
+- **Verification**:
+  - `uv run pytest tests/integration/test_migration_0010.py -v` -> 1 passed in 0.55s.
+  - `uv run pytest tests/integration/test_upload_dedup_rules.py -v` -> 5 passed in 2.10s.
+  - `uv run pytest tests/unit/test_worker_and_table_cleanup.py -v` -> 5 passed in 0.58s.

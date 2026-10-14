@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.ports.document_repository import DocumentRepository
+from app.ports.errors import FileValidationError
 from app.ports.table_extractor import TableExtractor
 
 BATCH_SIZE: int = 1000
@@ -96,3 +97,29 @@ class TableIngestionService:
             "sheets_count": len(result.sheets),
             "skipped_hidden_sheets_count": result.skipped_hidden_sheets_count,
         }
+
+    async def ingest_table_file(
+        self,
+        tenant_id: UUID,
+        document_version_id: UUID,
+        file: bytes,
+        extension: str,
+        job_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Ingest spreadsheet or CSV file based on file extension into tables_data."""
+        clean_ext = extension.lower().strip().lstrip(".")
+        table_mime_map: dict[str, str] = {
+            "csv": "text/csv",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+        if clean_ext not in table_mime_map:
+            raise FileValidationError(f"Unsupported table file extension: {clean_ext}")
+        mime_type = table_mime_map[clean_ext]
+        return await self.ingest_spreadsheet(
+            tenant_id=tenant_id,
+            document_version_id=document_version_id,
+            file=file,
+            filename=f"original.{clean_ext}",
+            mime_type=mime_type,
+            job_id=job_id,
+        )

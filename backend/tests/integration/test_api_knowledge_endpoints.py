@@ -20,6 +20,7 @@ Verifies:
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -52,7 +53,7 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def api_settings() -> ApiSettings:
+def api_settings(tmp_path: Path) -> ApiSettings:
     return ApiSettings(
         cors_origins=["http://localhost:3000"],
         cookie_secure=False,
@@ -62,7 +63,7 @@ def api_settings() -> ApiSettings:
         allow_bearer_auth=False,
         max_upload_bytes=5 * 1024 * 1024,  # 5 MB for tests
         profile="mock",
-        storage_dir="storage",
+        storage_dir=str(tmp_path),
     )
 
 

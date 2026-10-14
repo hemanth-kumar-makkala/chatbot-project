@@ -3,9 +3,8 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -19,11 +18,10 @@ from app.db.models import (
     PageReading,
     TableData,
 )
-from app.ports.document_repository import DocumentRepository
+from app.ports.document_repository import DocumentExtension, DocumentRepository
 from app.ports.errors import (
     DocumentNotFoundError,
     DocumentRetiredError,
-    DuplicateVersionError,
     InvalidPageStateError,
     InvalidVersionStateError,
     NoUsableReadingError,
@@ -56,16 +54,53 @@ class PostgresDocumentRepository(DocumentRepository):
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def acquire_upload_lock(
+        self,
+        tenant_id: str,
+        sha256: str,
+    ) -> None:
+        """Acquire transaction-scoped Postgres advisory lock on (tenant_id, sha256)."""
+        lock_key = f"{tenant_id}:{sha256}"
+        stmt = text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))")
+        await self.session.execute(stmt, {"lock_key": lock_key})
+
     async def find_version_by_sha(
         self,
         tenant_id: str,
         sha256: str,
+        *,
+        active_only: bool = True,
     ) -> DocumentVersionRecord | None:
-        """Find an existing document version by sha256 within the tenant."""
-        stmt = select(DocumentVersion).where(
-            DocumentVersion.tenant_id == UUID(str(tenant_id)),
-            DocumentVersion.sha256 == sha256,
-        )
+        """Find an existing document version by sha256 within the tenant.
+
+        If active_only=True (default), matches only versions whose document is NOT retired
+        and whose version status is NOT 'failed'.
+        """
+        if active_only:
+            stmt = (
+                select(DocumentVersion)
+                .join(
+                    Document,
+                    (Document.id == DocumentVersion.document_id)
+                    & (Document.tenant_id == DocumentVersion.tenant_id),
+                )
+                .where(
+                    DocumentVersion.tenant_id == UUID(str(tenant_id)),
+                    DocumentVersion.sha256 == sha256,
+                    Document.is_retired.is_(False),
+                    DocumentVersion.status != "failed",
+                )
+                .order_by(DocumentVersion.created_at.desc())
+            )
+        else:
+            stmt = (
+                select(DocumentVersion)
+                .where(
+                    DocumentVersion.tenant_id == UUID(str(tenant_id)),
+                    DocumentVersion.sha256 == sha256,
+                )
+                .order_by(DocumentVersion.created_at.desc())
+            )
         res = await self.session.execute(stmt)
         row = res.scalars().first()
         if row is None:
@@ -137,6 +172,7 @@ class PostgresDocumentRepository(DocumentRepository):
         document_id: UUID,
         sha256: str,
         uploaded_by: str,
+        file_extension: DocumentExtension,
         status: str = "received",
         version_id: UUID | None = None,
     ) -> DocumentVersionRecord:
@@ -150,17 +186,12 @@ class PostgresDocumentRepository(DocumentRepository):
             sha256=sha256,
             uploaded_by=UUID(str(uploaded_by)),
             status=status,
+            file_extension=file_extension,
             created_at=now,
         )
-        try:
-            async with self.session.begin_nested():
-                self.session.add(ver)
-                await self.session.flush()
-        except IntegrityError as exc:
-            existing = await self.find_version_by_sha(tenant_id, sha256)
-            if existing is not None:
-                raise DuplicateVersionError(existing_version=existing) from exc
-            raise
+        async with self.session.begin_nested():
+            self.session.add(ver)
+            await self.session.flush()
 
         return DocumentVersionRecord(
             id=ver.id,
@@ -195,6 +226,7 @@ class PostgresDocumentRepository(DocumentRepository):
         title: str,
         sha256: str,
         uploaded_by: str,
+        file_extension: DocumentExtension,
         status: str = "received",
         document_id: UUID | None = None,
         version_id: UUID | None = None,
@@ -203,53 +235,46 @@ class PostgresDocumentRepository(DocumentRepository):
 
         Raises:
             DocumentNotFoundError: If document_id is supplied but not found in the tenant.
-            DuplicateVersionError: If version sha256 already exists in the tenant.
         """
         ver_id = version_id or uuid4()
         now = datetime.now(UTC)
 
-        try:
-            async with self.session.begin_nested():
-                if document_id is not None:
-                    stmt = select(Document).where(
-                        Document.tenant_id == UUID(str(tenant_id)),
-                        Document.id == document_id,
-                    )
-                    res = await self.session.execute(stmt)
-                    doc = res.scalars().first()
-                    if doc is None:
-                        raise DocumentNotFoundError(
-                            f"Document {document_id} not found in tenant {tenant_id}"
-                        )
-                else:
-                    doc = Document(
-                        id=uuid4(),
-                        tenant_id=UUID(str(tenant_id)),
-                        title=title,
-                        active_version_id=None,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    self.session.add(doc)
-                    await self.session.flush()
-
-                ver = DocumentVersion(
-                    id=ver_id,
-                    tenant_id=UUID(str(tenant_id)),
-                    document_id=doc.id,
-                    sha256=sha256,
-                    uploaded_by=UUID(str(uploaded_by)),
-                    status=status,
-                    created_at=now,
+        async with self.session.begin_nested():
+            if document_id is not None:
+                stmt = select(Document).where(
+                    Document.tenant_id == UUID(str(tenant_id)),
+                    Document.id == document_id,
                 )
-                self.session.add(ver)
+                res = await self.session.execute(stmt)
+                doc = res.scalars().first()
+                if doc is None:
+                    raise DocumentNotFoundError(
+                        f"Document {document_id} not found in tenant {tenant_id}"
+                    )
+            else:
+                doc = Document(
+                    id=uuid4(),
+                    tenant_id=UUID(str(tenant_id)),
+                    title=title,
+                    active_version_id=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(doc)
                 await self.session.flush()
 
-        except IntegrityError as exc:
-            existing = await self.find_version_by_sha(tenant_id, sha256)
-            if existing is not None:
-                raise DuplicateVersionError(existing_version=existing) from exc
-            raise
+            ver = DocumentVersion(
+                id=ver_id,
+                tenant_id=UUID(str(tenant_id)),
+                document_id=doc.id,
+                sha256=sha256,
+                uploaded_by=UUID(str(uploaded_by)),
+                status=status,
+                file_extension=file_extension,
+                created_at=now,
+            )
+            self.session.add(ver)
+            await self.session.flush()
 
         return DocumentRecord(
             id=doc.id,

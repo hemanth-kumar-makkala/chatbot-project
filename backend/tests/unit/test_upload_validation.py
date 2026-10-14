@@ -289,7 +289,10 @@ def test_malware_wiring_guard_profile_allowlist() -> None:
         create_malware_scanner("some-unknown-profile")
 
 
-def test_storage_backend_wiring_guard_profile_allowlist() -> None:
+def test_storage_backend_wiring_guard_profile_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LOCAL_STORAGE_PATH", str(tmp_path))
     # Synthetic local profiles succeed
     for profile in ["mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"]:
         storage = create_storage_backend(profile)
@@ -304,6 +307,25 @@ def test_storage_backend_wiring_guard_profile_allowlist() -> None:
 
     with pytest.raises(ConfigurationError):
         create_storage_backend("some-unknown-profile")
+
+
+def test_storage_backend_missing_local_storage_path_raises_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOCAL_STORAGE_PATH", raising=False)
+    with pytest.raises(ConfigurationError) as exc_info:
+        create_storage_backend("mock")
+    assert exc_info.value.error_code == "LOCAL_STORAGE_PATH_MISSING"
+
+
+def test_storage_backend_nonexistent_local_storage_path_raises_configuration_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    non_existent = tmp_path / "does_not_exist_dir"
+    monkeypatch.setenv("LOCAL_STORAGE_PATH", str(non_existent))
+    with pytest.raises(ConfigurationError) as exc_info:
+        create_storage_backend("mock")
+    assert exc_info.value.error_code == "LOCAL_STORAGE_PATH_NOT_FOUND"
 
 
 def test_document_parser_wiring_guard_profile_matrix(

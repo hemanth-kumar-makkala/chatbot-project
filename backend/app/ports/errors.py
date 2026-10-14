@@ -298,6 +298,24 @@ class DocumentNotFoundError(PortError):
         )
 
 
+class DocumentVersionNotFoundError(PortError):
+    """Raised when an operation targets a document_version_id that does not exist in tenant."""
+
+    def __init__(
+        self,
+        message: str = "Document version not found",
+        error_code: str = "DOCUMENT_VERSION_NOT_FOUND",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=404,
+            retryable=False,
+            details=details,
+        )
+
+
 class DocumentRetiredError(PortError):
     """Raised when an operation targets or attempts to activate a retired document."""
 

@@ -92,3 +92,14 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+testfiles/
+
+
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+testfiles/
+
+web/.npmrc

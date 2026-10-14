@@ -9,6 +9,7 @@ with specified ports and checkpointer without monkeypatching or test-only overri
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -21,11 +22,13 @@ from app.core.graph import (
     GraphState,
     build_knowledge_graph,
 )
+from app.core.ingestion.splitter_service import DocumentSplitterService
 from app.core.ingestion.upload import UploadService
 from app.ports.audit import AuditLogger
 from app.ports.chunker import Chunker
 from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
+from app.ports.document_splitter import DocumentSplitter
 from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.image_processor import ImageProcessor
 from app.ports.malware_scanner import MalwareScanner
@@ -194,28 +197,54 @@ def create_document_repository(session: AsyncSession) -> DocumentRepository:
     return PostgresDocumentRepository(session)
 
 
-def create_storage_backend(profile: str, base_dir: str = "storage") -> StorageBackend:
+def create_storage_backend(
+    profile: str,
+    base_dir: str | Path | None = None,
+) -> StorageBackend:
     """Instantiate LocalStorageBackend adapter for local synthetic profiles only.
 
+    The local storage folder comes from LOCAL_STORAGE_PATH env var if base_dir is None.
+    Missing or non-existent folder raises ConfigurationError on startup.
     cloud, frontier, or unknown profiles raise ConfigurationError.
     Profile is required with no default to prevent fallback to 'mock'.
     """
+    import os
+    from pathlib import Path
+
     from app.ports.errors import ConfigurationError
 
-    if profile in SYNTHETIC_LOCAL_PROFILES:
-        from app.adapters.storage.local import LocalStorageBackend
+    if profile not in SYNTHETIC_LOCAL_PROFILES:
+        raise ConfigurationError(
+            f"LocalStorageBackend is forbidden in profile '{profile}'. "
+            f"Allowed synthetic profiles: {sorted(SYNTHETIC_LOCAL_PROFILES)}"
+        )
 
-        return LocalStorageBackend(base_dir)
-    raise ConfigurationError(
-        f"LocalStorageBackend is forbidden in profile '{profile}'. "
-        f"Allowed synthetic profiles: {sorted(SYNTHETIC_LOCAL_PROFILES)}"
-    )
+    resolved: str | Path | None = base_dir
+    if resolved is None:
+        raw_path = os.environ.get("LOCAL_STORAGE_PATH")
+        if not raw_path or not raw_path.strip():
+            raise ConfigurationError(
+                "LOCAL_STORAGE_PATH environment variable is missing.",
+                error_code="LOCAL_STORAGE_PATH_MISSING",
+            )
+        resolved = raw_path.strip()
+
+    storage_path = Path(resolved)
+    if not storage_path.is_dir():
+        raise ConfigurationError(
+            f"LOCAL_STORAGE_PATH directory does not exist: {storage_path}",
+            error_code="LOCAL_STORAGE_PATH_NOT_FOUND",
+        )
+
+    from app.adapters.storage.local import LocalStorageBackend
+
+    return LocalStorageBackend(storage_path)
 
 
 def create_upload_service(
     session: AsyncSession,
     profile: str,
-    storage_dir: str = "storage",
+    storage_dir: str | Path | None = None,
     audit_logger: AuditLogger | None = None,
 ) -> UploadService:
     """Instantiate and wire UploadService with adapters for a session.
@@ -235,6 +264,29 @@ def create_upload_service(
         storage=storage,
         malware_scanner=scanner,
         audit_logger=logger,
+    )
+
+
+def create_document_splitter() -> DocumentSplitter:
+    """Instantiate PyPdfiumDocumentSplitter adapter."""
+    from app.adapters.pypdfium_splitter import PyPdfiumDocumentSplitter
+
+    return PyPdfiumDocumentSplitter()
+
+
+def create_document_splitter_service(
+    session: AsyncSession,
+    profile: str,
+    base_dir: str | Path | None = None,
+) -> DocumentSplitterService:
+    """Instantiate and wire DocumentSplitterService with repository, storage, and splitter."""
+    repo = create_document_repository(session)
+    storage = create_storage_backend(profile=profile, base_dir=base_dir)
+    splitter = create_document_splitter()
+    return DocumentSplitterService(
+        document_repo=repo,
+        storage=storage,
+        splitter=splitter,
     )
 
 
