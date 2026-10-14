@@ -10,8 +10,11 @@ from __future__ import annotations
 import importlib.util
 import io
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+
+from docling.datamodel.accelerator_options import AcceleratorDevice
 
 from app.ports.document_parser import DocumentParser
 from app.ports.errors import ConfigurationError
@@ -25,8 +28,8 @@ _DOCLING_NOT_INSTALLED_ERROR = (
 
 
 def _get_docling_converter(
-    disable_model_download: bool = False,
-    pinned_model_paths: str | dict[str, str] | None = None,
+    artifacts_path: Path,
+    device: AcceleratorDevice,
 ) -> Any:
     """Lazy import and factory for Docling DocumentConverter."""
     if not HAS_DOCLING:
@@ -37,49 +40,33 @@ def _get_docling_converter(
     try:
         import os
 
-        if disable_model_download:
-            os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
 
-        from docling.datamodel.base_models import InputFormat  # type: ignore[import-not-found]
-        from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found]
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
             EasyOcrOptions,
             PdfPipelineOptions,
         )
-        from docling.document_converter import (  # type: ignore[import-not-found]
+        from docling.document_converter import (
             DocumentConverter,
+            ImageFormatOption,
             PdfFormatOption,
-        )
-
-        model_dir = (
-            pinned_model_paths
-            if isinstance(pinned_model_paths, str)
-            else (
-                (pinned_model_paths.get("easyocr") or pinned_model_paths.get("models"))
-                if isinstance(pinned_model_paths, dict)
-                else None
-            )
         )
 
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
-        if model_dir:
-            pipeline_options.artifacts_path = model_dir
+        pipeline_options.artifacts_path = artifacts_path
+        pipeline_options.accelerator_options.device = device
 
-        ocr_kwargs: dict[str, Any] = {
-            "lang": ["es", "en"],
-            "use_gpu": True,
-            "confidence_threshold": 0.5,
-        }
-        if disable_model_download:
-            ocr_kwargs["download_enabled"] = False
-        if model_dir:
-            ocr_kwargs["model_storage_directory"] = model_dir
-
-        pipeline_options.ocr_options = EasyOcrOptions(**ocr_kwargs)
+        pipeline_options.ocr_options = EasyOcrOptions(
+            lang=["es", "en"],
+            confidence_threshold=0.5,
+        )
 
         return DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline_options),
             }
         )
     except ImportError as exc:
@@ -94,39 +81,26 @@ class DoclingDocumentParser(DocumentParser):
 
     def __init__(
         self,
-        disable_model_download: bool = False,
-        pinned_model_paths: str | dict[str, str] | None = None,
+        artifacts_path: Path,
+        device: AcceleratorDevice,
     ) -> None:
         import os
 
-        self.disable_model_download = disable_model_download
-        self.pinned_model_paths = pinned_model_paths
-        self.easyocr_download_enabled = not disable_model_download
-
-        if isinstance(pinned_model_paths, str):
-            self.model_directory: str | None = pinned_model_paths
-        elif isinstance(pinned_model_paths, dict):
-            self.model_directory = (
-                pinned_model_paths.get("easyocr")
-                or pinned_model_paths.get("models")
-                or pinned_model_paths.get("artifacts_path")
-            )
-        else:
-            self.model_directory = None
-
-        if self.disable_model_download:
-            os.environ["HF_HUB_OFFLINE"] = "1"
+        self.artifacts_path = artifacts_path
+        self.device = device
+        os.environ["HF_HUB_OFFLINE"] = "1"
 
     def get_configured_options(self) -> dict[str, Any]:
         """Return resolved configuration options for testing/introspection."""
         import os
 
+        hf_offline = None
+        if "HF_HUB_OFFLINE" in os.environ:
+            hf_offline = os.environ["HF_HUB_OFFLINE"]
         return {
-            "disable_model_download": self.disable_model_download,
-            "pinned_model_paths": self.pinned_model_paths,
-            "easyocr_download_enabled": self.easyocr_download_enabled,
-            "model_directory": self.model_directory,
-            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
+            "artifacts_path": self.artifacts_path,
+            "device": self.device,
+            "hf_hub_offline": hf_offline,
         }
 
     async def split_pages(
@@ -155,10 +129,9 @@ class DoclingDocumentParser(DocumentParser):
             )
 
         converter = _get_docling_converter(
-            disable_model_download=self.disable_model_download,
-            pinned_model_paths=self.pinned_model_paths,
+            artifacts_path=self.artifacts_path,
+            device=self.device,
         )
-        # pyrefly: ignore [missing-import]
         from docling.datamodel.base_models import DocumentStream
 
         stream = DocumentStream(
@@ -172,27 +145,35 @@ class DoclingDocumentParser(DocumentParser):
 
         # 2. Table extraction
         extracted_tables: list[TableData] = []
-        if hasattr(conv_res.document, "tables"):
-            for table in conv_res.document.tables:
+        try:
+            tables = conv_res.document.tables
+            for table in tables:
                 df = table.export_to_dataframe()
                 headers = [str(c) for c in df.columns]
                 rows = [[str(v) for v in row] for row in df.values.tolist()]
                 extracted_tables.append(TableData(headers=headers, rows=rows))
+        except AttributeError:
+            pass
 
-        # 3. Confidence score resolution
-        confidence = 1.0
-        if conv_res.confidence and hasattr(conv_res.confidence, "pages"):
-            pages_conf = conv_res.confidence.pages
-            page_conf = None
-            if isinstance(pages_conf, dict):
-                page_conf = pages_conf.get(page.page_number) or pages_conf.get(
-                    str(page.page_number)
-                )
-            elif isinstance(pages_conf, list) and len(pages_conf) >= page.page_number:
-                page_conf = pages_conf[page.page_number - 1]
-
-            if page_conf and hasattr(page_conf, "ocr_score"):
-                confidence = float(page_conf.ocr_score)
+        # 3. Confidence score resolution: each call converts exactly one page.
+        # Require exactly one entry in conv_res.confidence.pages and read that one.
+        # If confidence is missing, empty, has more than one page, or the score is missing,
+        # set confidence to float("nan") so the review policy flags the page.
+        confidence = float("nan")
+        if conv_res.confidence is not None:
+            try:
+                pages_conf = conv_res.confidence.pages
+                if pages_conf is not None and len(pages_conf) == 1:
+                    page_conf = (
+                        next(iter(pages_conf.values()))
+                        if isinstance(pages_conf, dict)
+                        else pages_conf[0]
+                    )
+                    score = page_conf.ocr_score
+                    if score is not None:
+                        confidence = float(score)
+            except AttributeError:
+                pass
 
         return ParsedPageContent(
             page_number=page.page_number,

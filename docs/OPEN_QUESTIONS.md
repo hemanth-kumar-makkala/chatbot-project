@@ -104,3 +104,7 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Status**: **DEFERRED TO PHASE 6**
 - **Context**: Document parsing (Docling, EasyOCR) and vector embeddings (BGE-M3) utilize PyTorch. On the desktop GPU PC, CUDA acceleration is used. On GCP cloud deployments, workers could run either standard CPU wheels or GPU-accelerated workloads (e.g. Cloud Run with Nvidia L4 or GKE).
 - **Decision Driver**: CPU PyTorch wheels are ~200 MB, start quickly, and scale down to zero on Cloud Run at low compute cost within the <$100/mo cloud budget, but inference is slower. GPU instances provide sub-second OCR/embedding latency but incur higher idle and hourly costs. The choice between CPU-only vs CUDA PyTorch for Linux cloud workers will be evaluated and decided in Phase 6 based on batch ingestion volume and cloud spend telemetry.
+
+### 3.5 Multilingual Support
+- **Status**: **DEFERRED**
+- Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.

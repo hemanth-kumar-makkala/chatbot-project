@@ -37,6 +37,8 @@ dev = [
 ]
 parsing = [
     "docling[easyocr]==2.135.0",
+    "torch==2.14.1",
+    "torchvision==0.29.1",
 ]
 
 

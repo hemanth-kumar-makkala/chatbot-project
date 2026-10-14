@@ -3,11 +3,12 @@
 import io
 import os
 import zipfile
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from app.adapters.parsing.docling import DoclingDocumentParser
+from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
 from app.adapters.parsing.mock import MockDocumentParser
 from app.core.ingestion.validation import validate_file
 from app.ports.errors import (
@@ -305,36 +306,45 @@ def test_storage_backend_wiring_guard_profile_allowlist() -> None:
         create_storage_backend("some-unknown-profile")
 
 
-def test_document_parser_wiring_guard_profile_matrix() -> None:
+def test_document_parser_wiring_guard_profile_matrix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     # 1. Row 'mock': returns MockDocumentParser
     mock_parser = create_document_parser("mock")
     assert isinstance(mock_parser, MockDocumentParser)
 
     # 2. Rows 'office-cpu', 'desktop-gpu', 'home-gpu', 'dev-free-api':
-    # returns real DoclingDocumentParser
+    # require DOCLING_ARTIFACTS_PATH to return real DoclingDocumentParser
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", str(models_dir))
+
     for profile in ["office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"]:
         parser = create_document_parser(profile)
         assert isinstance(parser, DoclingDocumentParser)
         assert not isinstance(parser, MockDocumentParser)
+        assert parser.artifacts_path == models_dir
+        expected_device = (
+            AcceleratorDevice.CUDA
+            if profile in ("desktop-gpu", "home-gpu")
+            else AcceleratorDevice.CPU
+        )
+        assert parser.device == expected_device
 
-    # 3. Row 'cloud' without pinned models and download disabled: raises ConfigurationError
-    with pytest.raises(ConfigurationError, match="model auto-download disabled"):
-        create_document_parser("cloud")
-
-    with pytest.raises(ConfigurationError, match="model auto-download disabled"):
-        create_document_parser("cloud", disable_model_download=False, pinned_model_paths="/models")
-
-    with pytest.raises(ConfigurationError, match="model auto-download disabled"):
-        create_document_parser("cloud", disable_model_download=True, pinned_model_paths=None)
-
-    # Row 'cloud' with required config: returns DoclingDocumentParser
-    cloud_parser = create_document_parser(
-        "cloud",
-        disable_model_download=True,
-        pinned_model_paths="/opt/models/docling",
-    )
+    # 3. Row 'cloud' with DOCLING_ARTIFACTS_PATH: returns DoclingDocumentParser
+    cloud_parser = create_document_parser("cloud")
     assert isinstance(cloud_parser, DoclingDocumentParser)
     assert not isinstance(cloud_parser, MockDocumentParser)
+    assert cloud_parser.artifacts_path == models_dir
+    assert cloud_parser.device == AcceleratorDevice.CPU
+
+    # Row 'cloud' without DOCLING_ARTIFACTS_PATH: raises ConfigurationError
+    monkeypatch.delenv("DOCLING_ARTIFACTS_PATH", raising=False)
+    with pytest.raises(
+        ConfigurationError,
+        match="DOCLING_ARTIFACTS_PATH",
+    ):
+        create_document_parser("cloud")
 
     # 4. Row unknown profile: raises ConfigurationError
     for unknown in ["frontier", "unknown-profile"]:
@@ -343,52 +353,55 @@ def test_document_parser_wiring_guard_profile_matrix() -> None:
 
 
 def test_docling_adapter_applies_offline_and_pinned_settings(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Validate that DoclingDocumentParser receives and applies offline/pinned settings.
+    """Validate that DoclingDocumentParser receives and applies offline/artifacts_path settings.
 
     Tests that:
-    - EasyOCR auto-download is disabled.
-    - EasyOCR / Docling model storage directory is set to pinned path.
+    - artifacts_path is applied to DoclingDocumentParser.
     - HF_HUB_OFFLINE environment variable is set to '1'.
     - Inspects configured options without triggering real model weight downloads.
     """
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
 
-    # 1. Cloud wiring passes disable_model_download and pinned_model_paths
-    pinned_path = "/opt/models/docling"
-    cloud_parser = create_document_parser(
-        "cloud",
-        disable_model_download=True,
-        pinned_model_paths=pinned_path,
-    )
+    # 1. Cloud wiring passes artifacts_path from DOCLING_ARTIFACTS_PATH
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", str(models_dir))
+
+    cloud_parser = create_document_parser("cloud")
     assert isinstance(cloud_parser, DoclingDocumentParser)
+    assert cloud_parser.artifacts_path == models_dir
+    assert cloud_parser.device == AcceleratorDevice.CPU
 
     # 2. Inspect adapter configured options without loading any models
     opts = cloud_parser.get_configured_options()
-    assert opts["disable_model_download"] is True
-    assert opts["easyocr_download_enabled"] is False
-    assert opts["model_directory"] == pinned_path
+    assert opts["artifacts_path"] == models_dir
+    assert opts["device"] == AcceleratorDevice.CPU
     assert opts["hf_hub_offline"] == "1"
-    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+    assert "HF_HUB_OFFLINE" in os.environ and os.environ["HF_HUB_OFFLINE"] == "1"
 
-    # 3. Dict pinned model paths support
-    dict_parser = DoclingDocumentParser(
-        disable_model_download=True,
-        pinned_model_paths={"easyocr": "/opt/easyocr"},
+    # 3. Direct instantiation requires typed artifacts_path: Path and device: AcceleratorDevice
+    custom_dir = tmp_path / "custom_models"
+    custom_dir.mkdir()
+    direct_parser = DoclingDocumentParser(
+        artifacts_path=custom_dir,
+        device=AcceleratorDevice.CPU,
     )
-    dict_opts = dict_parser.get_configured_options()
-    assert dict_opts["easyocr_download_enabled"] is False
-    assert dict_opts["model_directory"] == "/opt/easyocr"
+    direct_opts = direct_parser.get_configured_options()
+    assert direct_opts["artifacts_path"] == custom_dir
+    assert direct_opts["device"] == AcceleratorDevice.CPU
+    assert direct_opts["hf_hub_offline"] == "1"
 
-    # 4. Local synthetic profile defaults (dev-free-api: download enabled, no pinned paths)
+    # 4. Local synthetic profile wiring also applies artifacts_path and sets offline
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     local_parser = create_document_parser("dev-free-api")
     assert isinstance(local_parser, DoclingDocumentParser)
+    assert local_parser.device == AcceleratorDevice.CPU
     local_opts = local_parser.get_configured_options()
-    assert local_opts["disable_model_download"] is False
-    assert local_opts["easyocr_download_enabled"] is True
-    assert local_opts["model_directory"] is None
+    assert local_opts["artifacts_path"] == models_dir
+    assert local_opts["device"] == AcceleratorDevice.CPU
+    assert local_opts["hf_hub_offline"] == "1"
 
 
 def test_storage_key_path_traversal_sanitization() -> None:
@@ -418,8 +431,9 @@ def test_wiring_factories_require_profile_argument_without_default() -> None:
     with pytest.raises(TypeError):
         create_malware_scanner()  # type: ignore[call-arg]
 
+    empty_profile_args: tuple[str, ...] = ()
     with pytest.raises(TypeError):
-        create_document_parser()  # type: ignore[call-arg]
+        create_document_parser(*empty_profile_args)
 
     with pytest.raises(TypeError):
         create_storage_backend()  # type: ignore[call-arg]

@@ -134,19 +134,13 @@ def create_malware_scanner(profile: str) -> MalwareScanner:
     )
 
 
-def create_document_parser(
-    profile: str,
-    *,
-    disable_model_download: bool = False,
-    pinned_model_paths: str | dict[str, str] | None = None,
-) -> DocumentParser:
+def create_document_parser(profile: str) -> DocumentParser:
     """Create a document parser adapter based on runtime profile.
 
     Profiles:
     - mock: MockDocumentParser
-    - office-cpu, desktop-gpu, home-gpu, dev-free-api: DoclingDocumentParser (real)
-    - cloud: DoclingDocumentParser (production), strictly requires model auto-download
-      disabled and pinned model paths configured. If missing, raises ConfigurationError.
+    - office-cpu, desktop-gpu, home-gpu, dev-free-api, cloud: DoclingDocumentParser
+      (requires DOCLING_ARTIFACTS_PATH pointing to existing model weights folder)
     - unknown profile: ConfigurationError
     The mock parser must never be returned outside the mock profile.
     """
@@ -157,34 +151,37 @@ def create_document_parser(
 
         return MockDocumentParser()
 
-    if profile in ("office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"):
-        from app.adapters.parsing.docling import DoclingDocumentParser
-
-        return DoclingDocumentParser(
-            disable_model_download=disable_model_download,
-            pinned_model_paths=pinned_model_paths,
-        )
-
-    if profile == "cloud":
-        if not disable_model_download or not pinned_model_paths:
-            raise ConfigurationError(
-                "Cloud profile requires model auto-download disabled and pinned model paths "
-                "configured.",
-                error_code="CLOUD_PARSER_CONFIG_MISSING",
-            )
-        from app.adapters.parsing.docling import DoclingDocumentParser
-
-        return DoclingDocumentParser(
-            disable_model_download=disable_model_download,
-            pinned_model_paths=pinned_model_paths,
-        )
-
     allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
-    raise ConfigurationError(
-        f"Unknown or unauthorized profile '{profile}' for document parser. "
-        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
-        error_code="UNAUTHORIZED_PARSER_PROFILE",
+    if profile not in allowed:
+        raise ConfigurationError(
+            f"Unknown or unauthorized profile '{profile}' for document parser. "
+            f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+            error_code="UNAUTHORIZED_PARSER_PROFILE",
+        )
+
+    import os
+    from pathlib import Path
+
+    if "DOCLING_ARTIFACTS_PATH" not in os.environ or not os.environ["DOCLING_ARTIFACTS_PATH"]:
+        raise ConfigurationError(
+            "DOCLING_ARTIFACTS_PATH environment variable is missing.",
+            error_code="DOCLING_ARTIFACTS_PATH_MISSING",
+        )
+
+    artifacts_path_str = os.environ["DOCLING_ARTIFACTS_PATH"]
+    artifacts_path = Path(artifacts_path_str)
+    if not artifacts_path.is_dir():
+        raise ConfigurationError(
+            "DOCLING_ARTIFACTS_PATH directory does not exist.",
+            error_code="DOCLING_ARTIFACTS_PATH_NOT_FOUND",
+        )
+
+    from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
+
+    device = (
+        AcceleratorDevice.CUDA if profile in ("desktop-gpu", "home-gpu") else AcceleratorDevice.CPU
     )
+    return DoclingDocumentParser(artifacts_path=artifacts_path, device=device)
 
 
 def create_document_repository(session: AsyncSession) -> DocumentRepository:

@@ -203,15 +203,53 @@ def create_synthetic_spanish_scanned_pdf(
     num_pages: int = 1,
 ) -> bytes:
     """Generate a synthetic scanned PDF containing Spanish text rendered via Pillow default font."""
+    import textwrap
+
     from PIL import ImageDraw, ImageFont
 
     writer = pypdf.PdfWriter()
     font = ImageFont.load_default(24)
+    wrapped_lines = textwrap.wrap(text, width=45)
+    wrapped_text = "\n".join(wrapped_lines) if wrapped_lines else text
 
     for _ in range(num_pages):
         img = Image.new("RGB", (612, 792), color=(245, 245, 245))
         draw = ImageDraw.Draw(img)
-        draw.text((50, 100), text, fill=(20, 20, 20), font=font)
+        draw.text((50, 100), wrapped_text, fill=(20, 20, 20), font=font, spacing=8)
+        img_buf = io.BytesIO()
+        img.save(img_buf, format="PDF")
+        reader = pypdf.PdfReader(img_buf)
+        writer.add_page(reader.pages[0])
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def create_synthetic_english_scanned_pdf(
+    text: str = "Prior Authorization Request\nFax: (555) 010-0199\nMember ID: ZX4471902",
+    num_pages: int = 1,
+) -> bytes:
+    """Generate a synthetic scanned PDF containing English text rendered via Pillow default font."""
+    import textwrap
+
+    from PIL import ImageDraw, ImageFont
+
+    writer = pypdf.PdfWriter()
+    font = ImageFont.load_default(24)
+    wrapped_lines: list[str] = []
+    for line in text.split("\n"):
+        wrapped = textwrap.wrap(line, width=45)
+        if len(wrapped) > 0:
+            wrapped_lines.extend(wrapped)
+        else:
+            wrapped_lines.append("")
+    wrapped_text = "\n".join(wrapped_lines) if len(wrapped_lines) > 0 else text
+
+    for _ in range(num_pages):
+        img = Image.new("RGB", (612, 792), color=(245, 245, 245))
+        draw = ImageDraw.Draw(img)
+        draw.text((50, 100), wrapped_text, fill=(20, 20, 20), font=font, spacing=8)
         img_buf = io.BytesIO()
         img.save(img_buf, format="PDF")
         reader = pypdf.PdfReader(img_buf)

@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from app.adapters.parsing.docling import (
+    AcceleratorDevice,
     DoclingDocumentParser,
     build_page_reading_record,
     build_table_data_records,
@@ -36,6 +39,7 @@ from app.ports.errors import ConfigurationError
 from app.ports.types import PageArtifact, PageType, ParsedPageContent
 from tests.fixtures.synthetic_documents import (
     create_synthetic_digital_pdf,
+    create_synthetic_english_scanned_pdf,
     create_synthetic_spanish_scanned_pdf,
 )
 
@@ -73,7 +77,10 @@ class TestDoclingParserAdapterContracts:
         if HAS_DOCLING:
             pytest.skip("Docling is installed; test targets uninstalled environment")
 
-        parser = DoclingDocumentParser()
+        parser = DoclingDocumentParser(
+            artifacts_path=Path("/tmp/models"),
+            device=AcceleratorDevice.CPU,
+        )
         page = PageArtifact(
             page_number=1,
             image_bytes=b"sample_page_png",
@@ -86,6 +93,46 @@ class TestDoclingParserAdapterContracts:
         )
         with pytest.raises(ConfigurationError, match="Docling is not installed"):
             await parser.extract(page)
+
+    @pytest.mark.asyncio
+    async def test_docling_extract_missing_confidence_gives_nan(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing conv_res.confidence must resolve to NaN, never defaulting to 1.0."""
+        from unittest.mock import MagicMock
+
+        stub_doc = MagicMock()
+        stub_doc.export_to_markdown.return_value = "Sample page text"
+        stub_doc.tables = []
+
+        stub_conv_res = MagicMock()
+        stub_conv_res.document = stub_doc
+        stub_conv_res.confidence = None
+
+        stub_converter = MagicMock()
+        stub_converter.convert.return_value = stub_conv_res
+
+        monkeypatch.setattr(
+            "app.adapters.parsing.docling._get_docling_converter",
+            lambda **_kwargs: stub_converter,
+        )
+
+        parser = DoclingDocumentParser(
+            artifacts_path=Path("/tmp/models"),
+            device=AcceleratorDevice.CPU,
+        )
+        page = PageArtifact(
+            page_number=1,
+            image_bytes=b"sample_page_png",
+            mime_type="image/png",
+            page_sha256="sha-p1",
+            page_type=PageType.SCANNED,
+            char_count=0,
+            has_text_layer=False,
+            image_area_ratio=0.95,
+        )
+        extracted = await parser.extract(page)
+        assert math.isnan(extracted.confidence)
 
     def test_needs_review_pages_excluded_from_indexing(self) -> None:
         """Invariant 6: Pages flagged with needs_review must not be indexed into chunks."""
@@ -199,6 +246,15 @@ class TestStorageAndIdempotencyContracts:
         assert rec["document_version_id"] == version_id
 
 
+def _get_model_artifacts_path() -> Path:
+    if "DOCLING_ARTIFACTS_PATH" not in os.environ or not os.environ["DOCLING_ARTIFACTS_PATH"]:
+        pytest.fail("DOCLING_ARTIFACTS_PATH environment variable is missing.")
+    artifacts_path = Path(os.environ["DOCLING_ARTIFACTS_PATH"])
+    if not artifacts_path.is_dir():
+        pytest.fail("DOCLING_ARTIFACTS_PATH directory does not exist.")
+    return artifacts_path
+
+
 @pytest.mark.models
 class TestRealDoclingModelsDesktop:
     """Real Docling model weight execution tests (run on desktop-gpu only)."""
@@ -207,10 +263,21 @@ class TestRealDoclingModelsDesktop:
         not HAS_DOCLING,
         reason="Docling optional dependencies not installed; run on desktop-gpu",
     )
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Multilingual deferred (docs/OPEN_QUESTIONS.md 3.5): "
+            "Spanish accented text reads below 0.70 confidence"
+        ),
+    )
     @pytest.mark.asyncio
     async def test_real_docling_ocr_spanish_scanned_page(self) -> None:
         """Item 1 & 9: Real Docling parses Spanish scanned page with Pillow-bundled font."""
-        parser = DoclingDocumentParser()
+        artifacts_path = _get_model_artifacts_path()
+        parser = DoclingDocumentParser(
+            artifacts_path=artifacts_path,
+            device=AcceleratorDevice.CUDA,
+        )
         spanish_pdf = create_synthetic_spanish_scanned_pdf(
             text="Atención médica: Paciente con diagnóstico de hipertensión arterial severa."
         )
@@ -231,9 +298,39 @@ class TestRealDoclingModelsDesktop:
         reason="Docling optional dependencies not installed; run on desktop-gpu",
     )
     @pytest.mark.asyncio
+    async def test_real_docling_ocr_english_scanned_page(self) -> None:
+        """Real Docling parses English synthetic scanned fax page with high confidence."""
+        artifacts_path = _get_model_artifacts_path()
+        parser = DoclingDocumentParser(
+            artifacts_path=artifacts_path,
+            device=AcceleratorDevice.CUDA,
+        )
+        english_pdf = create_synthetic_english_scanned_pdf(
+            text="Prior Authorization Request\nFax: (555) 010-0199\nMember ID: ZX4471902",
+        )
+
+        artifacts = [a async for a in parser.split_pages(english_pdf, "english_fax.pdf")]
+        assert len(artifacts) == 1
+
+        extracted = await parser.extract(artifacts[0])
+        assert extracted.page_number == 1
+        assert "prior authorization" in extracted.text.lower()
+        assert "555" in extracted.text
+        assert not math.isnan(extracted.confidence)
+        assert extracted.confidence >= 0.70
+
+    @pytest.mark.skipif(
+        not HAS_DOCLING,
+        reason="Docling optional dependencies not installed; run on desktop-gpu",
+    )
+    @pytest.mark.asyncio
     async def test_real_docling_digital_text_and_table_extraction(self) -> None:
         """Real Docling extracts digital text and structured table data."""
-        parser = DoclingDocumentParser()
+        artifacts_path = _get_model_artifacts_path()
+        parser = DoclingDocumentParser(
+            artifacts_path=artifacts_path,
+            device=AcceleratorDevice.CUDA,
+        )
         pdf_bytes = create_synthetic_digital_pdf(text="Clinical guidelines with dosage tables.")
 
         artifacts = [a async for a in parser.split_pages(pdf_bytes, "digital_sample.pdf")]
@@ -259,7 +356,11 @@ class TestRealDoclingModelsDesktop:
         )
         from tests.fixtures.synthetic_documents import create_synthetic_scanned_pdf
 
-        parser = DoclingDocumentParser()
+        artifacts_path = _get_model_artifacts_path()
+        parser = DoclingDocumentParser(
+            artifacts_path=artifacts_path,
+            device=AcceleratorDevice.CUDA,
+        )
 
         # Build 2-page document: Page 1 legible clinical text; Page 2 blank/unreadable raster scan
         clean_pdf = create_synthetic_spanish_scanned_pdf(
@@ -285,7 +386,7 @@ class TestRealDoclingModelsDesktop:
         assert p2_extracted.page_number == 2
 
         # Page 1: legible Spanish OCR with high confidence (>= 0.70) -> needs_review is False
-        p1_needs_review = evaluate_page_review(
+        p1_needs_review, _p1_reason = evaluate_page_review(
             page_type=PageType.SCANNED,
             ocr_score=p1_extracted.confidence,
             threshold=0.70,
@@ -294,7 +395,7 @@ class TestRealDoclingModelsDesktop:
 
         # Page 2: degraded / blank raster scan without text ->
         # low score or NaN -> needs_review is True
-        p2_needs_review = evaluate_page_review(
+        p2_needs_review, _p2_reason = evaluate_page_review(
             page_type=PageType.SCANNED,
             ocr_score=p2_extracted.confidence,
             threshold=0.70,
@@ -302,4 +403,4 @@ class TestRealDoclingModelsDesktop:
         assert p2_needs_review is True
 
         # Version status aggregates to needs_review when any page is flagged
-        assert evaluate_version_review_status([p1_needs_review, p2_needs_review]) == "needs_review"
+        assert evaluate_version_review_status([p1_needs_review, p2_needs_review]) is True

@@ -8,14 +8,20 @@ Verifies:
 4. create_image_processor returns PillowImageProcessor.
 """
 
-from __future__ import annotations
+from pathlib import Path
 
 import pytest
 
 from app.adapters.images.pillow import PillowImageProcessor
 from app.adapters.models.mock import MockModelProvider
+from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
+from app.adapters.parsing.mock import MockDocumentParser
 from app.ports.errors import ConfigurationError
-from app.wiring import create_image_processor, create_model_provider
+from app.wiring import (
+    create_document_parser,
+    create_image_processor,
+    create_model_provider,
+)
 
 
 class TestModelProviderWiringGuard:
@@ -110,3 +116,68 @@ class TestPagePipelineWiringGuard:
                 image_processor=None,
                 storage=MagicMock(),
             )
+
+
+class TestDocumentParserWiringGuard:
+    """Verifies create_document_parser profile rules and DOCLING_ARTIFACTS_PATH guard."""
+
+    def test_mock_profile_does_not_need_artifacts_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mock profile returns MockDocumentParser without needing DOCLING_ARTIFACTS_PATH."""
+        monkeypatch.delenv("DOCLING_ARTIFACTS_PATH", raising=False)
+        parser = create_document_parser("mock")
+        assert isinstance(parser, MockDocumentParser)
+
+    @pytest.mark.parametrize(
+        "profile",
+        ["office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"],
+    )
+    def test_non_mock_profile_missing_artifacts_path_raises(
+        self, profile: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-mock profiles raise ConfigurationError when DOCLING_ARTIFACTS_PATH is missing."""
+        monkeypatch.delenv("DOCLING_ARTIFACTS_PATH", raising=False)
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_document_parser(profile)
+        assert exc_info.value.message == "DOCLING_ARTIFACTS_PATH environment variable is missing."
+
+    @pytest.mark.parametrize(
+        "profile",
+        ["office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"],
+    )
+    def test_non_mock_profile_non_existent_artifacts_path_raises(
+        self, profile: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Non-mock profiles raise ConfigurationError when artifacts folder does not exist."""
+        non_existent = tmp_path / "missing_models_folder"
+        monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", str(non_existent))
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_document_parser(profile)
+        assert exc_info.value.message == "DOCLING_ARTIFACTS_PATH directory does not exist."
+
+    @pytest.mark.parametrize(
+        "profile,expected_device",
+        [
+            ("office-cpu", AcceleratorDevice.CPU),
+            ("desktop-gpu", AcceleratorDevice.CUDA),
+            ("home-gpu", AcceleratorDevice.CUDA),
+            ("dev-free-api", AcceleratorDevice.CPU),
+            ("cloud", AcceleratorDevice.CPU),
+        ],
+    )
+    def test_non_mock_profile_existing_artifacts_path_succeeds(
+        self,
+        profile: str,
+        expected_device: AcceleratorDevice,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Non-mock profiles instantiate DoclingDocumentParser with configured device."""
+        models_folder = tmp_path / "models"
+        models_folder.mkdir()
+        monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", str(models_folder))
+        parser = create_document_parser(profile)
+        assert isinstance(parser, DoclingDocumentParser)
+        assert parser.artifacts_path == models_folder
+        assert parser.device == expected_device
