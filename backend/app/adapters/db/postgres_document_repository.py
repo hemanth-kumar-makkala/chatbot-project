@@ -28,6 +28,7 @@ from app.ports.errors import (
     InvalidVersionStateError,
     NoUsableReadingError,
     PageJobConflictError,
+    QueueError,
     RetryNotUsefulError,
 )
 from app.ports.types import (
@@ -368,6 +369,36 @@ class PostgresDocumentRepository(DocumentRepository):
         await self.session.execute(stmt)
         await self.session.flush()
 
+    async def ensure_ingestion_job(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> UUID:
+        """Find existing Job for the document version or create one with status 'processing'."""
+        tid = UUID(str(tenant_id))
+        job_stmt = (
+            select(Job)
+            .where(
+                Job.tenant_id == tid,
+                Job.document_version_id == version_id,
+            )
+            .order_by(Job.created_at.desc())
+        )
+        job_res = await self.session.execute(job_stmt)
+        job = job_res.scalars().first()
+        if job is not None:
+            return job.id
+
+        new_job = Job(
+            id=uuid4(),
+            tenant_id=tid,
+            document_version_id=version_id,
+            status="processing",
+        )
+        self.session.add(new_job)
+        await self.session.flush()
+        return new_job.id
+
     async def record_job_step(
         self,
         tenant_id: str,
@@ -456,8 +487,42 @@ class PostgresDocumentRepository(DocumentRepository):
         status: JobStepStatus,
         processing_version: str = CURRENT_PROCESSING_VERSION,
     ) -> None:
-        """Lock the Page row FOR UPDATE, then upsert the page_processing marker in job_steps."""
+        """Lock documents, document_versions (FOR KEY SHARE), then Page (FOR UPDATE),
+        and upsert the page_processing marker in job_steps.
+        """
         tid = UUID(str(tenant_id))
+
+        # 1. Lock Document FOR KEY SHARE
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.tenant_id == tid,
+                Document.id
+                == (
+                    select(DocumentVersion.document_id)
+                    .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+                    .scalar_subquery()
+                ),
+            )
+            .with_for_update(key_share=True)
+        )
+        doc = (await self.session.execute(doc_stmt)).scalars().first()
+        if doc is None:
+            raise DocumentNotFoundError(
+                f"Document for version {version_id} not found in tenant {tenant_id}"
+            )
+
+        # 2. Lock DocumentVersion FOR KEY SHARE
+        ver_stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == tid, DocumentVersion.id == version_id)
+            .with_for_update(key_share=True)
+        )
+        ver = (await self.session.execute(ver_stmt)).scalars().first()
+        if ver is None:
+            raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
+
+        # 3. Lock Page FOR UPDATE
         page_stmt = (
             select(Page)
             .where(
@@ -482,14 +547,7 @@ class PostgresDocumentRepository(DocumentRepository):
         job_res = await self.session.execute(job_stmt)
         job = job_res.scalars().first()
         if job is None:
-            job = Job(
-                id=uuid4(),
-                tenant_id=tid,
-                document_version_id=version_id,
-                status="processing",
-            )
-            self.session.add(job)
-            await self.session.flush()
+            raise QueueError("No job found for version")
         actual_job_id = job.id
 
         stmt = (
@@ -1234,6 +1292,8 @@ class PostgresDocumentRepository(DocumentRepository):
         if ver is None:
             raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
 
+        await self._assert_no_active_page_job(tid, version_id, page_number)
+
         # 3. Lock Page
         page_stmt = (
             select(Page)
@@ -1255,8 +1315,6 @@ class PostgresDocumentRepository(DocumentRepository):
         # Invalid page state (excluded or not flagged)
         if getattr(page, "is_excluded", False) or not page.needs_review:
             raise InvalidPageStateError(f"Page {page_number} is in invalid state")
-
-        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         # Look up readings
         readings_stmt = select(PageReading).where(
@@ -1429,6 +1487,8 @@ class PostgresDocumentRepository(DocumentRepository):
         if ver is None:
             raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
 
+        await self._assert_no_active_page_job(tid, version_id, page_number)
+
         # 3. Lock Page
         page_stmt = (
             select(Page)
@@ -1452,8 +1512,6 @@ class PostgresDocumentRepository(DocumentRepository):
             raise InvalidPageStateError(
                 f"Page {page_number} is not flagged for review (needs_review=False)"
             )
-
-        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         page.is_excluded = True
         page.needs_review = False
@@ -1713,6 +1771,10 @@ class PostgresDocumentRepository(DocumentRepository):
         if ver is None:
             raise DocumentNotFoundError(f"Version {version_id} not found in tenant {tenant_id}")
 
+        # Active job check: Refuse with 409 PAGE_JOB_ALREADY_ACTIVE
+        # if a job for that page is already queued or running
+        await self._assert_no_active_page_job(tid, version_id, page_number)
+
         # 3. Lock Page
         page_stmt = (
             select(Page)
@@ -1732,10 +1794,6 @@ class PostgresDocumentRepository(DocumentRepository):
             raise InvalidPageStateError(
                 f"Page {page_number} is not flagged for review (needs_review=False)"
             )
-
-        # Active job check: Refuse with 409 PAGE_JOB_ALREADY_ACTIVE
-        # if a job for that page is already queued or running
-        await self._assert_no_active_page_job(tid, version_id, page_number)
 
         # Check if processing version has changed on existing job step
         step_stmt = (

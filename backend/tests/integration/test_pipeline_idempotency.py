@@ -500,7 +500,7 @@ class TestPipelineExecutionAndIdempotency:
         from app.db.models import Document, DocumentVersion
         from app.ports.errors import TransientIngestionError
         from app.worker import app, process_page_job, run_page_job
-        from tests.fixtures.database_seeding import seed_chunk
+        from tests.fixtures.database_seeding import seed_chunk, seed_job
 
         tenant_id, user_id = seeded_tenant_and_user
         worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
@@ -513,6 +513,9 @@ class TestPipelineExecutionAndIdempotency:
             p1 = await seed_page(session, tenant_id=tenant_id, ver_id=ver_id, page_number=1)
             await seed_chunk(
                 session, tenant_id=tenant_id, page_id=p1, ver_id=ver_id, is_active=False
+            )
+            await seed_job(
+                session, tenant_id=tenant_id, ver_id=ver_id, job_id=UUID(worker_ctx.job_id)
             )
 
         class TransientDeadlockError(Exception):

@@ -20,18 +20,26 @@ from uuid import UUID, uuid4
 import pytest
 from procrastinate import JobContext
 from procrastinate.jobs import Job as ProcrastinateJob
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import OperationalError
 
 from app.adapters.db.postgres_document_repository import PostgresDocumentRepository
 from app.adapters.models.mock import MockModelProvider
 from app.adapters.storage.local import LocalStorageBackend
 from app.core.ingestion.pipeline import PagePipelineService
-from app.db.models import JobStep, Page
-from app.db.session import unscoped_session, worker_tenant_session
-from app.ports.errors import PageJobConflictError, TransientIngestionError
+from app.db.models import DocumentVersion, Job, JobStep, Page
+from app.db.session import (
+    get_app_session_factory,
+    tenant_session,
+    unscoped_session,
+    worker_tenant_session,
+)
+from app.ports.errors import PageJobConflictError, QueueError, TransientIngestionError
 from app.ports.types import (
     ModelRole,
     StorageKey,
+    TenantContext,
+    UserRole,
     WorkerContext,
 )
 from app.ports.types import (
@@ -146,6 +154,14 @@ async def test_page_processing_marker_running_blocks_accept(
             model_id="mock-ocr",
             model_version="1.0",
         )
+        session.add(
+            Job(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                document_version_id=ver_id,
+                status="processing",
+            )
+        )
 
         storage = LocalStorageBackend(base_dir=str(tmp_path))
         storage_key = StorageKey(tenant_id=tenant_id, path=f"documents/{ver_id}/p1.png")
@@ -240,6 +256,14 @@ async def test_page_processing_successful_run_sets_marker_completed_and_accept_s
             body="Existing reading",
             model_id="mock-ocr",
             model_version="1.0",
+        )
+        session.add(
+            Job(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                document_version_id=ver_id,
+                status="processing",
+            )
         )
 
         storage = LocalStorageBackend(base_dir=str(tmp_path))
@@ -462,6 +486,14 @@ async def test_final_retry_failure_sets_marker_failed(
             needs_review=False,
             review_reason=None,
         )
+        session.add(
+            Job(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                document_version_id=ver_id,
+                status="processing",
+            )
+        )
 
     # attempts=5 is final attempt for ingestion_retry_strategy (max_attempts=5)
     job_ctx = _create_job_context(tenant_id, ver_id, page_number=1, attempts=5)
@@ -501,3 +533,246 @@ async def test_final_retry_failure_sets_marker_failed(
         page = (await session.execute(page_stmt)).scalar_one()
         assert page.needs_review is True
         assert page.review_reason == "processing_failed"
+
+
+@pytest.mark.asyncio
+async def test_accept_raises_conflict_while_page_row_locked_by_worker(
+    seeded_tenant_and_user: tuple[UUID, UUID],
+) -> None:
+    """a. Marker committed as 'running', and a separate session holds an uncommitted
+    UPDATE on that page row (simulating the worker's page transaction). Accept must raise
+    PageJobConflictError within 5 seconds (asyncio.wait_for), not block. Roll back the
+    holding session at the end.
+    """
+    tenant_id, user_id = seeded_tenant_and_user
+    worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+    async with worker_tenant_session(worker_ctx) as session:
+        doc_id = await seed_document(session, tenant_id=tenant_id, title="Holding Lock Doc")
+        ver_id = await seed_version(
+            session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+        )
+        p_id = await seed_page(
+            session,
+            tenant_id=tenant_id,
+            ver_id=ver_id,
+            page_number=1,
+            page_type="scanned",
+            needs_review=True,
+            review_reason="low_ocr_confidence",
+        )
+        await seed_reading(
+            session,
+            tenant_id=tenant_id,
+            page_id=p_id,
+            source="ocr",
+            body="Existing reading",
+            model_id="mock-ocr",
+            model_version="1.0",
+        )
+        job = Job(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            document_version_id=ver_id,
+            status="processing",
+        )
+        session.add(job)
+        await session.flush()
+
+        repo = PostgresDocumentRepository(session)
+        await repo.record_page_processing_marker(
+            tenant_id=str(tenant_id),
+            version_id=ver_id,
+            page_number=1,
+            status="running",
+        )
+
+    # Separate session holds an uncommitted UPDATE on that page row
+    factory = get_app_session_factory()
+    holding_session = factory()
+    await holding_session.begin()
+    try:
+        await holding_session.execute(
+            text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        await holding_session.execute(
+            update(Page)
+            .where(
+                Page.tenant_id == tenant_id,
+                Page.id == p_id,
+            )
+            .values(page_type="scanned")
+        )
+
+        accept_ctx = TenantContext(
+            tenant_id=str(tenant_id),
+            user_id=str(user_id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="accept-sim",
+        )
+        async with tenant_session(accept_ctx) as accept_session:
+            accept_repo = PostgresDocumentRepository(accept_session)
+            with pytest.raises(PageJobConflictError):
+                await asyncio.wait_for(
+                    accept_repo.accept_page_review(
+                        tenant_id=str(tenant_id),
+                        version_id=ver_id,
+                        page_number=1,
+                    ),
+                    timeout=5.0,
+                )
+    finally:
+        await holding_session.rollback()
+        await holding_session.close()
+
+
+@pytest.mark.asyncio
+async def test_record_page_processing_marker_waits_on_version_not_page(
+    seeded_tenant_and_user: tuple[UUID, UUID],
+) -> None:
+    """b. A separate session holds FOR UPDATE on the document_versions row (simulating
+    accept). record_page_processing_marker in another session with SET LOCAL lock_timeout = '1s'
+    must fail waiting on the version row, and must NOT hold the page row lock (prove it:
+    a third session can SELECT the page FOR UPDATE NOWAIT successfully).
+    """
+    tenant_id, user_id = seeded_tenant_and_user
+    worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+    async with worker_tenant_session(worker_ctx) as session:
+        doc_id = await seed_document(session, tenant_id=tenant_id, title="Version Lock Doc")
+        ver_id = await seed_version(
+            session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+        )
+        await seed_page(
+            session,
+            tenant_id=tenant_id,
+            ver_id=ver_id,
+            page_number=1,
+            page_type="scanned",
+            needs_review=True,
+            review_reason="low_ocr_confidence",
+        )
+        job = Job(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            document_version_id=ver_id,
+            status="processing",
+        )
+        session.add(job)
+        await session.flush()
+
+    factory = get_app_session_factory()
+
+    # Session 1: holds FOR UPDATE on document_versions
+    session1 = factory()
+    await session1.begin()
+    try:
+        await session1.execute(
+            text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        await session1.execute(
+            select(DocumentVersion)
+            .where(
+                DocumentVersion.tenant_id == tenant_id,
+                DocumentVersion.id == ver_id,
+            )
+            .with_for_update()
+        )
+
+        # Session 2: record_page_processing_marker with SET LOCAL lock_timeout = '1s'
+        session2 = factory()
+        await session2.begin()
+        try:
+            await session2.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            await session2.execute(text("SET LOCAL lock_timeout = '1s'"))
+
+            repo2 = PostgresDocumentRepository(session2)
+
+            s2_task = asyncio.create_task(
+                repo2.record_page_processing_marker(
+                    tenant_id=str(tenant_id),
+                    version_id=ver_id,
+                    page_number=1,
+                    status="running",
+                )
+            )
+
+            await asyncio.sleep(0.2)
+
+            # Session 3: prove session 2 does NOT hold the page row lock
+            session3 = factory()
+            await session3.begin()
+            try:
+                await session3.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                page_row = (
+                    (
+                        await session3.execute(
+                            select(Page)
+                            .where(
+                                Page.tenant_id == tenant_id,
+                                Page.document_version_id == ver_id,
+                                Page.page_number == 1,
+                            )
+                            .with_for_update(nowait=True)
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                assert page_row is not None
+            finally:
+                await session3.rollback()
+                await session3.close()
+
+            with pytest.raises(OperationalError):
+                await s2_task
+        finally:
+            await session2.rollback()
+            await session2.close()
+    finally:
+        await session1.rollback()
+        await session1.close()
+
+
+@pytest.mark.asyncio
+async def test_record_page_processing_marker_no_job_raises_typed_error(
+    seeded_tenant_and_user: tuple[UUID, UUID],
+) -> None:
+    """c. record_page_processing_marker with no Job for the version raises typed error
+    (QueueError).
+    """
+    tenant_id, user_id = seeded_tenant_and_user
+    worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
+
+    async with worker_tenant_session(worker_ctx) as session:
+        doc_id = await seed_document(session, tenant_id=tenant_id, title="No Job Marker Doc")
+        ver_id = await seed_version(
+            session, tenant_id=tenant_id, doc_id=doc_id, user_id=user_id, status="processing"
+        )
+        await seed_page(
+            session,
+            tenant_id=tenant_id,
+            ver_id=ver_id,
+            page_number=1,
+            page_type="scanned",
+            needs_review=True,
+            review_reason="low_ocr_confidence",
+        )
+        # Note: no Job created for this version!
+
+        repo = PostgresDocumentRepository(session)
+        with pytest.raises(QueueError):
+            await repo.record_page_processing_marker(
+                tenant_id=str(tenant_id),
+                version_id=ver_id,
+                page_number=1,
+                status="running",
+            )

@@ -142,6 +142,15 @@ class DocumentRepository(ABC):
         ...
 
     @abstractmethod
+    async def ensure_ingestion_job(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> UUID:
+        """Find existing Job for the version or create one with status 'processing'."""
+        ...
+
+    @abstractmethod
     async def record_job_step(
         self,
         tenant_id: str,

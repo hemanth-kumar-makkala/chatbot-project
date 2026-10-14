@@ -87,6 +87,10 @@ async def run_split_document_job(
     try:
         async with worker_tenant_session(worker_ctx) as session:
             repo = create_document_repository(session)
+            await repo.ensure_ingestion_job(
+                tenant_id=tenant_id,
+                version_id=v_id,
+            )
             await enqueue_uncompleted_page_jobs(
                 tenant_id=tenant_id,
                 document_version_id=v_id,
