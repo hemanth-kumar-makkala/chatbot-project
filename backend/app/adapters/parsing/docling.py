@@ -14,11 +14,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from docling.datamodel.accelerator_options import AcceleratorDevice
-
 from app.ports.document_parser import DocumentParser
 from app.ports.errors import ConfigurationError
-from app.ports.types import PageArtifact, ParsedPageContent, TableData
+from app.ports.types import PageArtifact, ParsedPageContent, ParserDevice, TableData
 
 HAS_DOCLING = importlib.util.find_spec("docling") is not None
 
@@ -29,7 +27,7 @@ _DOCLING_NOT_INSTALLED_ERROR = (
 
 def _get_docling_converter(
     artifacts_path: Path,
-    device: AcceleratorDevice,
+    device: ParserDevice,
 ) -> Any:
     """Lazy import and factory for Docling DocumentConverter."""
     if not HAS_DOCLING:
@@ -42,6 +40,7 @@ def _get_docling_converter(
 
         os.environ["HF_HUB_OFFLINE"] = "1"
 
+        from docling.datamodel.accelerator_options import AcceleratorDevice
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import (
             EasyOcrOptions,
@@ -53,10 +52,20 @@ def _get_docling_converter(
             PdfFormatOption,
         )
 
+        if device == "cuda":
+            accelerator_device = AcceleratorDevice.CUDA
+        elif device == "cpu":
+            accelerator_device = AcceleratorDevice.CPU
+        else:
+            raise ConfigurationError(
+                f"Unsupported parser device '{device}'. Expected 'cuda' or 'cpu'.",
+                error_code="INVALID_PARSER_DEVICE",
+            )
+
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
         pipeline_options.artifacts_path = artifacts_path
-        pipeline_options.accelerator_options.device = device
+        pipeline_options.accelerator_options.device = accelerator_device
 
         pipeline_options.ocr_options = EasyOcrOptions(
             lang=["es", "en"],
@@ -82,7 +91,7 @@ class DoclingDocumentParser(DocumentParser):
     def __init__(
         self,
         artifacts_path: Path,
-        device: AcceleratorDevice,
+        device: ParserDevice,
     ) -> None:
         import os
 

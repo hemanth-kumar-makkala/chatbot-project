@@ -14,7 +14,7 @@ import pytest
 
 from app.adapters.images.pillow import PillowImageProcessor
 from app.adapters.models.mock import MockModelProvider
-from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
+from app.adapters.parsing.docling import DoclingDocumentParser
 from app.adapters.parsing.mock import MockDocumentParser
 from app.ports.errors import ConfigurationError
 from app.wiring import (
@@ -159,17 +159,17 @@ class TestDocumentParserWiringGuard:
     @pytest.mark.parametrize(
         "profile,expected_device",
         [
-            ("office-cpu", AcceleratorDevice.CPU),
-            ("desktop-gpu", AcceleratorDevice.CUDA),
-            ("home-gpu", AcceleratorDevice.CUDA),
-            ("dev-free-api", AcceleratorDevice.CPU),
-            ("cloud", AcceleratorDevice.CPU),
+            ("office-cpu", "cpu"),
+            ("desktop-gpu", "cuda"),
+            ("home-gpu", "cuda"),
+            ("dev-free-api", "cpu"),
+            ("cloud", "cpu"),
         ],
     )
     def test_non_mock_profile_existing_artifacts_path_succeeds(
         self,
         profile: str,
-        expected_device: AcceleratorDevice,
+        expected_device: str,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
@@ -181,3 +181,33 @@ class TestDocumentParserWiringGuard:
         assert isinstance(parser, DoclingDocumentParser)
         assert parser.artifacts_path == models_folder
         assert parser.device == expected_device
+
+
+def test_docling_module_has_no_top_level_docling_imports() -> None:
+    """Verify app.adapters.parsing.docling contains zero top-level docling imports.
+
+    Parsing group dependencies must be lazy-imported inside methods/functions
+    so the module remains importable without the parsing dependency group.
+    """
+    import ast
+
+    import app.adapters.parsing.docling as docling_module
+
+    source_path = Path(docling_module.__file__)
+    source_code = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source_code, filename=str(source_path))
+
+    top_level_docling_imports: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "docling" or alias.name.startswith("docling."):
+                    top_level_docling_imports.append(alias.name)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and (node.module == "docling" or node.module.startswith("docling."))
+        ):
+            top_level_docling_imports.append(node.module)
+
+    assert top_level_docling_imports == []

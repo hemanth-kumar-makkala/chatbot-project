@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
+from app.adapters.parsing.docling import DoclingDocumentParser
 from app.adapters.parsing.mock import MockDocumentParser
 from app.core.ingestion.validation import validate_file
 from app.ports.errors import (
@@ -324,11 +324,7 @@ def test_document_parser_wiring_guard_profile_matrix(
         assert isinstance(parser, DoclingDocumentParser)
         assert not isinstance(parser, MockDocumentParser)
         assert parser.artifacts_path == models_dir
-        expected_device = (
-            AcceleratorDevice.CUDA
-            if profile in ("desktop-gpu", "home-gpu")
-            else AcceleratorDevice.CPU
-        )
+        expected_device = "cuda" if profile in ("desktop-gpu", "home-gpu") else "cpu"
         assert parser.device == expected_device
 
     # 3. Row 'cloud' with DOCLING_ARTIFACTS_PATH: returns DoclingDocumentParser
@@ -336,7 +332,7 @@ def test_document_parser_wiring_guard_profile_matrix(
     assert isinstance(cloud_parser, DoclingDocumentParser)
     assert not isinstance(cloud_parser, MockDocumentParser)
     assert cloud_parser.artifacts_path == models_dir
-    assert cloud_parser.device == AcceleratorDevice.CPU
+    assert cloud_parser.device == "cpu"
 
     # Row 'cloud' without DOCLING_ARTIFACTS_PATH: raises ConfigurationError
     monkeypatch.delenv("DOCLING_ARTIFACTS_PATH", raising=False)
@@ -372,35 +368,35 @@ def test_docling_adapter_applies_offline_and_pinned_settings(
     cloud_parser = create_document_parser("cloud")
     assert isinstance(cloud_parser, DoclingDocumentParser)
     assert cloud_parser.artifacts_path == models_dir
-    assert cloud_parser.device == AcceleratorDevice.CPU
+    assert cloud_parser.device == "cpu"
 
     # 2. Inspect adapter configured options without loading any models
     opts = cloud_parser.get_configured_options()
     assert opts["artifacts_path"] == models_dir
-    assert opts["device"] == AcceleratorDevice.CPU
+    assert opts["device"] == "cpu"
     assert opts["hf_hub_offline"] == "1"
     assert "HF_HUB_OFFLINE" in os.environ and os.environ["HF_HUB_OFFLINE"] == "1"
 
-    # 3. Direct instantiation requires typed artifacts_path: Path and device: AcceleratorDevice
+    # 3. Direct instantiation requires typed artifacts_path: Path and device: ParserDevice
     custom_dir = tmp_path / "custom_models"
     custom_dir.mkdir()
     direct_parser = DoclingDocumentParser(
         artifacts_path=custom_dir,
-        device=AcceleratorDevice.CPU,
+        device="cpu",
     )
     direct_opts = direct_parser.get_configured_options()
     assert direct_opts["artifacts_path"] == custom_dir
-    assert direct_opts["device"] == AcceleratorDevice.CPU
+    assert direct_opts["device"] == "cpu"
     assert direct_opts["hf_hub_offline"] == "1"
 
     # 4. Local synthetic profile wiring also applies artifacts_path and sets offline
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     local_parser = create_document_parser("dev-free-api")
     assert isinstance(local_parser, DoclingDocumentParser)
-    assert local_parser.device == AcceleratorDevice.CPU
+    assert local_parser.device == "cpu"
     local_opts = local_parser.get_configured_options()
     assert local_opts["artifacts_path"] == models_dir
-    assert local_opts["device"] == AcceleratorDevice.CPU
+    assert local_opts["device"] == "cpu"
     assert local_opts["hf_hub_offline"] == "1"
 
 

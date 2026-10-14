@@ -176,6 +176,9 @@ class ParsedPageContent(BaseModel):
     confidence: float = 1.0
 
 
+ParserDevice = Literal["cuda", "cpu"]
+
+
 class RerankCandidate(BaseModel):
     """Search candidate item passed into reranker."""
 

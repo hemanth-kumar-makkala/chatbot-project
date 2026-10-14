@@ -176,11 +176,10 @@ def create_document_parser(profile: str) -> DocumentParser:
             error_code="DOCLING_ARTIFACTS_PATH_NOT_FOUND",
         )
 
-    from app.adapters.parsing.docling import AcceleratorDevice, DoclingDocumentParser
+    from app.adapters.parsing.docling import DoclingDocumentParser
+    from app.ports.types import ParserDevice
 
-    device = (
-        AcceleratorDevice.CUDA if profile in ("desktop-gpu", "home-gpu") else AcceleratorDevice.CPU
-    )
+    device: ParserDevice = "cuda" if profile in ("desktop-gpu", "home-gpu") else "cpu"
     return DoclingDocumentParser(artifacts_path=artifacts_path, device=device)
 
 

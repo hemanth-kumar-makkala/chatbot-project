@@ -28,7 +28,6 @@ from uuid import uuid4
 import pytest
 
 from app.adapters.parsing.docling import (
-    AcceleratorDevice,
     DoclingDocumentParser,
     build_page_reading_record,
     build_table_data_records,
@@ -79,7 +78,7 @@ class TestDoclingParserAdapterContracts:
 
         parser = DoclingDocumentParser(
             artifacts_path=Path("/tmp/models"),
-            device=AcceleratorDevice.CPU,
+            device="cpu",
         )
         page = PageArtifact(
             page_number=1,
@@ -119,7 +118,7 @@ class TestDoclingParserAdapterContracts:
 
         parser = DoclingDocumentParser(
             artifacts_path=Path("/tmp/models"),
-            device=AcceleratorDevice.CPU,
+            device="cpu",
         )
         page = PageArtifact(
             page_number=1,
@@ -276,7 +275,7 @@ class TestRealDoclingModelsDesktop:
         artifacts_path = _get_model_artifacts_path()
         parser = DoclingDocumentParser(
             artifacts_path=artifacts_path,
-            device=AcceleratorDevice.CUDA,
+            device="cuda",
         )
         spanish_pdf = create_synthetic_spanish_scanned_pdf(
             text="Atención médica: Paciente con diagnóstico de hipertensión arterial severa."
@@ -303,7 +302,7 @@ class TestRealDoclingModelsDesktop:
         artifacts_path = _get_model_artifacts_path()
         parser = DoclingDocumentParser(
             artifacts_path=artifacts_path,
-            device=AcceleratorDevice.CUDA,
+            device="cuda",
         )
         english_pdf = create_synthetic_english_scanned_pdf(
             text="Prior Authorization Request\nFax: (555) 010-0199\nMember ID: ZX4471902",
@@ -329,7 +328,7 @@ class TestRealDoclingModelsDesktop:
         artifacts_path = _get_model_artifacts_path()
         parser = DoclingDocumentParser(
             artifacts_path=artifacts_path,
-            device=AcceleratorDevice.CUDA,
+            device="cuda",
         )
         pdf_bytes = create_synthetic_digital_pdf(text="Clinical guidelines with dosage tables.")
 
@@ -359,7 +358,7 @@ class TestRealDoclingModelsDesktop:
         artifacts_path = _get_model_artifacts_path()
         parser = DoclingDocumentParser(
             artifacts_path=artifacts_path,
-            device=AcceleratorDevice.CUDA,
+            device="cuda",
         )
 
         # Build 2-page document: Page 1 legible clinical text; Page 2 blank/unreadable raster scan
