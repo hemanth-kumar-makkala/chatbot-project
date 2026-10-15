@@ -22,25 +22,28 @@ UI-020,2,Review,Exclude a flagged page,"In drawer, Exclude",Page excluded from s
 UI-021,2,Review,Retry a flagged page,"In drawer, Retry",Page re-processed; message if already running,Not run,,,
 UI-022,2,Review,Keyboard only,"Use Tab, Enter, Escape through upload, table and drawer",Every action reachable; Escape closes dialogs,Not run,,,
 UI-023,2,Layout,Narrow window,Resize browser to about 768 px wide,Nothing overlaps or breaks,Not run,,,
-UI-024,3,Chat,Send question and receive answer,"Type question, press Enter or click Send","Answer displayed with markdown and citation chips",,,,
+UI-024,3,Chat,Send question and receive answer,"Type question, press Enter or click Send","Answer displayed with markdown and citation chips",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
 UI-025,3,Chat,Conversation history sidebar,"Open chat, view left sidebar","Past conversations listed chronologically; clicking one restores message thread",Pass,10/15/2026,Srinath,UI-1 demo fixture
 UI-026,3,Chat,Assistant switcher,"Click assistant menu in TopBar, select another assistant","Navigates to new assistant chat and resets conversation context",,,,
-UI-027,3,Chat,Streaming pipeline status lines,"Submit question and observe message bubble","Status transitions: Searching documents -> Assessing evidence -> Synthesizing answer",,,,
+UI-027,3,Chat,Streaming pipeline status lines,"Submit question in demo assistant","Shows spec status lines: 'Searching Client A documents...', 'Page 31 is a scanned image, reading it now...'; live shows loading only",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
 UI-028,3,Chat,Click citation chip,"Click [1: Clinic Policy, p. 4] chip below answer","Opens embedded PDF viewer panel jumping directly to cited page",,,,
 UI-029,3,Chat,Embedded PDF viewer controls,"In PDF side panel, use zoom and page navigation controls","Document pages render clearly with search highlight on cited passage",,,,
-UI-030,3,Chat,Refusal on missing topic,"Ask a question about an unindexed clinical guideline","Assistant displays refusal card stating topic is not found in client documents",,,,
-UI-031,3,Chat,Conflicting evidence display,"Ask a question with contradictory document versions","Renders yellow warning card with both conflicting citations side-by-side",,,,
-UI-032,3,Chat,Clarification topic chips,"Ask an ambiguous query (e.g. 'prior auth')","Assistant asks for clarification and displays up to 3 clickable topic chips",,,,
-UI-033,3,Chat,Safe failure error masking,"Simulate backend 500 error or graph failure","Displays masked error card quoting reference ERR-xxxx without leaking stack trace",,,,
+UI-030,3,Chat,Refusal on missing topic,"Ask a question about an unindexed clinical guideline","Assistant displays refusal card stating 'I don't have that in Client A's documents.'",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
+UI-031,3,Chat,Conflicting evidence display,"Ask a question with contradictory document versions","Renders warning card with 'Two documents disagree:' and both citations",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
+UI-032,3,Chat,Clarification topic chips,"Ask an ambiguous query (e.g. 'prior auth')","Assistant asks for clarification and displays top 3 clickable topic chips; clicking one asks it",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
+UI-033,3,Chat,Safe failure error masking,"Simulate backend 500 error or graph failure","Displays masked error card quoting reference ERR-xxxx without leaking stack trace",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
 UI-034,4,Extraction,Session document upload,"In chat, attach patient fax PDF or image","File uploaded with badge 'Temporary session document - not indexed'",,,,
 UI-035,4,Extraction,Dual-read side-by-side table,"Submit extraction request on uploaded session fax","Split view renders page image on left and structured field table on right",,,,
 UI-036,4,Extraction,Field status badges,"Inspect field values in extraction table","Badges indicate FILLED_HIGH (green), CONFLICTING (orange), UNREADABLE (red/grey)",,,,
 UI-037,4,Extraction,Interactive field highlighting,"Click a field row in extraction table","Corresponding bounding box or region highlights on the document page image",,,,
 UI-038,5,Feedback,Submit answer feedback,"Click thumbs down on answer card, select reason and submit","Feedback submitted to backend; confirmation checkmark displayed",,,,
 UI-039,5,Guardrails,Chat query rate limit warning,"Send rapid successive queries exceeding rate limit","Input disables with countdown: 'Query limit reached. Please wait X seconds'",,,,
-UI-040,3,Chat,General task draft,"Ask a general administrative question (e.g. email template) not in clinic documents","Renders draft response marked with ungrounded warning badge",,,,
+UI-040,3,Chat,General task draft,"Ask a general administrative question (e.g. email template) not in clinic documents","Renders draft response marked with ungrounded warning badge",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
 UI-041,1,Assistants,Assistant picker screen,"Log in, navigate to /assistants","Shows assistant cards with client name, specialty, doc count, demo chip",Pass,10/15/2026,Srinath,UI-1 demo fixture
 UI-042,1,Assistants,Select assistant from picker,"Click assistant card (e.g. Maple Ridge)","Navigates to /assistants/[id]/chat with selected assistant context",Pass,10/15/2026,Srinath,UI-1 demo fixture
 UI-043,1,Data Source,Missing NEXT_PUBLIC_DATA_SOURCE,"Launch app or tests without NEXT_PUBLIC_DATA_SOURCE","Throws fixed error: NEXT_PUBLIC_DATA_SOURCE is required and must be either 'live' or 'demo'.",Pass,10/15/2026,Srinath,UI-1 invariant test
 UI-044,1,Data Source,Data source chips on screen,"Inspect TopBar or section header in picker and chat","Displays Live (green) or Demo (lavender) chip according to connections map",Pass,10/15/2026,Srinath,UI-1 chip component
 UI-045,3,Chat,New conversation button,"Click '+ New Conversation' in chat sidebar","Resets active conversation and clears message thread",Pass,10/15/2026,Srinath,UI-1 chat layout
+UI-046,3,Chat,Table answer citing sheet and row,"Ask table lookup question (e.g. annual deductible)","Renders table answer citing sheet name and row number",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
+UI-047,3,Chat,Visual answer with thumbnail placeholder,"Ask question answered from scanned fax image","Marked as read from image with clearly labelled placeholder frame",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
+UI-048,3,Chat,Demo suggested questions in empty chat,"Open demo assistant in empty state","Shows suggested questions from evals/golden/questions.json; one click submits",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx

@@ -43,6 +43,9 @@ parsing = [
     "torch==2.14.1",
     "torchvision==0.29.1",
 ]
+retrieval = [
+    "sentence-transformers==6.1.0",
+]
 
 
 [build-system]

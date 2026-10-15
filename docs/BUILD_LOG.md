@@ -26,7 +26,7 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Formatted Phase 1 to execute on the 8 GB RAM dev machine with mock profile and 3 GB Docker cap.
 - **Open Issues**:
   - Exact 9 node names in LangGraph question flow and 8 steps in ingestion pipeline noted from diagram placeholders; documented in `docs/OPEN_QUESTIONS.md`.
-  - Compliance reviews for AI Studio migration and pilot client retention policy pending with Dan.
+  - Compliance reviews for AI Studio migration and pilot client retention policy pending with the product owner.
 
 ---
 
@@ -38,11 +38,11 @@ Append-only record of all completed tasks, architectural choices, and test recor
     - Phase 0: Foundations (runs on planning, exit gate: Compliance route confirmed in writing).
     - Phase 1: Engine on mock profile (runs on 8 GB office PC, exit gate: Every invariant and failure-mode test passes on mock profile).
     - Phase 2: Ingestion (runs on office PC then desktop-gpu, exit gate: Golden docs ingested twice with zero duplicates; includes Knowledge page, no admin dashboard).
-    - Phase 3: Retrieval and answers (runs on desktop-gpu, exit gate: Baseline metrics recorded, zero cross-tenant leaks; chat UI with streaming status lines and pdf.js source panel built here for Dan's demo).
+    - Phase 3: Retrieval and answers (runs on desktop-gpu, exit gate: Baseline metrics recorded, zero cross-tenant leaks; chat UI with streaming status lines and pdf.js source panel built here for the product owner's demo).
     - Phase 4: Vision and extraction (runs on desktop-gpu, exit gate: False-fill and visual recovery baselines recorded; question-time vision read, dual read compare, normalized visual value comparison, side-by-side extraction table UI).
     - Phase 5: Hardening (runs on desktop-gpu, exit gate: Security suite passes, capacity curve drawn; guardrails, injection suite, cross-tenant adversarial suite, rate limits, Presidio scrubbing, feedback capture, Locust capacity curve, backups with tested restore).
     - Phase 6: Cloud staging on GCP (runs on GCP, exit gate: Scores hold on cloud, monthly cost measured; Cloud SQL, Cloud Storage, Cloud Run, Vertex AI, Secret Manager, self-hosted BGE-M3, synthetic data only).
-    - Phase 7: Pilot with one client (runs on GCP, exit gate: Dan signs off and Chatbase is cancelled; real data under BAA, 2-week side-by-side with Chatbase).
+    - Phase 7: Pilot with one client (runs on GCP, exit gate: the product owner signs off and Chatbase is cancelled; real data under BAA, 2-week side-by-side with Chatbase).
   - Merged `eval/` into `evals/`: unified structure into `evals/golden/` and `evals/reports/`. Updated `evals/README.md`, root `README.md`, and all phase references. Removed obsolete `eval/` directory.
   - Updated `docker-compose.yml` to match spec comment line `# postgres(pgvector), api, worker, web, langfuse (optional)` and explicitly budget service memory to the 3 GB dev constraint.
   - Verified `backend/config/profiles/desktop-gpu.yaml` matches the spec (`qwen3-vl:4b` for answer and vision roles, embeddings and reranker on CPU).
@@ -1484,7 +1484,7 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 - **Task ID**: UI-0
 - **What Was Built / Documented**:
-  - **Strategic Reorientation**: Recorded new direction from Srinath: "We build the complete UI first, across all phases, then connect the backend screen by screen." Adapter 3 (BGE-M3 embedding provider) paused while UI is established.
+  - **Strategic Reorientation**: Recorded new direction from the product owner: "We build the complete UI first, across all phases, then connect the backend screen by screen." Adapter 3 (BGE-M3 embedding provider) paused while UI is established.
   - **Comprehensive UI Inventory** (`docs/ui/UI_INVENTORY.md`):
     - Audited `Client Knowledge Assistant Architecture and Build Plan.md`, `docs/phases/PHASE-0.md` through `PHASE-7.md`, `docs/ui/KNOWLEDGE_PAGE_SPEC.md`, `API_CONTRACT_NOTES.md`, `BUILD_NOTES.md`, and `docs/decisions/`.
     - Documented all 22 screens, panels, and states across Platform Admin, Client Admin, and Staff for Phases 1–5:
@@ -1508,7 +1508,7 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-10-15] TASK: UI-0 Review & Alignment — Node Numbers, Citations, Model Roles, and Srinath Decisions
+### [2026-10-15] TASK: UI-0 Review & Alignment — Node Numbers, Citations, Model Roles, and Product Owner Decisions
 
 - **Task ID**: UI-0 Review
 - **What Was Corrected / Built**:
@@ -1535,7 +1535,7 @@ Append-only record of all completed tasks, architectural choices, and test recor
     - Proved re-upload after retire passes under migration 0010 (`test_migration_0010.py` and `test_upload_dedup_rules.py` 6 passed); marked Pass in checklist and removed "known bug" in map.
     - Checked page image route RBAC in `backend/app/api/routes/knowledge.py:290`: confirmed it is currently `client_admin` only, and documented the requirement for a tenant-scoped staff-allowed route for Phase 3/4 chat thumbnails and PDF preview.
   - **Decisions Recorded (`docs/OPEN_QUESTIONS.md` & `docs/STATUS.md`)**:
-    - Platform admin has no screen for now (out-of-band scripts); open for Dan due to line 78 vs 588 conflict.
+    - Platform admin has no screen for now (out-of-band scripts); open for the product owner due to line 78 vs 588 conflict.
     - `GET /v1/assistants`, PDF file streaming route, conversations/messages, and session upload are built as each screen is connected.
     - Streaming receives a new endpoint (`POST /v1/questions/stream` via SSE) in Task 3.6 while JSON endpoint remains intact, with an ADR.
   - **QA Checklist (`docs/qa/UI_TEST_CHECKLIST.csv`)**:
@@ -1626,3 +1626,72 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - **Web Typecheck**: `npm --prefix web run typecheck` passed with 0 errors.
   - **Backend Cited Proof Tests**: Recorded in `D:\dev\tmp\agent-logs\main-cited-tests.txt` (all 89 tests passed in 23.56s with `$env:APP_PROFILE="mock"` across `test_api_auth_endpoints.py`, `test_api_knowledge_endpoints.py`, `test_upload_service.py`, `test_upload_dedup_rules.py`, `test_api_knowledge_step2.py`, `test_api_knowledge_step3.py`, `test_graph_end_to_end.py`, and `test_retrieval_fallbacks.py`).
   - **Pre-commit**: 10/10 hooks passing.
+
+---
+
+### [2026-10-15] TASK: UI-2 — Answer Presentation Types, Status Lines, and Demo Scenarios
+
+- **Task ID**: UI-2
+- **What Was Built**:
+  - **Part A: Verbatim Quotes & Spec Section Name Alignment** (`docs/ui/UI_INVENTORY.md` & `docs/ui/CONNECTION_MAP.md`):
+    - Replaced all non-spec section names across both docs with the 21 valid spec section names from `Client Knowledge Assistant Architecture and Build Plan.md`.
+    - Aligned all 4 mandatory quotes verbatim:
+      1. Client admin flow step 4: `"Uploads a newer version of a file. Old chunks are retired, the new version becomes active, and history is kept for audit."`
+      2. Query flow Node 2: `"general: 7, no retrieval, may not state client facts."`
+      3. Invariant 5: `"Visual readings are derived evidence: always cited as visual, shown with the page image, never treated as equal to original text"`
+      4. Staff day step 4: `"Searching Client A documents...", then "Page 31 is a scanned image, reading it now...". About 10 seconds later: the answer, marked as read from an image, with the page thumbnail.`
+    - Audited all double-quoted strings against spec/source documents via `final_quote_audit.py`:
+      - `docs/ui/CONNECTION_MAP.md`: 32 quotes found, 32/32 matched verbatim.
+      - `docs/ui/UI_INVENTORY.md`: 110 quotes found, 110/110 matched verbatim.
+  - **Part B: Response Model Contracts & Golden Demo Fixtures** (`web/lib/api.ts` & `web/lib/demo/fixtures.ts`):
+    - Extended `SourceCitation` with optional `sheet_name?: string`, `row_number?: number`, and `language?: string`.
+    - Extended `QuestionResponse` with `route?: string`, `answer_mode?: string`, `clarify_topics?: string[]`, and `status_lines?: string[]`.
+    - Defined `DEMO_SUGGESTED_QUESTIONS` containing 8 canned scenario prompts, each mapped with code comments to exact question IDs in `evals/golden/questions.json`:
+      - Standard text: `TF-003` (Standard Prior Auth Advance Notice)
+      - Table: `TL-011` (Pediatric Vaccine Fee Schedule)
+      - Visual evidence: `VR-007` (Intake Form Insurance Carrier & Fax Number)
+      - Refusal: `NOA-002` (Acupuncture Coverage Policy)
+      - Conflict: `CONF-001` (Front Desk Intake Fax Number)
+      - Clarify: `TF-001` (Prior Auth Submission Guidelines)
+      - General task: `TF-010` (Prior Auth Request Email Template)
+      - Safe failure / injection refusal: `INJ-001` (System Prompt Override Attempt)
+    - Implemented `getDemoAssistantAnswer` returning tailored fixture responses for all 8 scenarios plus fallback unknown-route handling.
+    - Implemented `getDemoStatusLines` returning spec status lines for demo queries (`Searching Client A documents...`, `Page 31 is a scanned image, reading it now...`).
+  - **Part B: Chat Presentation & Scenarios** (`web/app/assistants/[assistantId]/chat/page.tsx`):
+    - Rendered all spec answer types:
+      - Standard text answer with citation chips (`document`, `version`, `page`) and language pill (`Source (Spanish)` / `[Spanish]`).
+      - Table answer citing `Sheet: <name>` and `Row: <num>`.
+      - Visual answer marked with Visual Evidence badge and placeholder frame (`[Page Thumbnail Placeholder]`).
+      - Refusal response (`"I don't have that in Client A's documents."`).
+      - Conflict response (`"Two documents disagree: (Conflicting Sources)"` with citations from both conflicting documents).
+      - Clarify response with top 3 topics rendered as interactive chips (clicking one immediately submits the question).
+      - General task draft with ungrounded warning badge (`Ungrounded Draft - Verify before sending`).
+      - Safe failure response displaying public error reference (`Reference: ERR-xxxx`).
+      - Unknown / malformed response safe friendly fallback (`"The assistant returned an unexpected response format."`).
+    - Status lines isolation:
+      - Live assistant shows loading indicator only (never fake status lines).
+      - Demo assistants display spec status lines (`› Searching Client A documents...`, `› Page 31 is a scanned image, reading it now...`).
+    - Demo scenarios empty chat:
+      - When chat thread is empty for a demo assistant, renders a quick-start suggested question grid citing golden IDs.
+  - **QA Checklist & Status Updates**:
+    - Updated `docs/ui/CONNECTION_MAP.md`: updated General Task Draft row to `UI renders it; backend path exists; not reachable from the UI on mock`.
+    - Updated `docs/qa/UI_TEST_CHECKLIST.csv`: marked UI-024, UI-027, UI-030, UI-031, UI-032, UI-033, UI-040 as Pass; added UI-046, UI-047, UI-048.
+    - Updated `docs/STATUS.md`: recorded Task UI-2 complete, next task UI-3.
+- **Tests Added & Verification**:
+  - `web/__tests__/ui2.test.tsx` (12 tests):
+    - Empty chat shows suggested demo questions for demo assistant.
+    - Empty chat does not show suggested demo questions for live assistant.
+    - Renders standard text answer with source citation chips and Spanish language indicator.
+    - Renders table answer citing sheet name and row number.
+    - Renders visual answer marked as read from image with page thumbnail placeholder.
+    - Renders refusal answer with exact spec text.
+    - Renders conflict answer with "Two documents disagree" and both citations.
+    - Renders clarify answer with interactive topic chips, and clicking one triggers question.
+    - Renders general task draft with ungrounded badge.
+    - Renders safe failure with reference code.
+    - Safe friendly message when response has unknown route or invalid format.
+    - Live assistant shows loading indicator only (no fake status lines); demo assistant shows spec status lines.
+  - **TDD Failing Run**: Initial run on `ui2.test.tsx` failed with exit code 1 (9 failed, 3 passed; logged in `D:\dev\tmp\agent-logs\main-failing-ui2.txt`).
+  - **TDD Passing Run**: Post-implementation run on `ui2.test.tsx` passed all 12 tests in 314ms (logged in `D:\dev\tmp\agent-logs\main-passing-ui2.txt`).
+  - **Full Web Suite Run**: All 7 test files (69 tests) pass (`D:\dev\tmp\agent-logs\main-all-web-tests-4.txt`).
+  - **Typecheck**: `npm --prefix web run typecheck` passed with 0 errors.

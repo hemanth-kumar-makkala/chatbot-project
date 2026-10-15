@@ -7,7 +7,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 ## 1. Architectural Guardrails & Role Principles
 
 1. **No Admin Dashboards Rule**:
-   - Architecture Spec (sections "Platform Admin", "End result: how people will use it") and `docs/ui/KNOWLEDGE_PAGE_SPEC.md` (section "Core principles"): **"No admin dashboards. The Knowledge page and its review list are the only admin screens."**
+   - Architecture Spec (spec section "End result: how people will use it") and `docs/ui/KNOWLEDGE_PAGE_SPEC.md` (section "Purpose"): **"No admin dashboards. The Knowledge page and its review list are the only admin screens."**
    - The application does not contain generic administrative overview pages, metric graphs, analytics charts, or platform administration dashboards.
 2. **Role Capabilities (spec section "End result: how people will use it")**:
    - **Platform Admin (Staffingly)**: Create clients and assistants, manage users, view traces and audit logs (Note: see Section 4 on administrative boundaries).
@@ -29,15 +29,15 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Platform Admin, Client Admin, Staff
 - **Phase**: Phase 1 (Engine / Auth) & Phase 2 (Task 2.8b)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" (Node 1), "Security, HIPAA and guardrails", "End result: how people will use it" (Roles), "Swappable components and vendor isolation" (production auth undecided: built-in or Identity Platform, with SSO listed as a later option)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" (Node 1), "Security, HIPAA and guardrails", "End result: how people will use it" (Roles), "Core principle: a fixed engine with swappable parts" (production auth undecided: built-in or Identity Platform, with SSO listed as a later option)
   - `docs/ui/KNOWLEDGE_PAGE_SPEC.md`: Section "Screens" item 1
   - `docs/ui/BUILD_NOTES.md`: Section 1 "Step 4: Foundations & Authentication"
   - `docs/decisions/ADR-0007-session-auth-and-csrf.md`: Section 3
 - **What the User Sees and Does**:
   - Sees Staffingly brand gradient background (`#0037B2` to `#A941C6`), centered authentication card, wordmark, email and password inputs, sign-in button, and accessible error banners.
   - Submits valid credentials: sets HttpOnly `session_token` cookie and `csrf_token` cookie; automatically redirects to target assistant page or default `/assistants/[assistantId]/knowledge`.
-  - Submits invalid credentials: sees masked error `"Invalid email or password. Please check your credentials."`.
-  - Rate limited (5 failed attempts within 60s): sees `"Too many failed login attempts. Please wait before retrying."` (HTTP 429).
+  - Submits invalid credentials: sees masked invalid credentials error.
+  - Rate limited (5 failed attempts within 60s): sees rate limit warning message (HTTP 429).
   - Unauthenticated access to protected routes redirects to `/login?redirect=...`.
 - **Status**: **Built** (`web/app/login/page.tsx`; verified by unit test `foundations.test.ts` and `UI_TEST_CHECKLIST.csv` UI-001 Pass).
 
@@ -76,7 +76,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Client Admin
 - **Phase**: Phase 2 (Task 2.2, Task 2.8b)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A client admin's flow" steps 2 & 4: *"Uploads a newer version of a document. The old version remains active until the new version is verified. Once verified, the new version becomes active and the old version is archived."*), "Open decisions" (malware scanner undecided: OPEN_QUESTIONS 2.2)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A client admin's flow" steps 2 & 4: "Uploads a newer version of a file. Old chunks are retired, the new version becomes active, and history is kept for audit."), "Risks and open decisions" (malware scanner undecided: OPEN_QUESTIONS 2.2)
   - `docs/phases/PHASE-2.md`: Task 2.2, Task 2.8
   - `docs/ui/KNOWLEDGE_PAGE_SPEC.md`: Section "Screens" item 2
 - **What the User Sees and Does**:
@@ -114,7 +114,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/ui/KNOWLEDGE_PAGE_SPEC.md`: Section "Screens" item 2
 - **What the User Sees and Does**:
   - Clicking "Retire" opens accessible modal dialog. Focus is trapped; Escape closes.
-  - Prompts confirmation: "Are you sure you want to retire this document? Chunks will be deactivated from search immediately."
+  - Prompts confirmation to retire the document and deactivate its chunks from search.
   - Confirming triggers `DELETE .../knowledge/documents/{document_id}` with CSRF token.
   - Document transitions to `Retired` state and action is greyed out.
 - **Status**: **Built** (`web/components/ConfirmDialog.tsx`; verified by `knowledge_page.test.tsx` and UI-016 Pass).
@@ -123,7 +123,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Client Admin
 - **Phase**: Phase 2 (Task 2.8b, Task 2.8a Step 2/3)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A client admin's flow" step 3), "Failure handling"
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A client admin's flow" step 3), "Failure handling and fallbacks"
   - `docs/phases/PHASE-2.md`: Task 2.8
   - `docs/ui/KNOWLEDGE_PAGE_SPEC.md`: Section "Screens" item 3, "Review reason labels"
 - **What the User Sees and Does**:
@@ -149,7 +149,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/phases/PHASE-3.md`: Task 3.7, Dependencies
 - **What the User Sees and Does**:
   - Main messaging window with message thread, auto-scroll to latest response, and message input field with Send button (Enter submits).
-  - Empty state with welcoming instructions ("Ask any clinical process, prior authorization, or payer question").
+  - Empty state with welcoming instructions to ask clinical process, prior authorization, or payer questions.
   - Sends question via `lib/api.ts` with CSRF token and credentials.
   - Real loading spinner while waiting for generation.
 - **Status**: **Built** (`web/app/assistants/[assistantId]/chat/page.tsx`; verified by `test_graph_end_to_end.py`).
@@ -163,14 +163,14 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **What the User Sees and Does**:
   - Left-hand drawer or sidebar listing past conversations for the selected client assistant, sorted by recency.
   - Clicking a conversation restores message thread and active `conversation_id`.
-  - "New Conversation" button to start a fresh un-checkpointed thread.
+  - New Conversation button to start a fresh un-checkpointed thread.
 - **Status**: **Not built** (`conversations` DB table exists; API routes `GET .../conversations` and `GET .../messages` to be built when screen is connected).
 
 #### UI-SCR-10: Client Assistant Selector / Switcher
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.7)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day" step 1: *"Logs in and sees only the assistants for clients they belong to. Opens Client A Assistant."*)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day" step 1: Logs in and sees only the assistants for clients they belong to. Opens "Client A Assistant".)
   - `docs/phases/PHASE-3.md`: Task 3.7
 - **What the User Sees and Does**:
   - Dropdown selector or modal dialog listing client assistants accessible to the authenticated user.
@@ -181,27 +181,25 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.6, Task 3.7)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day" steps 3–4: *"Sees 'Searching Client A documents...', then 'Page 31 is a scanned image, reading it now...', then the answer appears with a source chip."*)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day" steps 3–4: "Searching Client A documents...", then "Page 31 is a scanned image, reading it now...". About 10 seconds later: the answer, marked as read from an image, with the page thumbnail.)
   - `docs/phases/PHASE-3.md`: Task 3.6, Task 3.7
 - **What the User Sees and Does**:
   - Dynamic progress message displayed inline above the incoming message bubble while LangGraph traverses nodes:
-    - `"Searching {client_name} documents..."` (Node 3 `retrieve`)
-    - `"Assessing evidence..."` (Node 5 `assess_evidence`)
-    - `"Page {N} is a scanned image, reading it now..."` (Node 6 `vision_read` question-time status line for scanned pages; Spec section "End result: how people will use it")
-    - `"Synthesizing answer..."` (Node 7 `generate`)
+    - `"Searching Client A documents..."` (Spec section "End result: how people will use it" step 4)
+    - `"Page 31 is a scanned image, reading it now..."` (Spec section "End result: how people will use it" step 4)
 - **Status**: **Not built** (SSE streaming endpoint planned for Task 3.6).
 
 #### UI-SCR-12: Grounded Answer Card with Interactive Citation Chips, Visual Badge & Language Label
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.7) & Phase 4 (Task 4.2)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Executive summary" Goal 4, "Security, HIPAA and guardrails" Invariant 5 (*"Visual readings are cited as visual evidence and displayed with page thumbnails"*), "End result: how people will use it" ("A staff member's day"), "Answer modes", "Language" (source language label for Spanish/translated docs)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Goals, non-goals and success criteria" Goal 4 ("Show the source: document, version, page, and a page thumbnail."), "The 15 invariants" Invariant 5 ("Visual readings are derived evidence: always cited as visual, shown with the page image, never treated as equal to original text"), "End result: how people will use it" ("A staff member's day"), "Query flow" ("Language") (source language label for Spanish/translated docs)
   - `docs/phases/PHASE-3.md`: Task 3.7
   - `docs/phases/PHASE-4.md`: Task 4.2
 - **What the User Sees and Does**:
   - Formatted answer card rendering verified text according to answer mode (`exact`, `short`, `explain`, `table`).
-  - Source chips below answer text displaying Document Title, Version (`v1`), Page Number (`Page 12`), and Source Language label when applicable (e.g. `[Spanish]`; Spec section "Language").
-  - Visual answer badge: lavender "Visual Reading" badge (`--color-lavender`) when `evidence_type === "visual"`.
+  - Source chips below answer text displaying Document Title, Version (`v1`), Page Number (`Page 12`), and Source Language label when applicable (e.g. `[Spanish]`; Spec section "Query flow" ("Language")).
+  - Visual answer badge: lavender visual evidence badge (`--color-lavender`) when `evidence_type === "visual"`.
   - Page thumbnail: rendered thumbnail image of the cited visual page alongside the answer (Goal 4, Invariant 5, Task 4.2).
   - Clicking a source chip triggers the embedded PDF.js source panel viewer.
 - **Status**: **Partly built** (Answer card and source chips built in `chat/page.tsx:149-198`; page thumbnail and language label pending).
@@ -222,21 +220,21 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.3, Task 3.7)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day": *"Asks something not in the documents. Gets: 'I don't have that in Client A's documents.'"*), "Failure handling"
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it" ("A staff member's day": Asks something not in the documents. Gets: "I don't have that in Client A's documents."), "Failure handling and fallbacks"
   - `docs/phases/PHASE-3.md`: Task 3.3
 - **What the User Sees and Does**:
   - Distinct neutral warning card when Node 5 (`assess_evidence`) determines evidence is weak or absent:
-    `"I cannot find information about [topic] in [Client]'s validated documents."`
+    `"I don't have that in Client A's documents."`
 - **Status**: **UI renders it; backend path exists; not reachable from the UI on mock** (UI rendering code in `chat/page.tsx:202`; backend path in Node 5/7 verified by `test_retrieval_fallbacks.py:73` and `test_graph_end_to_end.py:150`; unreachable in live UI on mock because `questions.py:118` hardcodes mock evidence).
 
 #### UI-SCR-15: Conflicting Evidence Resolution Presentation
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.3, Task 3.7)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" Node 5, "Failure handling" (*"Two documents disagree: with both citations"*)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" Node 5, "Failure handling and fallbacks" ("Two documents disagree:" with both citations)
   - `docs/phases/PHASE-3.md`: Task 3.3
 - **What the User Sees and Does**:
-  - Prominent "Conflicting Sources" badge with warning card when Node 5 (`assess_evidence`) detects contradictory evidence.
+  - Prominent conflicting sources badge with warning card when Node 5 (`assess_evidence`) detects contradictory evidence.
   - Renders both citations side-by-side (Document A, Version, Page vs Document B, Version, Page) so staff can immediately identify policy discrepancies.
 - **Status**: **UI renders it; backend path exists; not reachable from the UI on mock** (UI rendering in `chat/page.tsx:225`; backend path verified by `test_graph_end_to_end.py:175`; unreachable in live UI on mock because `questions.py:118` hardcodes single non-conflicting evidence).
 
@@ -244,7 +242,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.7), Phase 1 (Task 1.6), ADR-0002
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" Node 2 `route` (*"clarify: 9 with the top 3 matching topics"*)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow" Node 2 `route` ("clarify: 9 with the top 3 matching topics")
   - `docs/OPEN_QUESTIONS.md`: Item 1.6 (clarify topics via Retriever title search)
   - `docs/phases/PHASE-1.md`: Task 1.6
   - `docs/decisions/ADR-0002-clarify-topics-and-extraction-subgraph.md`: Section 1
@@ -257,22 +255,22 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.7), Goal 6
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Executive summary" Goal 6 (general task fallback), "Query flow" Node 2 `route` (*"general: 7 (drafts response using general reasoning, marked as ungrounded)"*)
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Goals, non-goals and success criteria" Goal 6 ("Handle general tasks (drafting an email) without the knowledge base, without stating client facts."), "Query flow" Node 2 `route` ("general: 7, no retrieval, may not state client facts.")
 - **What the User Sees and Does**:
   - When a staff member asks for general administrative or clerical assistance not found in client documents (e.g. drafting a polite email template or formatting a schedule):
     Assistant drafts a helpful response using general reasoning, marked with a prominent ungrounded warning badge:
-    `"General Task Draft — Not grounded in client knowledge documents"`.
+    marked with an ungrounded general task draft label indicating it is not grounded in client documents.
 - **Status**: **Not rendered by UI yet; backend path exists in graph** (Backend path passes in `backend/tests/integration/test_graph_end_to_end.py:83` `test_e2e_general_task`; chat frontend does not yet render specialized card).
 
 #### UI-SCR-18: Safe Failure & System Error Presentation
 - **Target Roles**: Staff, Client Admin
 - **Phase**: Phase 3 (Task 3.7), Phase 1 (Task 1.6)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow", "Observability and compliance logging"
-  - `docs/FAILURE_MODES.md`: "Safe failure"
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Query flow", "Logging and observability"
+  - `docs/FAILURE_MODES.md`: "Failure handling and fallbacks"
 - **What the User Sees and Does**:
   - When backend encounters an unrecoverable failure, assistant card renders:
-    `"An error occurred. Please contact support quoting reference ERR-XXXXXX."`
+    `"I'm having trouble right now. Reference: ERR-7K42"` (public reference format ERR-xxxx).
   - Internal request ID and stack traces are masked; random public error reference is displayed in monospace.
 - **Status**: **UI renders it; backend path exists; not reachable from the UI on mock** (UI rendering in `chat/page.tsx:268`; backend path verified by `test_graph_end_to_end.py:195`; unreachable in live UI on mock during normal queries).
 
@@ -288,7 +286,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/phases/PHASE-4.md`: Task 4.3, Task 4.6
 - **What the User Sees and Does**:
   - Upload icon / button inside chat input area allowing staff to upload patient files (PDF/image faxes).
-  - Clear visual indicator: **"Session document — stays in this conversation only, never indexed into knowledge base"** (Invariant 7).
+  - Clear visual indicator: session document indicator (stays in this conversation only, never indexed into knowledge base) ("The 15 invariants" Invariant 7: "PHI uploaded in chat never enters the shared knowledge index unless explicitly promoted").
   - Progress bar while file is parsed and queued for extraction.
 - **Status**: **Not built** (`session_documents` DB table exists; API route `POST /v1/conversations/{id}/documents` to be built when screen is connected).
 
@@ -308,17 +306,17 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 - **Target Roles**: Staff
 - **Phase**: Phase 4 (Task 4.5, Task 4.6)
 - **Source Doc & Section**:
-  - `Client Knowledge Assistant Architecture and Build Plan.md`: "Extraction and dual-read compare" (Field states for extraction), "Security, HIPAA and guardrails" Invariant 6
+  - `Client Knowledge Assistant Architecture and Build Plan.md`: "The 15 invariants" (Field states for extraction), "The 15 invariants" Invariant 6 ("Unreadable fields get an explicit state, never a guess")
   - `docs/phases/PHASE-4.md`: Task 4.5 (field state engine)
 - **What the User Sees and Does**:
   - Field status chips per row:
     - `FILLED_HIGH`: solid green (dual reads agree, check digits pass)
     - `FILLED_MEDIUM`: amber (single reading or lower confidence)
-    - `CONFLICTING`: orange/red highlight showing both divergent values (e.g. "Read 1: 12345 | Read 2: 12346")
+    - `CONFLICTING`: orange/red highlight showing both divergent values (e.g. Read 1: 12345 | Read 2: 12346)
     - `UNREADABLE`: red/grey badge; value cell is blank with warning icon (never guessed)
     - `INVALID`: red warning (failed validation check digit or date format)
-    - `NOT_PRESENT`: grey badge ("Not on document")
-    - `NOT_APPLICABLE`: subdued badge ("N/A")
+    - `NOT_PRESENT`: grey badge (not on document)
+    - `NOT_APPLICABLE`: subdued badge (not applicable)
 - **Status**: **Not built**.
 
 ---
@@ -333,7 +331,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/phases/PHASE-5.md`: Task 5.5
 - **What the User Sees and Does**:
   - Subtle thumbs up / thumbs down icon buttons on every assistant answer card.
-  - Clicking thumbs down opens small popover with structured reason options: "Inaccurate", "Too long", "Wrong source cited", "Other", with optional freeform text comment.
+  - Clicking thumbs down opens small popover with structured reason options: inaccurate, too long, wrong source cited, or other, with optional freeform text comment.
   - Submits feedback to backend `feedback` table for quality evaluation.
 - **Status**: **Not built** (`feedback` DB table exists; API route `POST /v1/questions/{message_id}/feedback` to be built when screen is connected).
 
@@ -345,7 +343,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/phases/PHASE-5.md`: Task 5.1 (per-user and per-tenant rate limits on question endpoint; technology not specified in docs)
 - **What the User Sees and Does**:
   - If a user or tenant exceeds question rate limits, input disables temporarily with countdown or message bubble renders:
-    `"Query limit reached. Please wait X seconds before asking another question."` (HTTP 429).
+    query rate limit message with retry countdown (HTTP 429).
 - **Status**: **Partly built** (API rate limits exist on login; chat question query rate limiting UI not yet implemented).
 
 ---
@@ -363,18 +361,18 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 
 ---
 
-## 4. Architectural Boundaries & Decisions (Recorded with Srinath)
+## 4. Architectural Boundaries & Decisions (Recorded with the product owner)
 
 1. **Platform Admin Interface**:
    - The architecture specification describes Platform Admin operations (section "End result: how people will use it": *"Create clients and assistants, manage users, view traces and audit logs"*), while the fixed ordering rules mandate: *"No admin dashboards. The Knowledge page and its review list are the only admin screens"* (section "Build plan").
-   - **Decision (Srinath)**: Platform admin has **no screen for now**; operations are executed out-of-band via CLI scripts (e.g. `scripts/seed_dev_data.py`) and direct migrations. This item remains documented as open for Dan's review (`docs/OPEN_QUESTIONS.md` Item 2.1) due to the specification tension between section "End result: how people will use it" and section "Build plan".
+   - **Decision (the product owner)**: Platform admin has **no screen for now**; operations are executed out-of-band via CLI scripts (e.g. `scripts/seed_dev_data.py`) and direct migrations. This item remains documented as open for the product owner's review (`docs/OPEN_QUESTIONS.md` Item 2.1) due to the specification tension between section "End result: how people will use it" and section "Build plan".
 2. **Assistant Switcher Route**:
-   - **Decision (Srinath)**: `GET /v1/assistants` (tenant-scoped discovery returning accessible assistants and display names) will be built when the assistant switcher screen is connected.
+   - **Decision (the product owner)**: `GET /v1/assistants` (tenant-scoped discovery returning accessible assistants and display names) will be built when the assistant switcher screen is connected.
 3. **Embedded PDF.js Document File Streaming**:
-   - **Decision (Srinath)**: A dedicated, tenant-scoped, staff-allowed route (`GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/file`) will be built when the PDF viewer screen is connected to stream raw document bytes to `pdf.js`.
+   - **Decision (the product owner)**: A dedicated, tenant-scoped, staff-allowed route (`GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/file`) will be built when the PDF viewer screen is connected to stream raw document bytes to `pdf.js`.
 4. **Chat Conversation History & Session Document Upload**:
-   - **Decision (Srinath)**: Conversation routes (`GET /v1/assistants/{assistant_id}/conversations`, `GET /v1/conversations/{conversation_id}/messages`) will be built in Phase 3 when the conversation history sidebar is connected. The session document upload route (`POST /v1/conversations/{conversation_id}/documents`) will be built in Phase 4 when session document upload is connected.
+   - **Decision (the product owner)**: Conversation routes (`GET /v1/assistants/{assistant_id}/conversations`, `GET /v1/conversations/{conversation_id}/messages`) will be built in Phase 3 when the conversation history sidebar is connected. The session document upload route (`POST /v1/conversations/{conversation_id}/documents`) will be built in Phase 4 when session document upload is connected.
 5. **Real-Time Streaming Protocol (SSE)**:
-   - **Decision (Srinath)**: Streaming will receive a new endpoint in Task 3.6 (`POST /v1/questions/stream` using Server-Sent Events) and the synchronous JSON endpoint (`POST /v1/questions`) will remain intact, with an ADR authored at that time.
+   - **Decision (the product owner)**: Streaming will receive a new endpoint in Task 3.6 (`POST /v1/questions/stream` using Server-Sent Events) and the synchronous JSON endpoint (`POST /v1/questions`) will remain intact, with an ADR authored at that time.
 6. **Page Image Route RBAC**:
    - In code (`backend/app/api/routes/knowledge.py:290`), `get_page_image` requires `get_client_admin_tenant_context_for_assistant`. Because staff members in chat require page thumbnails (Invariant 5) and source previews (Spec section "End result: how people will use it"), a staff-allowed page image / document route scoped to the tenant is required for Phase 3 and Phase 4.

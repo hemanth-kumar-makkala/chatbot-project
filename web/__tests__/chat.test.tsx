@@ -31,6 +31,7 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.NEXT_PUBLIC_DATA_SOURCE = "live";
     vi.mocked(api.getCurrentUser).mockResolvedValue({
       ok: true,
       status: 200,

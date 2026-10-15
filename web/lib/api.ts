@@ -477,6 +477,9 @@ export interface SourceCitation {
   version: string;
   page_number: number;
   evidence_type: string;
+  sheet_name?: string | null;
+  row_number?: number | null;
+  language?: string | null;
 }
 
 export interface QuestionResponse {
@@ -488,6 +491,10 @@ export interface QuestionResponse {
   answer: string;
   citations: string[];
   evidence_type?: string | null;
+  route?: string | null;
+  answer_mode?: string | null;
+  clarify_topics?: string[] | null;
+  status_lines?: string[] | null;
   public_error_ref?: string | null;
   sources?: SourceCitation[];
   conflict_sources?: SourceCitation[];

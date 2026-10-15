@@ -6,14 +6,24 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Task UI-1: Assistant Picker & Chat Layout with Conversation History (UI-First)** — **COMPLETED & REVIEWED**
-  - **Live/Demo Switch**: Enforced `NEXT_PUBLIC_DATA_SOURCE` as required (`"live"` | `"demo"`). Throws `REQUIRED_DATA_SOURCE_ERROR` ("NEXT_PUBLIC_DATA_SOURCE is required and must be either 'live' or 'demo'.") at startup if missing, empty, or unknown with zero default. Built `web/lib/connections.ts` mapping features to data sources (`live` for login, knowledge list/upload/review, ask question; `demo` for assistant picker, conversation history, and upcoming features). Built `DataSourceChip` component rendering small Live (green) / Demo (lavender) chips.
-  - **Assistant ID Alignment**: Fixed Clinic A assistant id to `00000000-0000-0000-0002-000000000001`, imported directly from `web/lib/devDefaults.ts` (`DEV_DEFAULT_ASSISTANT_ID`); verified by test.
-  - **Demo Assistant Backend Isolation**: Only the assistant whose id equals `DEV_DEFAULT_ASSISTANT_ID` uses live query engine. Demo assistants render the Demo chip and return answers from demo fixtures (`getDemoAssistantAnswer`) without ever calling the backend; verified by tests.
-  - **Golden-Set Demo Fixtures**: Verified all demo facts in `web/lib/demo/fixtures.ts` against `evals/golden/manifest.json` with source file comments on every fact (prior auth guide, intake fax 555-0101 vs 555-0102, Alex Morgan chart MRN-4412-A / Apex Health / emergency contact 555-0131, copay $25, clinical escalation 555-0176).
-  - **Documentation Alignment**: Updated `docs/ui/CONNECTION_MAP.md` and `docs/ui/UI_INVENTORY.md` citing section names instead of line numbers, reranker as `bge-reranker-v2-m3 (PHASE-3 Task 3.2)`, clarify citing `PHASE-1 Task 1.6, OPEN_QUESTIONS 1.6, and ADR-0002`, session upload as `PHASE-4 Task 4.3`, general task draft status as `not rendered by UI yet; backend path exists in graph (test_graph_end_to_end.py)`, and proof column using verified existing test paths (all 89 pytest tests passing).
-  - **Tests**: `web/__tests__/ui1.test.tsx` (14 tests) passing; all 57 tests across 6 web test suites passing; 89 pytest tests passing.
-  - **Next Task**: `UI-2` (Streaming pipeline status lines and citations/PDF viewer panel per UI inventory)
+- **Task UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios (UI-First)** — **COMPLETED & VERIFIED**
+  - **Part A (Authoritative Spec Quote & Section Alignment)**: Fixed all non-spec section names across `UI_INVENTORY.md` and `CONNECTION_MAP.md` strictly to the 21 authoritative spec sections. Corrected verbatim quotes for Client Admin flow step 4, Query flow Node 2, Invariant 5, and Staff day step 4. Audited every remaining double-quoted string: 32/32 quotes verified verbatim in `CONNECTION_MAP.md`; 110/110 quotes verified verbatim in `UI_INVENTORY.md`.
+  - **Answer Presentation Types**:
+    - Standard text answer with interactive source chips (`document_title`, `version`, `page_number`) and source language label (`Source (Spanish)` / `[Spanish]`, spec section "Query flow" ("Language")).
+    - Table answer citing sheet name and row number (`accepted_plans.csv, Sheet: Plans, Row 4`, spec section "Query flow" Answer modes "table").
+    - Visual answer marked as read from an image (`Visual Reading` lavender badge) with clearly labelled page thumbnail placeholder frame (`[Page Thumbnail Placeholder]`, Invariant 5).
+    - Refusal card rendering exact spec text: `"I don't have that in Client A's documents."`
+    - Conflict presentation rendering `"Two documents disagree: (Conflicting Sources)"` with side-by-side citations for both sources.
+    - Clarification Needed presentation displaying top 3 topics as interactive buttons; clicking one submits that question immediately.
+    - General task draft labelled with ungrounded warning badge (`General Task Draft — Not grounded in client documents`, spec section "Goals, non-goals and success criteria" Goal 6, "Query flow" Node 2).
+    - Safe failure card masking system errors with public reference (`ERR-xxxx` / `Reference: ERR-7K42`, spec section "Failure handling and fallbacks").
+    - Safe friendly fallback message when receiving unexpected response types.
+  - **Status Lines**: Demo assistants demonstrate spec status lines (`"Searching Client A documents..."`, `"Page 31 is a scanned image, reading it now..."`, spec section "End result: how people will use it" step 4) loaded from fixtures; live assistant displays only standard loading indicator until SSE endpoint exists (Task 3.6), never faking status lines on live.
+  - **Demo Scenarios (Empty Chat State)**: In empty chat for demo assistants, renders suggested questions for every answer type, strictly cited from `evals/golden/questions.json` (`TF-003`, `TL-011`, `VR-007`, `NOA-002`, `CONF-001`, `TF-001`, `TF-010`, `INJ-001`).
+  - **Tests**: `web/__tests__/ui2.test.tsx` (12 tests) passing; full web test suite (69 tests across 7 suites) passing cleanly with zero regressions. TypeScript typecheck passing.
+  - **Next Task**: `UI-3` (Embedded PDF.js viewer side panel and staff document byte streaming route per UI inventory)
+
+- **Task UI-1: Assistant Picker & Chat Layout with Conversation History (UI-First)** — **COMPLETED & REVIEWED** (Preceding task)
 
 - **Task UI-0: UI Inventory & Connection Map Across All Phases** — **COMPLETED** (Preceding task)
 
@@ -135,7 +145,7 @@ Phase 2 cannot pass its exit gate until this list is empty:
 - **None for Phase 1**: Phase 1 operates entirely on the `mock` profile with synthetic data on the 8 GB office PC (Docker memory capped at 3 GB).
 - **External Governance Gates (Phase 6/7 Prerequisites)**:
   - Pharmacy system Gemini key migration to Vertex AI under GCP BAA.
-  - Formal retention periods agreement with Dan and compliance.
+  - Formal retention periods agreement with the product owner and compliance.
   - Pilot client practice BAA execution before live data ingestion.
 
 ## UI backlog
