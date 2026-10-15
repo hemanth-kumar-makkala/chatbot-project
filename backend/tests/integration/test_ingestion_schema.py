@@ -759,28 +759,33 @@ class TestCompositeForeignKeysAndIdempotency:
     async def test_document_versions_tenant_sha256_uniqueness(
         self, tenant_pair: tuple[TenantContext, TenantContext]
     ) -> None:
-        """document_versions enforces UNIQUE (tenant_id, sha256); different tenants succeed."""
+        """document_versions allows duplicate (tenant_id, sha256) rows under migration 0010."""
         ctx_a, ctx_b = tenant_pair
         shared_sha = "shared-content-hash-abcdef"
 
         async with tenant_session(ctx_a) as session_a:
             await assert_all_8_tables_exist(session_a)
             doc_a = await seed_document(session_a, ctx_a.tenant_id, title="Doc A")
-            await seed_version(session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha)
+            ver_a1 = await seed_version(
+                session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha
+            )
 
-            # Duplicate SHA under same tenant fails
-            with pytest.raises(DBAPIError) as exc_info:
-                async with session_a.begin_nested():
-                    await seed_version(
-                        session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha
-                    )
-            assert get_sqlstate(exc_info.value) == "23505"
+            # Under Migration 0010, uq_document_versions_tenant_sha256 was replaced
+            # with non-unique index ix_document_versions_tenant_sha256
+            # (supports re-upload after retirement or failure).
+            ver_a2 = await seed_version(
+                session_a, ctx_a.tenant_id, doc_a, ctx_a.user_id, sha256=shared_sha
+            )
+            assert ver_a1 != ver_a2
 
-        # Same SHA under Tenant B succeeds
+        # Same SHA under Tenant B also succeeds
         async with tenant_session(ctx_b) as session_b:
             await assert_all_8_tables_exist(session_b)
             doc_b = await seed_document(session_b, ctx_b.tenant_id, title="Doc B")
-            await seed_version(session_b, ctx_b.tenant_id, doc_b, ctx_b.user_id, sha256=shared_sha)
+            ver_b = await seed_version(
+                session_b, ctx_b.tenant_id, doc_b, ctx_b.user_id, sha256=shared_sha
+            )
+            assert ver_b is not None
 
 
 # ---------------------------------------------------------------------------

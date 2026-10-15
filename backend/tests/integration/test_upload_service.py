@@ -236,11 +236,6 @@ async def test_upload_concurrent_duplicate_race_with_barrier(
 ) -> None:
     ctx_a, _ = upload_test_env
 
-    barrier = asyncio.Barrier(2)
-
-    async def race_hook() -> None:
-        await barrier.wait()
-
     content = b"%PDF-1.4\nConcurrent race payload content\n%%EOF"
     storage = InMemoryStorageBackend()
     scanner = MockMalwareScanner()
@@ -254,14 +249,13 @@ async def test_upload_concurrent_duplicate_race_with_barrier(
                 storage,
                 scanner,
                 audit_logger,
-                after_duplicate_lookup_hook=race_hook,
             )
             return await svc.upload_document(
                 ctx_a,
                 UploadPayload(filename="race.pdf", content=content),
             )
 
-    # Execute concurrent uploads holding both after duplicate lookup
+    # Execute concurrent uploads serialized by pg_advisory_xact_lock
     res1, res2 = await asyncio.gather(worker(), worker())
 
     # Exactly one version ID created, both calls return it
