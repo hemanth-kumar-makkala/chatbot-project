@@ -1,0 +1,87 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<<
+/Producer (pypdf)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/MediaBox [ 0 0 612 792 ]
+/Contents 5 0 R
+/Resources <<
+/Font <<
+/F1 6 0 R
+>>
+>>
+/Parent 2 0 R
+>>
+endobj
+5 0 obj
+<<
+/Length 923
+>>
+stream
+BT
+/F1 10 Tf
+54 740 Td
+(*** SYNTHETIC TEST DOCUMENT ***) Tj
+0 -16 Td (HORIZON VALLEY HEALTH CLINIC) Tj
+0 -16 Td (Front-Desk Operational Standard Operating Procedure \(Version 2.0 Revised\)) Tj
+0 -16 Td (Issued: March 1, 2026 \(Supersedes Version 1.0\)) Tj
+0 -16 Td () Tj
+0 -16 Td (1. Patient Check-In Protocol) Tj
+0 -16 Td (Routine appointment arrival window is 20 minutes prior to scheduled visit.) Tj
+0 -16 Td (Patients arriving later than 20 minutes will be rescheduled.) Tj
+0 -16 Td () Tj
+0 -16 Td (2. Referral & Document Transmission) Tj
+0 -16 Td (Front desk intake fax number is 555-0102.) Tj
+0 -16 Td (Outside referrals must be sent directly to this revised intake fax line.) Tj
+0 -16 Td () Tj
+0 -16 Td (3. Identity Verification) Tj
+0 -16 Td (Front desk staff must verify photo ID and insurance card.) Tj
+0 -16 Td (Staff phone line: 555-0100) Tj
+0 -16 Td () Tj
+0 -16 Td (PAGE 1 OF 1 -- SYNTHETIC TEST DOCUMENT) Tj
+ET
+endstream
+endobj
+6 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+>>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000054 00000 n 
+0000000113 00000 n 
+0000000162 00000 n 
+0000000290 00000 n 
+0000001264 00000 n 
+trailer
+<<
+/Size 7
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+1334
+%%EOF

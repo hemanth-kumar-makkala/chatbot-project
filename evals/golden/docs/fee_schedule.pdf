@@ -1,0 +1,84 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<<
+/Producer (pypdf)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/MediaBox [ 0 0 612 792 ]
+/Contents 5 0 R
+/Resources <<
+/Font <<
+/F1 6 0 R
+>>
+>>
+/Parent 2 0 R
+>>
+endobj
+5 0 obj
+<<
+/Length 929
+>>
+stream
+BT
+/F1 10 Tf
+54 740 Td
+(*** SYNTHETIC TEST DOCUMENT ***) Tj
+0 -16 Td (HORIZON VALLEY HEALTH - STANDARD MEDICAL FEE SCHEDULE) Tj
+0 -16 Td () Tj
+0 -16 Td (+----------+------------------------------------+----------------+) Tj
+0 -16 Td (| CPT Code | Service Description                | Standard Fee   |) Tj
+0 -16 Td (+----------+------------------------------------+----------------+) Tj
+0 -16 Td (| 99212    | Office visit, problem focused, 10m | $85.00         |) Tj
+0 -16 Td (| 99213    | Office visit, low complexity, 15m  | $135.00        |) Tj
+0 -16 Td (| 99214    | Office visit, mod complexity, 25m  | $195.00        |) Tj
+0 -16 Td (| 99215    | Office visit, high complexity, 40m | $260.00        |) Tj
+0 -16 Td (+----------+------------------------------------+----------------+) Tj
+0 -16 Td () Tj
+0 -16 Td (Billing Office Contact Phone: 555-0150) Tj
+0 -16 Td () Tj
+0 -16 Td (PAGE 1 OF 1 -- SYNTHETIC TEST DOCUMENT) Tj
+ET
+endstream
+endobj
+6 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Courier
+>>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000054 00000 n 
+0000000113 00000 n 
+0000000162 00000 n 
+0000000290 00000 n 
+0000001270 00000 n 
+trailer
+<<
+/Size 7
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+1338
+%%EOF
