@@ -403,3 +403,28 @@ def test_conflict_questions_cover_both_conflicting_facts():
     assert len(arrival_conflicts) >= 3, (
         f"Expected at least 3 arrival window conflict questions, got {len(arrival_conflicts)}"
     )
+
+
+def test_conflict_questions_conflict_values_grounded_in_evidence():
+    """Verify conflict_values is present on all CONFLICT questions and grounded in evidence."""
+    manifest_docs = _load_manifest_docs()
+    questions = _load_questions()
+    conflict_qs = [q for q in questions if q["category"] == "CONFLICT"]
+    assert len(conflict_qs) >= 8
+
+    for q in conflict_qs:
+        assert "conflict_values" in q, f"Conflict question {q['id']} missing conflict_values"
+        cvals = q["conflict_values"]
+        assert isinstance(cvals, list) and len(cvals) >= 2, (
+            f"Conflict question {q['id']} conflict_values must contain at least 2 values"
+        )
+        evidence_texts = [
+            _normalize(_get_page_text(manifest_docs[ev["document_id"]], ev["page"]))
+            for ev in q["evidence"]
+        ]
+        all_evidence_combined = " ".join(evidence_texts)
+        for val in cvals:
+            assert isinstance(val, str) and len(val.strip()) > 0
+            assert _normalize(val) in all_evidence_combined, (
+                f"Conflict value '{val}' in question {q['id']} not found in cited evidence texts"
+            )

@@ -45,7 +45,12 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Surgery PA advance submission window"
+    "notes": "Surgery PA advance submission window",
+    "accepted_answers": [
+      "5 days",
+      "five business days",
+      "five days"
+    ]
   },
   {
     "id": "TF-004",
@@ -125,7 +130,12 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Standard PA appeal deadline"
+    "notes": "Standard PA appeal deadline",
+    "accepted_answers": [
+      "30 days",
+      "thirty calendar days",
+      "thirty days"
+    ]
   },
   {
     "id": "TF-009",
@@ -285,7 +295,12 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Pre-existing condition exclusion period"
+    "notes": "Pre-existing condition exclusion period",
+    "accepted_answers": [
+      "zero days",
+      "0",
+      "none"
+    ]
   },
   {
     "id": "TF-019",
@@ -557,7 +572,12 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Crestview Gold pre-auth requirement"
+    "notes": "Crestview Gold pre-auth requirement",
+    "accepted_answers": [
+      "no prior authorization required",
+      "pre-auth not required",
+      "not required"
+    ]
   },
   {
     "id": "TL-015",
@@ -605,7 +625,13 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Clean fax PT authorized sessions"
+    "notes": "Clean fax PT authorized sessions",
+    "accepted_answers": [
+      "6 sessions",
+      "six physical therapy sessions",
+      "six sessions",
+      "6"
+    ]
   },
   {
     "id": "VR-002",
@@ -749,7 +775,13 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Skewed fax authorized refill count"
+    "notes": "Skewed fax authorized refill count",
+    "accepted_answers": [
+      "zero",
+      "0 refills",
+      "no refills",
+      "zero refills"
+    ]
   },
   {
     "id": "VR-011",
@@ -813,7 +845,11 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Faint fax page 2 prior PT duration"
+    "notes": "Faint fax page 2 prior PT duration",
+    "accepted_answers": [
+      "eight weeks",
+      "8"
+    ]
   },
   {
     "id": "VR-015",
@@ -861,7 +897,12 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Controlled substance logging requirement"
+    "notes": "Controlled substance logging requirement",
+    "accepted_answers": [
+      "7 days",
+      "seven calendar days",
+      "seven days"
+    ]
   },
   {
     "id": "LEN-002",
@@ -893,7 +934,10 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Panic lab notification timeframe"
+    "notes": "Panic lab notification timeframe",
+    "accepted_answers": [
+      "fifteen minutes"
+    ]
   },
   {
     "id": "LEN-004",
@@ -957,7 +1001,10 @@
       }
     ],
     "must_not_contain": [],
-    "notes": "Adult medical record retention period"
+    "notes": "Adult medical record retention period",
+    "accepted_answers": [
+      "ten years"
+    ]
   },
   {
     "id": "LEN-008",
@@ -982,6 +1029,10 @@
     "question": "What is the front desk intake fax number for transmitting outside patient referrals?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Policy Version 1.0 specifies front desk intake fax 555-0101, whereas Version 2.0 specifies revised intake fax 555-0102.",
+    "conflict_values": [
+      "555-0101",
+      "555-0102"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1002,6 +1053,10 @@
     "question": "Which fax line should external medical practices use to send incoming patient referrals?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Policy Version 1.0 lists fax 555-0101 while revised Version 2.0 updates the intake fax to 555-0102.",
+    "conflict_values": [
+      "555-0101",
+      "555-0102"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1022,6 +1077,10 @@
     "question": "What intake fax number is designated in clinic procedures for outside referral documents?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Version 1.0 designates 555-0101, but Version 2.0 supersedes it with 555-0102.",
+    "conflict_values": [
+      "555-0101",
+      "555-0102"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1042,6 +1101,10 @@
     "question": "What official intake fax number should staff provide to outside providers transmitting consult notes?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Policy Version 1.0 provides 555-0101, whereas revised Version 2.0 provides 555-0102.",
+    "conflict_values": [
+      "555-0101",
+      "555-0102"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1062,6 +1125,10 @@
     "question": "How many minutes prior to a scheduled routine visit are patients required to arrive for check-in?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Policy Version 1.0 specifies arrival 15 minutes prior to scheduled visit, whereas Version 2.0 specifies 20 minutes prior.",
+    "conflict_values": [
+      "15 minutes",
+      "20 minutes"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1082,6 +1149,10 @@
     "question": "What is the required patient arrival window prior to scheduled routine appointments before rescheduling?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Version 1.0 establishes an arrival window of 15 minutes prior, while Version 2.0 requires 20 minutes prior.",
+    "conflict_values": [
+      "15 minutes",
+      "20 minutes"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1102,6 +1173,10 @@
     "question": "According to our check-in protocol, how far in advance of their appointment time must routine patients arrive?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Version 1.0 specifies check-in 15 minutes in advance, whereas Version 2.0 requires check-in 20 minutes in advance.",
+    "conflict_values": [
+      "15 minutes",
+      "20 minutes"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
@@ -1122,6 +1197,10 @@
     "question": "How early before a scheduled appointment must routine patients check in at the front desk?",
     "expected_mode": "conflict",
     "expected_answer": "Conflict: Policy Version 1.0 requires patients to arrive 15 minutes early, but Version 2.0 requires 20 minutes early.",
+    "conflict_values": [
+      "15 minutes",
+      "20 minutes"
+    ],
     "evidence": [
       {
         "document_id": "doc_front_desk_policy_v1",
