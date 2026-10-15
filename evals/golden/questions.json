@@ -298,8 +298,7 @@
     "notes": "Pre-existing condition exclusion period",
     "accepted_answers": [
       "zero days",
-      "0",
-      "none"
+      "0 calendar days"
     ]
   },
   {
@@ -575,8 +574,8 @@
     "notes": "Crestview Gold pre-auth requirement",
     "accepted_answers": [
       "no prior authorization required",
-      "pre-auth not required",
-      "not required"
+      "prior authorization not required",
+      "pre-auth not required"
     ]
   },
   {
@@ -629,8 +628,7 @@
     "accepted_answers": [
       "6 sessions",
       "six physical therapy sessions",
-      "six sessions",
-      "6"
+      "six sessions"
     ]
   },
   {
@@ -777,7 +775,6 @@
     "must_not_contain": [],
     "notes": "Skewed fax authorized refill count",
     "accepted_answers": [
-      "zero",
       "0 refills",
       "no refills",
       "zero refills"
@@ -847,8 +844,7 @@
     "must_not_contain": [],
     "notes": "Faint fax page 2 prior PT duration",
     "accepted_answers": [
-      "eight weeks",
-      "8"
+      "eight weeks"
     ]
   },
   {

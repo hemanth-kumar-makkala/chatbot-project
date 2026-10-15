@@ -438,3 +438,21 @@ def test_accepted_alternative_wording_scores_correct():
     assert report["questions"][0]["mode_correct"] is True
     assert report["questions"][0]["answer_correct"] is True
     assert report["questions"][0]["accurate"] is True
+
+
+def test_contains_answer_token_boundaries():
+    """Verify contains_answer matches on whole tokens and rejects partial matches."""
+    # "16 sessions" does not match "6 sessions"
+    assert not contains_answer("6 sessions", "Approved 16 sessions for patient.")
+    assert not contains_answer("6 sessions", "16 sessions")
+
+    # "six sessions" matches
+    assert contains_answer("six sessions", "Dr. Vance approved six sessions.")
+
+    # "555-0162" does not match "6"
+    assert not contains_answer("6", "Calling phone 555-0162 for assistance.")
+    assert not contains_answer("6", "555-0162")
+
+    # "$25.00" still matches "$25"
+    assert contains_answer("$25.00", "The primary care copay is $25.")
+    assert contains_answer("$25", "The primary care copay is $25.00.")

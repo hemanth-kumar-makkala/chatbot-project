@@ -428,3 +428,28 @@ def test_conflict_questions_conflict_values_grounded_in_evidence():
             assert _normalize(val) in all_evidence_combined, (
                 f"Conflict value '{val}' in question {q['id']} not found in cited evidence texts"
             )
+
+
+BANNED_ACCEPTED_GENERIC_WORDS = {
+    "zero",
+    "none",
+    "no",
+    "yes",
+    "na",
+    "n/a",
+    "null",
+}
+
+
+def test_no_accepted_answers_bare_number_or_generic_word():
+    """Verify accepted_answers entries are not bare numbers or isolated generic words."""
+    questions = _load_questions()
+    for q in questions:
+        for ans in q.get("accepted_answers", []):
+            stripped = ans.strip().lower()
+            assert not stripped.isdigit(), (
+                f"Question {q['id']} has bare number in accepted_answers: '{ans}'"
+            )
+            assert stripped not in BANNED_ACCEPTED_GENERIC_WORDS, (
+                f"Question {q['id']} has bare generic word in accepted_answers: '{ans}'"
+            )

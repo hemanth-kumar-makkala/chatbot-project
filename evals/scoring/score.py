@@ -54,23 +54,27 @@ def normalize_text(text: str) -> str:
 
 
 def contains_answer(expected_answer: str, answer_text: str) -> bool:
-    """Check if expected_answer is contained in answer_text after normalization."""
+    """Check if expected_answer is in answer_text after normalization, matching whole tokens."""
     if not expected_answer or not answer_text:
         return False
 
     norm_exp = normalize_text(expected_answer)
     norm_ans = normalize_text(answer_text)
 
-    if norm_exp in norm_ans:
-        return True
+    if not norm_exp:
+        return False
 
-    # Punctuation-tolerant token matching
-    clean_exp = re.sub(r"[^\w\$\-]", " ", norm_exp)
-    clean_ans = re.sub(r"[^\w\$\-]", " ", norm_ans)
-    clean_exp = re.sub(r"\s+", " ", clean_exp).strip()
-    clean_ans = re.sub(r"\s+", " ", clean_ans).strip()
+    # Whole-token boundary matching
+    if norm_exp[0].isalnum():
+        prefix = r"(?<![a-zA-Z0-9_])"
+    elif norm_exp[0] == "$":
+        prefix = r"(?<![a-zA-Z0-9_\$])"
+    else:
+        prefix = r"(?<!\w)"
 
-    return clean_exp in clean_ans
+    suffix = r"(?![a-zA-Z0-9_])" if norm_exp[-1].isalnum() else r"(?!\w)"
+    pattern = prefix + re.escape(norm_exp) + suffix
+    return bool(re.search(pattern, norm_ans))
 
 
 def score_question(question: dict[str, Any], result: dict[str, Any] | None) -> dict[str, Any]:
