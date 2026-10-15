@@ -1,4 +1,4 @@
-﻿ID,Phase,Area,What to test,Steps,Expected result,Result,Date tested,Tested by,Bug / notes
+ID,Phase,Area,What to test,Steps,Expected result,Result,Date tested,Tested by,Bug / notes
 UI-001,2,Login,Sign in with valid account,"Open /login, sign in as admin@clinic-a.local","Lands on Knowledge page, no error",Pass,10/14/2026,Srinath,Needed Windows event-loop fix in API start command
 UI-002,2,Login,Not logged in sends you to login,Open the Knowledge page URL in a fresh incognito window,Redirects to /login,Pass,10/14/2026,Srinath,
 UI-003,2,Login,Wrong password,Sign in with a wrong password,"Friendly error, no server text",Not run,,,
@@ -9,7 +9,7 @@ UI-007,2,Upload,Upload digital PDF,Upload 04_Maple_Ridge_Prior_Auth_Guide_v2.pdf
 UI-008,2,Upload,Upload scanned fax PDF,Upload 05_Scanned_Prior_Auth_Fax_Oct.pdf,"Ready, or Ready (1 page needs review) on GPU profile",Pass (mock),10/14/2026,Srinath,Retest on GPU profile: page 2 should be flagged
 UI-009,2,Upload,Upload CSV,Upload 06_Accepted_Insurance_Plans_Oct.csv,"Ready, table rows created",Pass,10/14/2026,Srinath,
 UI-010,2,Upload,Duplicate upload,Upload the same active file again,Message: duplicate of an existing upload,Pass,10/14/2026,Srinath,
-UI-011,2,Upload,Re-upload after retire,"Retire a document, upload the same file again",Accepted as a new document and processed,Fail,10/14/2026,Srinath,Bug: blocked as duplicate. Fix in progress (migration 0010)
+UI-011,2,Upload,Re-upload after retire,"Retire a document, upload the same file again",Accepted as a new document and processed,Pass,10/15/2026,Srinath,Verified passing under migration 0010 (test_migration_0010.py and test_upload_dedup_rules.py)
 UI-012,2,Upload,File too large,Upload a file over 50 MB,Rejected before upload with friendly message,Not run,,,
 UI-013,2,Upload,Wrong file type,Upload a .docx or .zip,Rejected with friendly message,Not run,,,
 UI-014,2,Upload,Corrupt PDF,Upload a PDF renamed from a text file,"Status Failed, no pages",Not run,,,
@@ -22,4 +22,25 @@ UI-020,2,Review,Exclude a flagged page,"In drawer, Exclude",Page excluded from s
 UI-021,2,Review,Retry a flagged page,"In drawer, Retry",Page re-processed; message if already running,Not run,,,
 UI-022,2,Review,Keyboard only,"Use Tab, Enter, Escape through upload, table and drawer",Every action reachable; Escape closes dialogs,Not run,,,
 UI-023,2,Layout,Narrow window,Resize browser to about 768 px wide,Nothing overlaps or breaks,Not run,,,
-UI-024,3,Chat,(added when the chat screen is built),,,Not run,,,
+UI-024,3,Chat,Send question and receive answer,"Type question, press Enter or click Send","Answer displayed with markdown and citation chips",,,,
+UI-025,3,Chat,Conversation history sidebar,"Open chat, view left sidebar","Past conversations listed chronologically; clicking one restores message thread",Pass,10/15/2026,Srinath,UI-1 demo fixture
+UI-026,3,Chat,Assistant switcher,"Click assistant menu in TopBar, select another assistant","Navigates to new assistant chat and resets conversation context",,,,
+UI-027,3,Chat,Streaming pipeline status lines,"Submit question and observe message bubble","Status transitions: Searching documents -> Assessing evidence -> Synthesizing answer",,,,
+UI-028,3,Chat,Click citation chip,"Click [1: Clinic Policy, p. 4] chip below answer","Opens embedded PDF viewer panel jumping directly to cited page",,,,
+UI-029,3,Chat,Embedded PDF viewer controls,"In PDF side panel, use zoom and page navigation controls","Document pages render clearly with search highlight on cited passage",,,,
+UI-030,3,Chat,Refusal on missing topic,"Ask a question about an unindexed clinical guideline","Assistant displays refusal card stating topic is not found in client documents",,,,
+UI-031,3,Chat,Conflicting evidence display,"Ask a question with contradictory document versions","Renders yellow warning card with both conflicting citations side-by-side",,,,
+UI-032,3,Chat,Clarification topic chips,"Ask an ambiguous query (e.g. 'prior auth')","Assistant asks for clarification and displays up to 3 clickable topic chips",,,,
+UI-033,3,Chat,Safe failure error masking,"Simulate backend 500 error or graph failure","Displays masked error card quoting reference ERR-xxxx without leaking stack trace",,,,
+UI-034,4,Extraction,Session document upload,"In chat, attach patient fax PDF or image","File uploaded with badge 'Temporary session document - not indexed'",,,,
+UI-035,4,Extraction,Dual-read side-by-side table,"Submit extraction request on uploaded session fax","Split view renders page image on left and structured field table on right",,,,
+UI-036,4,Extraction,Field status badges,"Inspect field values in extraction table","Badges indicate FILLED_HIGH (green), CONFLICTING (orange), UNREADABLE (red/grey)",,,,
+UI-037,4,Extraction,Interactive field highlighting,"Click a field row in extraction table","Corresponding bounding box or region highlights on the document page image",,,,
+UI-038,5,Feedback,Submit answer feedback,"Click thumbs down on answer card, select reason and submit","Feedback submitted to backend; confirmation checkmark displayed",,,,
+UI-039,5,Guardrails,Chat query rate limit warning,"Send rapid successive queries exceeding rate limit","Input disables with countdown: 'Query limit reached. Please wait X seconds'",,,,
+UI-040,3,Chat,General task draft,"Ask a general administrative question (e.g. email template) not in clinic documents","Renders draft response marked with ungrounded warning badge",,,,
+UI-041,1,Assistants,Assistant picker screen,"Log in, navigate to /assistants","Shows assistant cards with client name, specialty, doc count, demo chip",Pass,10/15/2026,Srinath,UI-1 demo fixture
+UI-042,1,Assistants,Select assistant from picker,"Click assistant card (e.g. Maple Ridge)","Navigates to /assistants/[id]/chat with selected assistant context",Pass,10/15/2026,Srinath,UI-1 demo fixture
+UI-043,1,Data Source,Missing NEXT_PUBLIC_DATA_SOURCE,"Launch app or tests without NEXT_PUBLIC_DATA_SOURCE","Throws fixed error: NEXT_PUBLIC_DATA_SOURCE is required and must be either 'live' or 'demo'.",Pass,10/15/2026,Srinath,UI-1 invariant test
+UI-044,1,Data Source,Data source chips on screen,"Inspect TopBar or section header in picker and chat","Displays Live (green) or Demo (lavender) chip according to connections map",Pass,10/15/2026,Srinath,UI-1 chip component
+UI-045,3,Chat,New conversation button,"Click '+ New Conversation' in chat sidebar","Resets active conversation and clears message thread",Pass,10/15/2026,Srinath,UI-1 chat layout

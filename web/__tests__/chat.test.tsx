@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import ChatPage from "@/app/assistants/[assistantId]/chat/page";
 import * as api from "@/lib/api";
 import questionRequestFixture from "./fixtures/question_request.json";
+import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 // Mock API methods
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -26,7 +27,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("ChatPage Component (Phase 3 UI First)", () => {
-  const assistantId = "00000000-0000-0000-0000-000000000001";
+  const assistantId = DEV_DEFAULT_ASSISTANT_ID;
 
   beforeEach(() => {
     vi.clearAllMocks();

@@ -6,21 +6,18 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Phase 3 Chat Screen on Mock Profile**: Deliberate ordering decision — UI first on mock profile so the product can be shown and demonstrated in the browser. Adapter 3 (BGE-M3 local embedding provider) is temporarily paused until this is done.
-  - Completed: Read-only audit of existing `/v1/questions` route and graph execution paths on mock profile.
-  - Completed: Verified that staff users can ask questions without requiring `client_admin` privileges.
-  - Completed: Enriched `QuestionResponse` in `backend/app/api/routes/questions.py` with `mode`, `evidence_type`, `sources`, `conflict_sources`, and `public_error_ref` mapped strictly via explicit maps without silent fallbacks or `or` defaults.
-  - Completed: Updated `create_app` in `backend/app/api/app.py` to populate `ApiSettings` from `APP_PROFILE` and `LOCAL_STORAGE_PATH` / `STORAGE_DIR` environment variables when invoked by uvicorn without arguments.
-  - Completed: Added `askQuestion` API client helper with full TypeScript typing in `web/lib/api.ts`.
-  - Completed: Added navigation links between Knowledge and Chat in `web/components/TopBar.tsx`.
-  - Completed: Built responsive, accessible Phase 3 Chat screen at `/assistants/[assistantId]/chat` matching Staffingly brand tokens (`web/styles/tokens.css` and `docs/ui/KNOWLEDGE_PAGE_SPEC.md`).
-  - Completed: Implemented specialized response cards for all graph modes: standard answers with source chips (document title, version, page) and visual badges (`evidence_type === "visual"`), refusal banner, conflict resolution card displaying both conflicting sources, safe failure card with public reference (`public_error_ref`), and safe fallback for unknown response types.
-  - Completed: Fixed live UI 422 error by adding explicit `Content-Type: application/json` header in `web/lib/api.ts` `askQuestion`.
-  - Completed: Established shared contract fixture `web/__tests__/fixtures/question_request.json` verified bidirectionally: web asserts `askQuestion` builds payload matching fixture; backend asserts posting fixture returns 200.
-  - Completed: Removed redundant `mode` field from `QuestionResponse` on backend and web (reserved for Task 3.4 answer mode).
-  - Completed: Removed `STORAGE_DIR` fallback in `backend/app/api/app.py`, strictly requiring `LOCAL_STORAGE_PATH` with typed `ConfigurationError`.
-  - Completed: Backend integration tests for all 4 response statuses (`answered`, `refusal`, `conflicting`, `safe_failure`) and configuration validation.
-  - Passing runs verified across both web (43/43 tests passing in 1.28s, zero typecheck errors) and backend (22/22 tests passing in 3.16s).
+- **Task UI-1: Assistant Picker & Chat Layout with Conversation History (UI-First)** — **COMPLETED & REVIEWED**
+  - **Live/Demo Switch**: Enforced `NEXT_PUBLIC_DATA_SOURCE` as required (`"live"` | `"demo"`). Throws `REQUIRED_DATA_SOURCE_ERROR` ("NEXT_PUBLIC_DATA_SOURCE is required and must be either 'live' or 'demo'.") at startup if missing, empty, or unknown with zero default. Built `web/lib/connections.ts` mapping features to data sources (`live` for login, knowledge list/upload/review, ask question; `demo` for assistant picker, conversation history, and upcoming features). Built `DataSourceChip` component rendering small Live (green) / Demo (lavender) chips.
+  - **Assistant ID Alignment**: Fixed Clinic A assistant id to `00000000-0000-0000-0002-000000000001`, imported directly from `web/lib/devDefaults.ts` (`DEV_DEFAULT_ASSISTANT_ID`); verified by test.
+  - **Demo Assistant Backend Isolation**: Only the assistant whose id equals `DEV_DEFAULT_ASSISTANT_ID` uses live query engine. Demo assistants render the Demo chip and return answers from demo fixtures (`getDemoAssistantAnswer`) without ever calling the backend; verified by tests.
+  - **Golden-Set Demo Fixtures**: Verified all demo facts in `web/lib/demo/fixtures.ts` against `evals/golden/manifest.json` with source file comments on every fact (prior auth guide, intake fax 555-0101 vs 555-0102, Alex Morgan chart MRN-4412-A / Apex Health / emergency contact 555-0131, copay $25, clinical escalation 555-0176).
+  - **Documentation Alignment**: Updated `docs/ui/CONNECTION_MAP.md` and `docs/ui/UI_INVENTORY.md` citing section names instead of line numbers, reranker as `bge-reranker-v2-m3 (PHASE-3 Task 3.2)`, clarify citing `PHASE-1 Task 1.6, OPEN_QUESTIONS 1.6, and ADR-0002`, session upload as `PHASE-4 Task 4.3`, general task draft status as `not rendered by UI yet; backend path exists in graph (test_graph_end_to_end.py)`, and proof column using verified existing test paths (all 89 pytest tests passing).
+  - **Tests**: `web/__tests__/ui1.test.tsx` (14 tests) passing; all 57 tests across 6 web test suites passing; 89 pytest tests passing.
+  - **Next Task**: `UI-2` (Streaming pipeline status lines and citations/PDF viewer panel per UI inventory)
+
+- **Task UI-0: UI Inventory & Connection Map Across All Phases** — **COMPLETED** (Preceding task)
+
+- **Phase 3 Chat Screen on Mock Profile** — **COMPLETED** (Preceding task)
 - **Adapter 2**: Structure-Aware Real Chunker (all non-mock profiles) — **COMPLETED**
   - Completed: `StructureAwareChunker` in `backend/app/adapters/chunking/structure_aware.py` implementing `Chunker`.
   - Completed: Page-first design: chunks never cross page boundaries. Empty or whitespace pages return zero chunks.

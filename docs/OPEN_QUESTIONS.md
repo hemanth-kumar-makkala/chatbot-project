@@ -42,6 +42,15 @@ This document tracks open architecture questions, closed items resolved by the u
 - **Status**: **CLOSED**
 - **Resolution**: `Tracer` methods (`step_start`, `step_end`, `step_error`) are defined as asynchronous coroutines to persist execution step records (`run_steps`) to PostgreSQL. Operational logs (metadata only, no content) use standard Python logging outside `ports/`. By contract invariant, a tracing failure must never fail the request (fail-safe contract recorded in ADR-0004).
 
+### 1.9 UI Architecture, Administrative Boundaries & Endpoint Strategy (Task UI-0)
+- **Status**: **CLOSED (DECIDED BY SRINATH)**
+- **Resolution**:
+  - **Platform Admin UI**: Platform admin has **no screen for now**; client creation, assistant provisioning, and user assignment run out-of-band via CLI scripts (`scripts/seed_dev_data.py`) and migrations. Formal dashboard resolution remains open for Dan due to the spec conflict between line 78 and line 588.
+  - **Assistant Discovery**: Endpoint `GET /v1/assistants` (returning tenant-scoped accessible assistants and display names) will be built when the assistant switcher screen is connected.
+  - **PDF File Streaming Route**: A dedicated, tenant-scoped, staff-allowed route `GET /v1/assistants/{assistant_id}/knowledge/documents/{version_id}/file` will be built when the PDF viewer screen is connected to stream original document bytes to `pdf.js`.
+  - **Conversation History & Session Upload Routes**: `GET /v1/assistants/{assistant_id}/conversations` and `GET /v1/conversations/{conversation_id}/messages` will be built in Phase 3 when the conversation history sidebar is connected. `POST /v1/conversations/{conversation_id}/documents` will be built in Phase 4 when session document upload is connected.
+  - **Streaming Protocol (SSE)**: Streaming will receive a new endpoint in Task 3.6 (`POST /v1/questions/stream` using Server-Sent Events) and the synchronous JSON endpoint (`POST /v1/questions`) will remain intact, with an ADR recorded at that time.
+
 ---
 
 ## 2. Active Open Decisions (Spec Lines 653–662)
@@ -57,9 +66,11 @@ The following items from the spec's "Open decisions" remain open and require sta
 - [ ] **Extraction Schemas** (Spec line 661): Formal JSON schemas for the initial set of PHI document types (intake faxes, prior auth forms, clinical records).
 - [ ] **Spreadsheet Merged Cell Propagation** (Task 2.6): In `openpyxl` `read_only=True` mode, merged cell blocks contain data only in the top-left cell while remaining cells in the span evaluate to `None`. Ingestion preserves this verbatim in `tables_data`. To be revisited with real client documents if tabular QA requires forward-filling merged headers or values.
 
-### 2.1 Platform Admin Cross-Tenant Query Topology (Architecture Design)
-- **Status**: **DOCUMENTED / OPEN FOR STAKEHOLDER REVIEW**
+### 2.1 Platform Admin Cross-Tenant Query Topology & UI Boundary (Architecture Design)
+- **Status**: **DOCUMENTED / OPEN FOR DAN**
 - **Context**: In Task 1.4a, `memberships.role` is restricted strictly to `client_admin` and `staff` via database check constraint. Platform administration is represented as `users.is_platform_admin` (boolean). All tenant table queries strictly require a `TenantContext` and execute `SET LOCAL app.current_tenant_id`, guaranteeing total RLS isolation.
+- **Tension in Spec**: Architecture line 78 states *"Platform admin: Create clients and assistants, manage users, view traces and audit logs"*, while line 588 decrees *"No admin dashboards. The Knowledge page and its review list are the only admin screens"*.
+- **Decision (Srinath)**: Platform admin has **no screen for now**; administrative tasks run via out-of-band CLI scripts. Left open for Dan to determine whether a scoped Platform Admin screen is required for production.
 - **Question**: When platform administrators require operational telemetry or administrative reports across clients, what is the approved topology?
   - *Option A (Tenant Switching)*: Platform admin explicitly assumes a specific client's tenant context; cross-tenant queries across multiple tenants simultaneously are disallowed.
   - *Option B (Dedicated Admin Query Service)*: Out-of-band operational reporting reads de-identified run metrics using an unscoped reporting role.

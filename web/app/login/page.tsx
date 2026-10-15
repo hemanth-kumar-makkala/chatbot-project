@@ -9,7 +9,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectParam = searchParams.get("redirect");
-  const defaultTarget = `/assistants/${DEV_DEFAULT_ASSISTANT_ID}/knowledge`;
+  const defaultTarget = "/assistants";
   const redirectUrl = redirectParam && redirectParam !== "/" ? redirectParam : defaultTarget;
 
   const [email, setEmail] = useState("");

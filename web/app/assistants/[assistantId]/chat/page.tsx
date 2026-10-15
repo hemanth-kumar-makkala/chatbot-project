@@ -3,6 +3,13 @@
 import { useEffect, useState, useRef, use } from "react";
 import { useRouter } from "next/navigation";
 import { TopBar } from "@/components/TopBar";
+import { DataSourceChip } from "@/components/DataSourceChip";
+import { getFeatureDataSource } from "@/lib/connections";
+import {
+  getDemoConversations,
+  getDemoAssistantAnswer,
+  type DemoConversation,
+} from "@/lib/demo/fixtures";
 import {
   askQuestion,
   getCurrentUser,
@@ -26,29 +33,24 @@ interface ChatMessage {
 
 export default function ChatPage({ params }: ChatPageProps) {
   const resolvedParams = use(params);
-  const rawAssistantId = resolvedParams.assistantId;
-  const assistantId =
-    rawAssistantId === "00000000-0000-0002-0000-000000000001"
-      ? DEV_DEFAULT_ASSISTANT_ID
-      : rawAssistantId;
+  const assistantId = resolvedParams.assistantId;
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
-
-  // Replace URL in browser if legacy typo assistantId was used
-  useEffect(() => {
-    if (rawAssistantId === "00000000-0000-0002-0000-000000000001") {
-      routerRef.current.replace(`/assistants/${DEV_DEFAULT_ASSISTANT_ID}/chat`);
-    }
-  }, [rawAssistantId]);
 
   const [user, setUser] = useState<User | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const isLiveAssistant = assistantId === DEV_DEFAULT_ASSISTANT_ID;
+  const historyDataSource = getFeatureDataSource("conversation_history");
+  const askDataSource = isLiveAssistant ? getFeatureDataSource("chat_ask") : "demo";
+  const demoConversations = getDemoConversations(assistantId);
 
   useEffect(() => {
     async function loadAuth() {
@@ -68,6 +70,25 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   }, [messages, isSubmitting]);
 
+  function handleSelectConversation(conv: DemoConversation) {
+    setSelectedConvId(conv.id);
+    setConversationId(conv.id);
+    const chatMsgs: ChatMessage[] = conv.messages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      response: m.response,
+    }));
+    setMessages(chatMsgs);
+  }
+
+  function handleNewConversation() {
+    setSelectedConvId(null);
+    setConversationId(null);
+    setMessages([]);
+    setInputValue("");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const query = inputValue.trim();
@@ -85,26 +106,41 @@ export default function ChatPage({ params }: ChatPageProps) {
     setIsSubmitting(true);
 
     try {
-      const res = await askQuestion(assistantId, query, conversationId);
-      if (res.ok) {
-        if (res.data.conversation_id) {
-          setConversationId(res.data.conversation_id);
+      if (!isLiveAssistant || askDataSource === "demo") {
+        // Demo assistant: strictly uses demo fixtures, never calls live backend
+        const demoRes = getDemoAssistantAnswer(assistantId, query, conversationId);
+        if (demoRes.conversation_id) {
+          setConversationId(demoRes.conversation_id);
         }
         const asstMsg: ChatMessage = {
-          id: res.data.message_id || `asst-${Date.now()}`,
+          id: demoRes.message_id || `asst-${Date.now()}`,
           role: "assistant",
-          content: res.data.answer,
-          response: res.data,
+          content: demoRes.answer,
+          response: demoRes,
         };
         setMessages((prev) => [...prev, asstMsg]);
       } else {
-        const errorMsg: ChatMessage = {
-          id: `err-${Date.now()}`,
-          role: "assistant",
-          content: "",
-          errorMessage: `Unable to complete question (${res.code}). Please try again.`,
-        };
-        setMessages((prev) => [...prev, errorMsg]);
+        const res = await askQuestion(assistantId, query, conversationId);
+        if (res.ok) {
+          if (res.data.conversation_id) {
+            setConversationId(res.data.conversation_id);
+          }
+          const asstMsg: ChatMessage = {
+            id: res.data.message_id || `asst-${Date.now()}`,
+            role: "assistant",
+            content: res.data.answer,
+            response: res.data,
+          };
+          setMessages((prev) => [...prev, asstMsg]);
+        } else {
+          const errorMsg: ChatMessage = {
+            id: `err-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            errorMessage: `Unable to complete question (${res.code}). Please try again.`,
+          };
+          setMessages((prev) => [...prev, errorMsg]);
+        }
       }
     } catch {
       const errorMsg: ChatMessage = {
@@ -142,13 +178,18 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
 
     const status = resp.status;
+    const isVisual = resp.evidence_type === "visual";
 
-    // 1. Answered with sources
-    if (status === "answered" || status === "completed") {
-      const isVisual = resp.evidence_type === "visual";
+    // 1. Standard Answer
+    if (status === "answered") {
       return (
         <div>
-          <div style={{ lineHeight: 1.5, marginBottom: resp.sources && resp.sources.length > 0 ? "var(--spacing-3)" : 0 }}>
+          <div
+            style={{
+              lineHeight: 1.5,
+              marginBottom: resp.sources && resp.sources.length > 0 ? "var(--spacing-3)" : 0,
+            }}
+          >
             {resp.answer}
           </div>
 
@@ -171,7 +212,14 @@ export default function ChatPage({ params }: ChatPageProps) {
           )}
 
           {resp.sources && resp.sources.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--spacing-2)", marginTop: "var(--spacing-2)" }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "var(--spacing-2)",
+                marginTop: "var(--spacing-2)",
+              }}
+            >
               {resp.sources.map((src: SourceCitation, idx: number) => (
                 <div
                   key={`${src.document_title}-${src.page_number}-${idx}`}
@@ -332,73 +380,171 @@ export default function ChatPage({ params }: ChatPageProps) {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
         display: "flex",
         flexDirection: "column",
         backgroundColor: "var(--color-bg-page)",
+        overflow: "hidden",
       }}
     >
       <TopBar assistantId={assistantId} userEmail={user?.email || null} />
 
-      <main
-        className="container"
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          maxWidth: "860px",
-          width: "100%",
-          margin: "0 auto",
-          padding: "var(--spacing-4) var(--spacing-4)",
-        }}
-      >
-        <div
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* Left Sidebar: Conversations List */}
+        <aside
           style={{
-            flex: 1,
+            width: "300px",
+            borderRight: "1px solid var(--color-border)",
             backgroundColor: "var(--color-bg-card)",
-            borderRadius: "var(--radius-lg)",
-            border: "1px solid var(--color-border)",
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
-            boxShadow: "var(--shadow-sm)",
           }}
         >
-          {/* Header */}
           <div
             style={{
               padding: "var(--spacing-3) var(--spacing-4)",
-              borderBottom: "1px solid var(--color-border-subtle)",
-              backgroundColor: "var(--color-bg-subtle)",
+              borderBottom: "1px solid var(--color-border)",
               display: "flex",
-              alignItems: "center",
               justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+              <span
+                style={{
+                  fontSize: "var(--font-size-sm)",
+                  fontWeight: 700,
+                  color: "var(--color-navy)",
+                }}
+              >
+                Conversations
+              </span>
+              <DataSourceChip mode={historyDataSource} />
+            </div>
+            <button
+              type="button"
+              onClick={handleNewConversation}
+              style={{
+                backgroundColor: "var(--color-bg-subtle)",
+                color: "var(--color-primary-blue)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-md)",
+                padding: "4px 8px",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "background-color 0.15s ease",
+              }}
+            >
+              + New Conversation
+            </button>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: "var(--spacing-2)" }}>
+            {demoConversations.map((conv) => {
+              const isSelected = selectedConvId === conv.id;
+              return (
+                <div
+                  key={conv.id}
+                  onClick={() => handleSelectConversation(conv)}
+                  style={{
+                    padding: "var(--spacing-3)",
+                    borderRadius: "var(--radius-md)",
+                    marginBottom: "var(--spacing-2)",
+                    cursor: "pointer",
+                    backgroundColor: isSelected
+                      ? "var(--color-bg-subtle)"
+                      : "transparent",
+                    border: isSelected
+                      ? "1px solid var(--color-primary-blue)"
+                      : "1px solid transparent",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = "var(--color-bg-subtle)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "var(--font-size-sm)",
+                      fontWeight: 600,
+                      color: "var(--color-navy)",
+                      marginBottom: "4px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {conv.title}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "var(--font-size-xs)",
+                      color: "var(--color-text-muted)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {conv.last_message_preview}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* Middle Main: Chat Interface */}
+        <main
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            backgroundColor: "var(--color-bg-page)",
+          }}
+        >
+          {/* Top Chat Bar Header */}
+          <div
+            style={{
+              padding: "var(--spacing-3) var(--spacing-4)",
+              borderBottom: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-bg-card)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
             }}
           >
             <div>
-              <h1
+              <span
                 style={{
-                  fontSize: "var(--font-size-base)",
+                  fontSize: "var(--font-size-sm)",
                   fontWeight: 600,
                   color: "var(--color-navy)",
-                  margin: 0,
                 }}
               >
-                Clinical Knowledge Chat
-              </h1>
-              <p
-                style={{
-                  fontSize: "var(--font-size-xs)",
-                  color: "var(--color-text-muted)",
-                  margin: "2px 0 0 0",
-                }}
-              >
-                Answers strictly derived from authenticated tenant documents
-              </p>
+                {selectedConvId
+                  ? demoConversations.find((c) => c.id === selectedConvId)?.title ||
+                    "Active Consultation"
+                  : "New Consultation"}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+              <span style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
+                Query Engine:
+              </span>
+              <DataSourceChip mode={askDataSource} />
             </div>
           </div>
 
-          {/* Messages list */}
+          {/* Messages Container */}
           <div
             style={{
               flex: 1,
@@ -407,6 +553,9 @@ export default function ChatPage({ params }: ChatPageProps) {
               display: "flex",
               flexDirection: "column",
               gap: "var(--spacing-4)",
+              maxWidth: "860px",
+              width: "100%",
+              margin: "0 auto",
             }}
           >
             {messages.length === 0 && (
@@ -414,15 +563,34 @@ export default function ChatPage({ params }: ChatPageProps) {
                 style={{
                   margin: "auto",
                   textAlign: "center",
-                  color: "var(--color-text-muted)",
-                  padding: "var(--spacing-8)",
+                  maxWidth: "480px",
+                  padding: "var(--spacing-6)",
+                  backgroundColor: "var(--color-bg-card)",
+                  borderRadius: "var(--radius-lg)",
+                  border: "1px solid var(--color-border)",
                 }}
               >
-                <div style={{ fontSize: "var(--font-size-2xl)", marginBottom: "var(--spacing-2)" }}>💬</div>
-                <div style={{ fontWeight: 600, color: "var(--color-navy)" }}>Ask anything about client protocols</div>
-                <div style={{ fontSize: "var(--font-size-sm)", marginTop: "4px" }}>
-                  e.g., &quot;What are standard clinic hours?&quot; or &quot;What is prior authorization criteria?&quot;
-                </div>
+                <h2
+                  style={{
+                    fontSize: "var(--font-size-lg)",
+                    fontWeight: 600,
+                    color: "var(--color-navy)",
+                    marginBottom: "var(--spacing-2)",
+                  }}
+                >
+                  Clinical & Operations Knowledge Assistant
+                </h2>
+                <p
+                  style={{
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--color-text-muted)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Ask any question regarding prior authorization guidelines, clinical protocols,
+                  office hours, or payer requirements. All answers are strictly grounded in validated
+                  documents.
+                </p>
               </div>
             )}
 
@@ -438,14 +606,16 @@ export default function ChatPage({ params }: ChatPageProps) {
                 >
                   <div
                     style={{
-                      maxWidth: "80%",
-                      borderRadius: "var(--radius-lg)",
+                      maxWidth: "78%",
                       padding: "var(--spacing-3) var(--spacing-4)",
-                      fontSize: "var(--font-size-sm)",
-                      backgroundColor: isUser ? "var(--color-primary-blue)" : "var(--color-bg-card)",
+                      borderRadius: "var(--radius-lg)",
+                      backgroundColor: isUser
+                        ? "var(--color-primary-blue)"
+                        : "var(--color-bg-card)",
                       color: isUser ? "var(--color-white)" : "var(--color-text-main)",
                       border: isUser ? "none" : "1px solid var(--color-border)",
-                      boxShadow: isUser ? "var(--shadow-sm)" : "var(--shadow-xs)",
+                      boxShadow: "var(--shadow-sm)",
+                      fontSize: "var(--font-size-sm)",
                     }}
                   >
                     {isUser ? msg.content : renderAssistantContent(msg)}
@@ -491,11 +661,14 @@ export default function ChatPage({ params }: ChatPageProps) {
           <form
             onSubmit={handleSubmit}
             style={{
-              padding: "var(--spacing-3)",
+              padding: "var(--spacing-3) var(--spacing-4)",
               borderTop: "1px solid var(--color-border)",
               display: "flex",
               gap: "var(--spacing-2)",
               backgroundColor: "var(--color-bg-card)",
+              maxWidth: "860px",
+              width: "100%",
+              margin: "0 auto",
             }}
           >
             <input
@@ -520,7 +693,10 @@ export default function ChatPage({ params }: ChatPageProps) {
               style={{
                 padding: "10px 20px",
                 borderRadius: "var(--radius-md)",
-                backgroundColor: !inputValue.trim() || isSubmitting ? "var(--color-border)" : "var(--color-primary-blue)",
+                backgroundColor:
+                  !inputValue.trim() || isSubmitting
+                    ? "var(--color-border)"
+                    : "var(--color-primary-blue)",
                 color: "var(--color-white)",
                 border: "none",
                 fontWeight: 600,
@@ -532,8 +708,8 @@ export default function ChatPage({ params }: ChatPageProps) {
               {isSubmitting ? "Sending..." : "Send"}
             </button>
           </form>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

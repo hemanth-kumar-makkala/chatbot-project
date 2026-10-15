@@ -1477,3 +1477,152 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run --project backend pytest backend/tests/unit/test_wiring_profile_guards.py backend/tests/unit/test_worker_and_activation.py -v` -> 44 passed in 0.69s.
   - `uv run --project backend pytest backend/tests/invariants -v` -> 25 passed in 0.23s.
   - `uv run --project backend pre-commit run --files ...` -> 100% passed (10/10 hooks).
+
+---
+
+### [2026-10-15] TASK: UI-0 — UI Audit, Inventory & Backend Connection Map Across All Phases
+
+- **Task ID**: UI-0
+- **What Was Built / Documented**:
+  - **Strategic Reorientation**: Recorded new direction from Srinath: "We build the complete UI first, across all phases, then connect the backend screen by screen." Adapter 3 (BGE-M3 embedding provider) paused while UI is established.
+  - **Comprehensive UI Inventory** (`docs/ui/UI_INVENTORY.md`):
+    - Audited `Client Knowledge Assistant Architecture and Build Plan.md`, `docs/phases/PHASE-0.md` through `PHASE-7.md`, `docs/ui/KNOWLEDGE_PAGE_SPEC.md`, `API_CONTRACT_NOTES.md`, `BUILD_NOTES.md`, and `docs/decisions/`.
+    - Documented all 22 screens, panels, and states across Platform Admin, Client Admin, and Staff for Phases 1–5:
+      - Phase 1 (Foundations & Auth): 2 items (`Login`, `TopBar`) — 2 Built.
+      - Phase 2 (Ingestion & Knowledge Admin): 5 items (`DocumentsTable`, `UploadArea`, `StatusChips`, `ConfirmDialog`, `ReviewDrawer`) — 5 Built.
+      - Phase 3 (Retrieval, Chat & Tracing): 10 items (`ChatPage`, `ConversationHistory`, `AssistantSelector`, `StreamingStatusLines`, `AnswerCard`, `PdfViewer`, `RefusalCard`, `ConflictCard`, `ClarifyCard`, `SafeFailureCard`) — 5 Built, 2 Partly Built, 3 Not Built.
+      - Phase 4 (Vision & Dual-Read Extraction): 3 items (`SessionDocUpload`, `DualReadTable`, `FieldStateBadges`) — 3 Not Built.
+      - Phase 5 (Hardening & Quality): 2 items (`FeedbackControls`, `RateLimitWarning`) — 1 Partly Built, 1 Not Built.
+      - Totals: 12 Built, 3 Partly Built, 7 Not Built.
+    - Upheld the core architecture invariant: "No admin dashboards; the Knowledge page and its review list are the only admin screens."
+    - Formulated 5 critical architectural questions covering Platform Admin boundaries, assistant discovery switcher routes, PDF file streaming for PDF.js, conversation history/session document upload routes, and SSE streaming vs synchronous JSON.
+  - **Backend Connection Map** (`docs/ui/CONNECTION_MAP.md`):
+    - Mapped every UI feature to its HTTP method/route, backend engine component, mock profile status, and missing real-model adapters/tasks.
+    - Verified all statuses against active code in `backend/app/api/routes/` and `web/lib/api.ts`.
+  - **QA Test Checklist Updates** (`docs/qa/UI_TEST_CHECKLIST.csv`):
+    - Replaced placeholder UI-024 with 16 explicit test checklist rows (UI-024 through UI-039) covering all not-yet-tested UI items across Phases 3, 4, and 5 with empty Result columns.
+  - **Status Updates** (`docs/STATUS.md`):
+    - Recorded Task UI-0 as completed, recorded the UI-first ordering decision, and set next task to UI-1.
+- **Verification**:
+  - Read-only documentation task; no backend or frontend code modified.
+
+---
+
+### [2026-10-15] TASK: UI-0 Review & Alignment — Node Numbers, Citations, Model Roles, and Srinath Decisions
+
+- **Task ID**: UI-0 Review
+- **What Was Corrected / Built**:
+  - **Grounding & Model Role Corrections**:
+    - Removed `llama3.1:8b`; confirmed `desktop-gpu` uses `qwen3-vl:4b` for answer and vision roles (architecture "Model roles and runtime profiles" line 302; `PHASE-3` Dependencies lines 28–30).
+    - Removed `Marker`, `Qwen2.5-VL`, and `Adjudicator` (not in docs); verified Phase 4 uses `qwen3-vl:4b`, the extraction subgraph (`extract_fields` → `dual_read_compare` → `classify_confidence` → `validate_fields`), normalized visual value comparison, and the field state engine (`PHASE-4` Tasks 4.1 to 4.5).
+    - Labeled malware scanner as undecided (`OPEN_QUESTIONS` Item 2.2).
+    - Labeled production auth as undecided: built-in or Identity Platform, with SSO listed as a later option (architecture Swappable table line 335 and Open decisions line 660).
+    - Clarified keyword search: local uses Postgres full-text (`tsvector`) per `PHASE-3` Task 3.1; BM25 appears only as a Cloud SQL option in the architecture Tech stack table (line 329).
+    - Rate limits: `PHASE-5` Task 5.1 per user and per tenant; no technology specified in docs (removed Redis).
+  - **Node Numbering Alignment**:
+    - Aligned all query graph references to exact node numbers from `docs/graph.md` and spec: Node 1 `guard_input`, Node 2 `route` (clarify topics via Retriever title search, `OPEN_QUESTIONS` 1.6, `PHASE-1` Task 1.6; route "general"), Node 3 `retrieve`, Node 4 `rerank`, Node 5 `assess_evidence`, Node 6 `vision_read`, Node 7 `generate`, Node 8 `validate`, Node 9 `respond`.
+  - **UI Inventory Additions (`docs/ui/UI_INVENTORY.md`)**:
+    - Added General task draft presentation (Query flow Node 2, Spec line 194; Goal 6 line 58).
+    - Added upload newer version of an existing file (client admin flow step 4, Spec line 98).
+    - Added visual answer badge with page thumbnail (Goal 4 line 53, Invariant 5 line 147, `PHASE-4` Task 4.2).
+    - Added source language label (architecture "Language", lines 426–431).
+    - Added explicit citation for `Ready (N pages need review)` (`PHASE-2` Scope line 17, Spec line 248).
+    - Added question-time status line for scanned pages (Spec line 87 staff day step 4).
+    - Total inventory surface: 23 items across Phases 1–5 (8 Built, 2 Partly Built, 4 UI renders/backend exists/unreachable on mock, 9 Not Built).
+  - **Connection Map Corrections (`docs/ui/CONNECTION_MAP.md`)**:
+    - Verified all statuses against code and tests.
+    - Assigned status `UI renders it; backend path exists; not reachable from the UI on mock` for Refusal, Conflict, Clarify, and Safe Failure.
+    - Proved re-upload after retire passes under migration 0010 (`test_migration_0010.py` and `test_upload_dedup_rules.py` 6 passed); marked Pass in checklist and removed "known bug" in map.
+    - Checked page image route RBAC in `backend/app/api/routes/knowledge.py:290`: confirmed it is currently `client_admin` only, and documented the requirement for a tenant-scoped staff-allowed route for Phase 3/4 chat thumbnails and PDF preview.
+  - **Decisions Recorded (`docs/OPEN_QUESTIONS.md` & `docs/STATUS.md`)**:
+    - Platform admin has no screen for now (out-of-band scripts); open for Dan due to line 78 vs 588 conflict.
+    - `GET /v1/assistants`, PDF file streaming route, conversations/messages, and session upload are built as each screen is connected.
+    - Streaming receives a new endpoint (`POST /v1/questions/stream` via SSE) in Task 3.6 while JSON endpoint remains intact, with an ADR.
+  - **QA Checklist (`docs/qa/UI_TEST_CHECKLIST.csv`)**:
+    - Marked UI-011 Pass based on verified migration 0010 tests.
+    - Added UI-040 for general task draft.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/integration/test_migration_0010.py backend/tests/integration/test_upload_dedup_rules.py -v` -> 6 passed in 2.67s.
+  - `uv run --project backend pre-commit run --files ...` -> 10/10 passed.
+
+---
+
+### [2026-10-15] TASK: UI-1 — Assistant Picker, Live/Demo Switch & Chat Layout with Conversation History
+
+- **Task ID**: UI-1
+- **What Was Built**:
+  - **Live/Demo Switch & Invariant Guard** (`web/lib/connections.ts`):
+    - Enforced `NEXT_PUBLIC_DATA_SOURCE` as required with values `"live"` or `"demo"`.
+    - Throws `REQUIRED_DATA_SOURCE_ERROR` ("NEXT_PUBLIC_DATA_SOURCE is required and must be either 'live' or 'demo'.") at startup if missing, empty, or unknown with zero silent default.
+    - Explicit `FEATURE_CONNECTIONS` map matching `docs/ui/CONNECTION_MAP.md`: live today (`auth_login`, `auth_me`, `auth_logout`, `knowledge_list`, `knowledge_upload`, `knowledge_status`, `knowledge_retire`, `knowledge_review`, `knowledge_image`, `knowledge_accept`, `knowledge_exclude`, `knowledge_promote`, `knowledge_retry`, `chat_ask`, `chat_citations`); all other features demo.
+    - Created `DataSourceChip.tsx` component rendering a small pill chip ("Live" in green, "Demo" in lavender/purple) for UI features with `data-testid="data-source-chip"`.
+  - **Golden-Set Demo Fixtures** (`web/lib/demo/fixtures.ts`):
+    - Synthetic typed fixtures matching backend response types exactly.
+    - Assistant fixtures: Maple Ridge Internal Medicine (specialty "Internal Medicine / Prior Auth", 3 active docs), Pinecrest Pediatric Care ("Pediatrics / Scheduling", 1 doc), Horizon Valley Health ("Primary Care / Clinical Policy", 2 docs).
+    - Conversation & message fixtures incorporating golden-set facts:
+      - Maple Ridge Prior Auth Guide: standard intake fax 555-0199, urgent 555-0198.
+      - Conflicting fax numbers: 555-0101 vs 555-0102.
+      - Alex Morgan chart: MRN-4412-A, Apex Health plan, prior auth fax 555-0131.
+    - Retained `DEV_DEFAULT_ASSISTANT_ID` (`00000000-0000-0000-0000-000000000001`) only as the demo fixture value for Maple Ridge.
+  - **Assistant Picker Screen** (`web/app/assistants/page.tsx`):
+    - Mounted at `/assistants`.
+    - Displays assistant cards with client name, specialty, active doc count, and Demo chip.
+    - Full keyboard navigation and click handler navigating to `/assistants/[id]/chat`.
+    - Updated `/login` page redirect target from `/assistants/[id]/knowledge` to `/assistants`.
+  - **Chat Layout with Conversation History** (`web/app/assistants/[assistantId]/chat/page.tsx`):
+    - 3-column responsive layout:
+      - Left sidebar: displays Demo chip, "+ New Conversation" action button, and chronologically ordered past conversations list. Selecting a conversation populates the chat message thread.
+      - Center pane: chat message bubble list and question input form with Live chip for query submission (`POST /v1/questions`).
+      - Right pane: reserved for Phase 3 citation PDF preview.
+  - **QA Checklist & Status Updates**:
+    - Updated `docs/qa/UI_TEST_CHECKLIST.csv`: marked UI-025 Pass; added UI-041 through UI-045.
+    - Updated `docs/STATUS.md`: recorded Task UI-1 complete, next task UI-2.
+- **Tests Added & Verification**:
+  - `web/__tests__/ui1.test.tsx` (11 tests):
+    - Invariant: `NEXT_PUBLIC_DATA_SOURCE` missing, empty, or invalid value throws `REQUIRED_DATA_SOURCE_ERROR`.
+    - Invariant: valid `"live"` and `"demo"` return mode correctly.
+    - Map: `FEATURE_CONNECTIONS` matches `CONNECTION_MAP.md` (live features return `"live"`; demo features return `"demo"`).
+    - Map: `getFeatureDataSource` returns `"demo"` for all features when global mode is `"demo"`.
+    - Component: `DataSourceChip` renders Live chip with green styles and Demo chip with lavender styles.
+    - Screen: `/assistants` renders assistant cards with titles, document counts, and navigates to chat on click.
+    - Screen: Chat page renders conversation history sidebar with past sessions and "+ New Conversation" button.
+  - **TDD Failing Run**: Vitest run without `connections.ts` failed with exit code 1 (logged in `D:\dev\tmp\agent-logs\main-failing-ui1.txt`).
+  - **TDD Passing Run**: Vitest run after implementation passed all 11 tests in 98ms (logged in `D:\dev\tmp\agent-logs\main-passing-ui1.txt`).
+  - **Full Web Suite Run**: All 6 test files (54 tests) pass with `$env:NEXT_PUBLIC_DATA_SOURCE="live"; npm --prefix web run test`.
+  - **Typecheck**: `npm --prefix web run typecheck` passed with 0 errors.
+
+---
+
+### [2026-10-15] TASK: UI-1 Review Fixes & UI-0 Alignment — Assistant Isolation, Golden Facts, and Proof Test Grounding
+
+- **Task ID**: UI-1 Review & Alignment
+- **What Was Fixed / Built**:
+  - **Assistant ID Correction**:
+    - Fixed Clinic A assistant id from tenant id `00000000-0000-0000-0000-000000000001` to `00000000-0000-0000-0002-000000000001`.
+    - Imported `DEV_DEFAULT_ASSISTANT_ID` from `web/lib/devDefaults.ts` in `fixtures.ts`, `ChatPage`, and test files without manual typing.
+    - Added invariant test verifying `DEMO_ASSISTANTS[0].id === DEV_DEFAULT_ASSISTANT_ID`.
+  - **Demo Assistant Backend Isolation**:
+    - Only the assistant matching `DEV_DEFAULT_ASSISTANT_ID` calls live `askQuestion`.
+    - For non-default demo assistants (Pinecrest, Horizon Valley), query engine displays Demo chip and answers strictly from demo fixtures via `getDemoAssistantAnswer` without invoking the live backend.
+    - Verified by tests for both live assistant (calls `askQuestion`) and demo assistant (`expect(api.askQuestion).not.toHaveBeenCalled()`).
+  - **Golden-Set Fact Grounding & Source Citations**:
+    - Annotated every fact in `web/lib/demo/fixtures.ts` with explicit source comments citing `evals/golden/manifest.json`:
+      - Prior auth guide: `prior_auth_guide.pdf` p. 1 (outpatient surgery 5 business days advance) & p. 2 (urgent appeals 555-0142 within 72 hours).
+      - Intake fax conflict: `front_desk_policy_v1.pdf` p. 1 (555-0101) vs `front_desk_policy_v2.pdf` p. 1 (555-0102).
+      - Alex Morgan: `skewed_fax.pdf` p. 1 (chart MRN-4412-A, Amoxicillin 500mg, Dr. Evelyn Reed) and `tenant_a/patient_intake_form.pdf` p. 1 (Apex Health Insurance, emergency contact 555-0131).
+      - Copay: `eligibility_checklist.pdf` p. 1 ($25.00 primary care copay).
+      - Clinical escalation: `clinical_protocols_manual.pdf` p. 13 (escalation desk phone 555-0176, lab panic values within 15 min).
+  - **UI-0 Doc Alignments (`CONNECTION_MAP.md` & `UI_INVENTORY.md`)**:
+    - Replaced all spec line numbers with section names ("Model roles and runtime profiles", "Security, HIPAA and guardrails", "Swappable components and vendor isolation", "End result: how people will use it", "Query flow", "Ingestion pipeline").
+    - Updated reranker to `bge-reranker-v2-m3 (PHASE-3 Task 3.2)`.
+    - Updated Clarify to cite `PHASE-1 Task 1.6, OPEN_QUESTIONS 1.6, and ADR-0002`.
+    - Updated Session Upload to cite `PHASE-4 Task 4.3` (injection guards are `PHASE-5 Tasks 5.1 and 5.2`).
+    - Updated General Task Draft status to `not rendered by UI yet; backend path exists in graph (test_graph_end_to_end.py)`.
+    - Updated Proof column with real verified test paths; replaced non-existent files (`test_auth_routes.py`, `test_knowledge_routes.py`, `test_knowledge_review_flow.py`, `test_questions_api.py`) with real integration tests or "no test".
+- **Verification**:
+  - **Failing Run**: Recorded in `D:\dev\tmp\agent-logs\main-failing-ui1-fixes.txt` (exit code 1, failed on demo assistant chip and isolation).
+  - **Passing Run**: Recorded in `D:\dev\tmp\agent-logs\main-passing-ui1-fixes.txt` (exit code 0, 14/14 tests passed in 199ms).
+  - **Full Web Test Suite**: All 6 test files (57 tests) pass with `$env:NEXT_PUBLIC_DATA_SOURCE="live"; npm --prefix web run test`.
+  - **Web Typecheck**: `npm --prefix web run typecheck` passed with 0 errors.
+  - **Backend Cited Proof Tests**: Recorded in `D:\dev\tmp\agent-logs\main-cited-tests.txt` (all 89 tests passed in 23.56s with `$env:APP_PROFILE="mock"` across `test_api_auth_endpoints.py`, `test_api_knowledge_endpoints.py`, `test_upload_service.py`, `test_upload_dedup_rules.py`, `test_api_knowledge_step2.py`, `test_api_knowledge_step3.py`, `test_graph_end_to_end.py`, and `test_retrieval_fallbacks.py`).
+  - **Pre-commit**: 10/10 hooks passing.
