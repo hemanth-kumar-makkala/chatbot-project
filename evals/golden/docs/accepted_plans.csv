@@ -1,0 +1,7 @@
+# SYNTHETIC TEST DOCUMENT,,,,,
+Payer Name,Plan Code,Network Tier,Standard Copay,Deductible,Pre-Auth
+Apex Health Insurance,APX-HMO-01,In-Network Tier 1,$20.00,$250.00,Yes
+Apex Health Insurance,APX-PPO-02,In-Network Tier 2,$35.00,$750.00,No
+Beacon Mutual Healthcare,BCN-EPO-10,In-Network Tier 1,$25.00,$300.00,Yes
+Crestview Health,CRST-GLD-05,In-Network Gold Tier,$15.00,$500.00,No
+Summit Care Plan,SMT-SLV-08,In-Network Silver Tier,$30.00,$1000.00,Yes
