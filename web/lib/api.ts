@@ -471,3 +471,50 @@ export function getPageImageUrl(
       : assistantId;
   return `/v1/assistants/${encodeURIComponent(normId)}/knowledge/documents/${encodeURIComponent(versionId)}/pages/${pageNumber}/image`;
 }
+
+export interface SourceCitation {
+  document_title: string;
+  version: string;
+  page_number: number;
+  evidence_type: string;
+}
+
+export interface QuestionResponse {
+  request_id: string;
+  tenant_id: string;
+  conversation_id: string;
+  message_id: string;
+  status: "answered" | "refusal" | "conflicting" | "safe_failure" | "clarify" | string;
+  answer: string;
+  citations: string[];
+  evidence_type?: string | null;
+  public_error_ref?: string | null;
+  sources?: SourceCitation[];
+  conflict_sources?: SourceCitation[];
+}
+
+export async function askQuestion(
+  assistantId: string,
+  questionText: string,
+  conversationId?: string | null
+): Promise<ApiResult<QuestionResponse>> {
+  const normId =
+    assistantId === "00000000-0000-0002-0000-000000000001"
+      ? DEV_DEFAULT_ASSISTANT_ID
+      : assistantId;
+
+  let convId: string | null = null;
+  if (conversationId !== undefined && conversationId !== null && conversationId.trim() !== "") {
+    convId = conversationId;
+  }
+
+  return apiFetch<QuestionResponse>("/v1/questions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assistant_id: normId,
+      question_text: questionText,
+      conversation_id: convId,
+    }),
+  });
+}

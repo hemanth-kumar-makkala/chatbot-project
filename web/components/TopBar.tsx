@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
+import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 interface TopBarProps {
   assistantName?: string | null;
@@ -75,6 +77,36 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
               {assistantName}
             </span>
           )}
+          <nav style={{ display: "flex", gap: "var(--spacing-2)", marginLeft: "var(--spacing-3)" }}>
+            <Link
+              href={`/assistants/${encodeURIComponent(assistantId || DEV_DEFAULT_ASSISTANT_ID)}/knowledge`}
+              style={{
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-white)",
+                padding: "4px 12px",
+                borderRadius: "var(--radius-md)",
+                backgroundColor: "rgba(255, 255, 255, 0.15)",
+                textDecoration: "none",
+                fontWeight: 500,
+              }}
+            >
+              Knowledge
+            </Link>
+            <Link
+              href={`/assistants/${encodeURIComponent(assistantId || DEV_DEFAULT_ASSISTANT_ID)}/chat`}
+              style={{
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-white)",
+                padding: "4px 12px",
+                borderRadius: "var(--radius-md)",
+                backgroundColor: "rgba(255, 255, 255, 0.15)",
+                textDecoration: "none",
+                fontWeight: 500,
+              }}
+            >
+              Chat
+            </Link>
+          </nav>
         </div>
 
         <div style={{ position: "relative" }}>

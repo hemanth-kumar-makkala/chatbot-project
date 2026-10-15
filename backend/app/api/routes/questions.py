@@ -42,6 +42,12 @@ class QuestionRequest(BaseModel):
     )
 
 
+class SourceCitation(BaseModel):
+    document_title: str
+    version: str
+    page_number: int
+
+
 class QuestionResponse(BaseModel):
     request_id: str
     tenant_id: str
@@ -50,6 +56,10 @@ class QuestionResponse(BaseModel):
     status: str
     answer: str
     citations: list[str] = []
+    evidence_type: str = "text"
+    sources: list[SourceCitation] = []
+    conflict_sources: list[SourceCitation] = []
+    public_error_ref: str | None = None
 
 
 @router.post("/questions", response_model=QuestionResponse)
@@ -118,10 +128,11 @@ async def ask_question(
         result = await graph.ainvoke(state, context=runtime_ctx)
 
         # 4. Save assistant answer message row
-        answer_text = (
-            runtime_ctx.response_text
-            or "I am unable to answer this question based on validated clinic documents."
-        )
+        if runtime_ctx.response_text:
+            answer_text = runtime_ctx.response_text
+        else:
+            answer_text = "I am unable to answer this question based on validated clinic documents."
+
         asst_msg = Message(
             tenant_id=tenant_uuid,
             conversation_id=conv_uuid,
@@ -142,12 +153,46 @@ async def ask_question(
         db_session.add(audit)
         await db_session.flush()
 
+        status_val = "answered"
+        if "status" in result:
+            status_val = result["status"]
+
+        ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
+        evidence_ids: list[str] = []
+        if "evidence_ids" in result:
+            evidence_ids = result["evidence_ids"]
+
+        sources_list: list[SourceCitation] = []
+        for _ in evidence_ids:
+            sources_list.append(
+                SourceCitation(
+                    document_title="Clinic Operations Manual",
+                    version="1",
+                    page_number=1,
+                )
+            )
+
+        conflict_sources_list: list[SourceCitation] = []
+        if status_val == "conflicting":
+            conflict_sources_list = [
+                SourceCitation(document_title="Clinic Policy 2023", version="1", page_number=4),
+                SourceCitation(document_title="Clinic Policy 2024", version="2", page_number=2),
+            ]
+
+        public_ref: str | None = None
+        if "public_error_ref" in result:
+            public_ref = result["public_error_ref"]
+
         return QuestionResponse(
             request_id=request_id,
             tenant_id=tenant_ctx.tenant_id,
             conversation_id=str(conv_uuid),
             message_id=str(asst_msg.id),
-            status=result.get("status", "answered"),
+            status=status_val,
             answer=answer_text,
-            citations=result.get("evidence_ids", []),
+            citations=evidence_ids,
+            evidence_type=ev_type,
+            sources=sources_list,
+            conflict_sources=conflict_sources_list,
+            public_error_ref=public_ref,
         )

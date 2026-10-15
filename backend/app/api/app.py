@@ -4,19 +4,45 @@ from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 
 enforce_langsmith_tracing_disabled()
 
+import os
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
 from app.api.routes import auth, health, knowledge, questions
+from app.ports.errors import ConfigurationError
 from app.wiring import create_auth_provider
 
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
     """Create and configure FastAPI application."""
     enforce_langsmith_tracing_disabled()
-    app_settings = settings or ApiSettings()
+    if settings is not None:
+        app_settings = settings
+    else:
+        init_kwargs: dict[str, Any] = {}
+        if "APP_PROFILE" in os.environ:
+            prof = os.environ["APP_PROFILE"].strip()
+            if prof != "":
+                init_kwargs["profile"] = prof
+            else:
+                raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: profile")
+        else:
+            raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: profile")
+
+        if "LOCAL_STORAGE_PATH" in os.environ:
+            stor = os.environ["LOCAL_STORAGE_PATH"].strip()
+            if stor != "":
+                init_kwargs["storage_dir"] = stor
+            else:
+                raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: storage_dir")
+        else:
+            raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: storage_dir")
+
+        app_settings = ApiSettings(**init_kwargs)
 
     # Invariant: CORS origins must never include "*"
     if "*" in app_settings.cors_origins:

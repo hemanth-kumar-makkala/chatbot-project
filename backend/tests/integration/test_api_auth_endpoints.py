@@ -1,5 +1,8 @@
 """Integration tests for authentication, sessions, tenant scoping, and question endpoints."""
 
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -11,6 +14,7 @@ from app.api.app import create_app
 from app.api.config import ApiSettings
 from app.db.models import Assistant, Membership, Tenant, User
 from app.db.session import tenant_session, unscoped_session
+from app.ports.errors import ConfigurationError
 from app.ports.types import TenantContext, UserRole
 
 
@@ -343,3 +347,261 @@ class TestApiAuthAndTenantEndpoints:
             assert data["tenant_id"] != fake_tenant_id
             assert "answer" in data
             assert data["status"] in ("answered", "completed")
+
+    async def test_post_questions_from_web_client_without_content_type_header_fails_422(
+        self, test_app, runtime_test_password: str
+    ) -> None:
+        """Reproduce bug: posting string body without application/json Content-Type fails."""
+        hasher = BuiltinAuthProvider()
+        password = runtime_test_password
+        email = f"staff-{uuid4()}@example.com"
+
+        async with unscoped_session() as session:
+            t_real = Tenant(name="Tenant Reproduction")
+            session.add(t_real)
+            await session.flush()
+            t_real_id = t_real.id
+
+            user = User(email=email, hashed_password=hasher.hash_password(password))
+            session.add(user)
+            await session.flush()
+            u_id = user.id
+
+        ctx_real = TenantContext(
+            tenant_id=str(t_real_id),
+            user_id=str(u_id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="setup-session",
+        )
+        async with tenant_session(ctx_real) as t_session:
+            mem = Membership(tenant_id=t_real_id, user_id=u_id, role="staff")
+            asst = Assistant(
+                tenant_id=t_real_id,
+                name="Assistant Repro",
+                prompt_id="prompt-default",
+                prompt_version="1.0",
+            )
+            t_session.add_all([mem, asst])
+            await t_session.flush()
+            asst_id = str(asst.id)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/v1/auth/login",
+                json={"email": email, "password": password},
+            )
+            csrf_token = str(client.cookies.get("csrf_token") or "")
+
+            raw_body = json.dumps(
+                {
+                    "assistant_id": asst_id,
+                    "question_text": "What are the hours?",
+                    "conversation_id": None,
+                }
+            )
+
+            # What askQuestion previously sent: body string with Content-Type: text/plain
+            q_resp = await client.post(
+                "/v1/questions",
+                headers={
+                    "X-CSRF-Token": csrf_token,
+                    "Content-Type": "text/plain",
+                },
+                content=raw_body,
+            )
+            assert q_resp.status_code == 422
+            detail = q_resp.json()["detail"]
+            assert detail[0]["loc"] == ["body"]
+            assert detail[0]["type"] == "model_attributes_type"
+
+    async def test_post_questions_shared_contract_fixture(
+        self, test_app, runtime_test_password: str
+    ) -> None:
+        """Shared contract: posting fixture question_request.json returns 200."""
+        fixture_path = (
+            Path(__file__).resolve().parents[3]
+            / "web"
+            / "__tests__"
+            / "fixtures"
+            / "question_request.json"
+        )
+        assert fixture_path.exists(), f"Fixture missing at {fixture_path}"
+        with open(fixture_path, encoding="utf-8") as f:
+            fixture_data = json.load(f)
+
+        hasher = BuiltinAuthProvider()
+        password = runtime_test_password
+        email = f"staff-{uuid4()}@example.com"
+
+        async with unscoped_session() as session:
+            t_real = Tenant(name="Tenant Contract")
+            session.add(t_real)
+            await session.flush()
+            t_real_id = t_real.id
+
+            user = User(email=email, hashed_password=hasher.hash_password(password))
+            session.add(user)
+            await session.flush()
+            u_id = user.id
+
+        ctx_real = TenantContext(
+            tenant_id=str(t_real_id),
+            user_id=str(u_id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="setup-session",
+        )
+        async with tenant_session(ctx_real) as t_session:
+            mem = Membership(tenant_id=t_real_id, user_id=u_id, role="staff")
+            asst = Assistant(
+                tenant_id=t_real_id,
+                name="Assistant Contract",
+                prompt_id="prompt-default",
+                prompt_version="1.0",
+            )
+            t_session.add_all([mem, asst])
+            await t_session.flush()
+            asst_id = str(asst.id)
+
+        # Substitute the seeded assistant ID into fixture payload
+        payload = dict(fixture_data)
+        payload["assistant_id"] = asst_id
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/v1/auth/login",
+                json={"email": email, "password": password},
+            )
+            csrf_token = str(client.cookies.get("csrf_token") or "")
+
+            q_resp = await client.post(
+                "/v1/questions",
+                headers={
+                    "X-CSRF-Token": csrf_token,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            assert q_resp.status_code == 200, (
+                f"Contract failed with {q_resp.status_code}: {q_resp.text}"
+            )
+            data = q_resp.json()
+            assert data["status"] in ("answered", "completed")
+            assert "mode" not in data
+
+    @pytest.mark.parametrize(
+        "mock_status, mock_evidence, expected_status, check_conflict, check_error_ref",
+        [
+            ("answered", ["c1"], "answered", False, False),
+            ("refusal", [], "refusal", False, False),
+            ("conflicting", ["c1", "c2"], "conflicting", True, False),
+            ("safe_failure", [], "safe_failure", False, True),
+        ],
+    )
+    async def test_post_questions_response_fields_by_status(
+        self,
+        test_app,
+        runtime_test_password: str,
+        monkeypatch,
+        mock_status: str,
+        mock_evidence: list[str],
+        expected_status: str,
+        check_conflict: bool,
+        check_error_ref: bool,
+    ) -> None:
+        """Verify response fields for answered, refusal, conflicting, safe_failure."""
+        hasher = BuiltinAuthProvider()
+        password = runtime_test_password
+        email = f"staff-{uuid4()}@example.com"
+
+        async with unscoped_session() as session:
+            t = Tenant(name="Tenant Statuses")
+            session.add(t)
+            await session.flush()
+            t_id = t.id
+
+            user = User(email=email, hashed_password=hasher.hash_password(password))
+            session.add(user)
+            await session.flush()
+            u_id = user.id
+
+        ctx = TenantContext(
+            tenant_id=str(t_id),
+            user_id=str(u_id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="setup-session",
+        )
+        async with tenant_session(ctx) as t_session:
+            mem = Membership(tenant_id=t_id, user_id=u_id, role="staff")
+            asst = Assistant(
+                tenant_id=t_id,
+                name="Assistant Statuses",
+                prompt_id="prompt-default",
+                prompt_version="1.0",
+            )
+            t_session.add_all([mem, asst])
+            await t_session.flush()
+            asst_id = str(asst.id)
+
+        # Mock compiled graph output
+        from app.api.routes import questions
+
+        mock_result = {
+            "status": mock_status,
+            "evidence_ids": mock_evidence,
+            "needs_vision": False,
+        }
+        if check_error_ref:
+            mock_result["public_error_ref"] = "ERR-ABC123"
+
+        mock_graph = AsyncMock()
+        mock_graph.ainvoke.return_value = mock_result
+        monkeypatch.setattr(questions, "get_compiled_graph", lambda: mock_graph)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/v1/auth/login",
+                json={"email": email, "password": password},
+            )
+            csrf_token = str(client.cookies.get("csrf_token") or "")
+
+            q_resp = await client.post(
+                "/v1/questions",
+                headers={"X-CSRF-Token": csrf_token},
+                json={
+                    "assistant_id": asst_id,
+                    "question_text": "Status test question",
+                },
+            )
+            assert q_resp.status_code == 200
+            data = q_resp.json()
+            assert data["status"] == expected_status
+            assert "mode" not in data
+            assert "evidence_type" in data
+            assert data["evidence_type"] == "text"
+            assert isinstance(data["sources"], list)
+            assert isinstance(data["conflict_sources"], list)
+
+            if check_conflict:
+                assert len(data["conflict_sources"]) == 2
+                assert data["conflict_sources"][0]["document_title"] != ""
+            else:
+                assert len(data["conflict_sources"]) == 0
+
+            if check_error_ref:
+                assert data["public_error_ref"] == "ERR-ABC123"
+            else:
+                assert data["public_error_ref"] is None
+
+    async def test_create_app_missing_local_storage_path_raises_configuration_error(
+        self, monkeypatch
+    ) -> None:
+        """create_app without settings raises ConfigurationError if storage path is missing."""
+        monkeypatch.setenv("APP_PROFILE", "mock")
+        monkeypatch.delenv("LOCAL_STORAGE_PATH", raising=False)
+        monkeypatch.delenv("STORAGE_DIR", raising=False)
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_app(settings=None)
+        assert "storage_dir" in str(exc_info.value)

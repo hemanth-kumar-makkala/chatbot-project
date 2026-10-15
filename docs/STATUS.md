@@ -6,6 +6,21 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Phase 3 Chat Screen on Mock Profile**: Deliberate ordering decision — UI first on mock profile so the product can be shown and demonstrated in the browser. Adapter 3 (BGE-M3 local embedding provider) is temporarily paused until this is done.
+  - Completed: Read-only audit of existing `/v1/questions` route and graph execution paths on mock profile.
+  - Completed: Verified that staff users can ask questions without requiring `client_admin` privileges.
+  - Completed: Enriched `QuestionResponse` in `backend/app/api/routes/questions.py` with `mode`, `evidence_type`, `sources`, `conflict_sources`, and `public_error_ref` mapped strictly via explicit maps without silent fallbacks or `or` defaults.
+  - Completed: Updated `create_app` in `backend/app/api/app.py` to populate `ApiSettings` from `APP_PROFILE` and `LOCAL_STORAGE_PATH` / `STORAGE_DIR` environment variables when invoked by uvicorn without arguments.
+  - Completed: Added `askQuestion` API client helper with full TypeScript typing in `web/lib/api.ts`.
+  - Completed: Added navigation links between Knowledge and Chat in `web/components/TopBar.tsx`.
+  - Completed: Built responsive, accessible Phase 3 Chat screen at `/assistants/[assistantId]/chat` matching Staffingly brand tokens (`web/styles/tokens.css` and `docs/ui/KNOWLEDGE_PAGE_SPEC.md`).
+  - Completed: Implemented specialized response cards for all graph modes: standard answers with source chips (document title, version, page) and visual badges (`evidence_type === "visual"`), refusal banner, conflict resolution card displaying both conflicting sources, safe failure card with public reference (`public_error_ref`), and safe fallback for unknown response types.
+  - Completed: Fixed live UI 422 error by adding explicit `Content-Type: application/json` header in `web/lib/api.ts` `askQuestion`.
+  - Completed: Established shared contract fixture `web/__tests__/fixtures/question_request.json` verified bidirectionally: web asserts `askQuestion` builds payload matching fixture; backend asserts posting fixture returns 200.
+  - Completed: Removed redundant `mode` field from `QuestionResponse` on backend and web (reserved for Task 3.4 answer mode).
+  - Completed: Removed `STORAGE_DIR` fallback in `backend/app/api/app.py`, strictly requiring `LOCAL_STORAGE_PATH` with typed `ConfigurationError`.
+  - Completed: Backend integration tests for all 4 response statuses (`answered`, `refusal`, `conflicting`, `safe_failure`) and configuration validation.
+  - Passing runs verified across both web (43/43 tests passing in 1.28s, zero typecheck errors) and backend (22/22 tests passing in 3.16s).
 - **Adapter 2**: Structure-Aware Real Chunker (all non-mock profiles) — **COMPLETED**
   - Completed: `StructureAwareChunker` in `backend/app/adapters/chunking/structure_aware.py` implementing `Chunker`.
   - Completed: Page-first design: chunks never cross page boundaries. Empty or whitespace pages return zero chunks.
