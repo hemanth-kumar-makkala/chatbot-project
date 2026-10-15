@@ -123,7 +123,11 @@ async def _seed_tenant_and_user(name: str = "Dedup Tenant") -> tuple[TenantConte
     return ctx, tenant_id, user_id
 
 
-def _create_upload_service(session: Any, storage_dir: str) -> UploadService:
+def _create_upload_service(
+    session: Any,
+    storage_dir: str,
+    before_lock_hook: Any = None,
+) -> UploadService:
     repo = create_document_repository(session)
     storage = create_storage_backend(profile="mock", base_dir=storage_dir)
     scanner = create_malware_scanner(profile="mock")
@@ -133,6 +137,7 @@ def _create_upload_service(session: Any, storage_dir: str) -> UploadService:
         storage=storage,
         malware_scanner=scanner,
         audit_logger=logger,
+        before_lock_hook=before_lock_hook,
     )
 
 
@@ -288,11 +293,20 @@ async def test_same_bytes_different_tenants_both_accepted(tmp_path: Path) -> Non
 async def test_concurrent_uploads_same_bytes_one_tenant(tmp_path: Path) -> None:
     """5. Two concurrent uploads in one tenant: exactly one accepted, one duplicate."""
     async with throwaway_upload_env(tmp_path) as env:
-        ctx, _, _ = await _seed_tenant_and_user("Concurrent Tenant")
+        ctx, tenant_id, _ = await _seed_tenant_and_user("Concurrent Tenant")
+
+        barrier = asyncio.Barrier(2)
+
+        async def race_hook() -> None:
+            await barrier.wait()
 
         async def _do_upload() -> Any:
             async with tenant_session(ctx) as session:
-                svc = _create_upload_service(session, env["storage_dir"])
+                svc = _create_upload_service(
+                    session,
+                    env["storage_dir"],
+                    before_lock_hook=race_hook,
+                )
                 return await svc.upload_document(
                     ctx,
                     UploadPayload(filename="concurrent.pdf", content=PDF_BYTES),
@@ -304,3 +318,20 @@ async def test_concurrent_uploads_same_bytes_one_tenant(tmp_path: Path) -> None:
 
         assert len(creations) == 1
         assert len(duplicates) == 1
+
+        async with tenant_session(ctx) as session:
+            doc_count = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE tenant_id = :t_id"),
+                    {"t_id": tenant_id},
+                )
+            ).scalar()
+            ver_count = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM document_versions WHERE tenant_id = :t_id"),
+                    {"t_id": tenant_id},
+                )
+            ).scalar()
+
+        assert doc_count == 1
+        assert ver_count == 1

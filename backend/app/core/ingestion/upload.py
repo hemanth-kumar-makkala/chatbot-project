@@ -37,12 +37,14 @@ class UploadService:
         malware_scanner: MalwareScanner,
         audit_logger: AuditLogger,
         after_duplicate_lookup_hook: Callable[[], Awaitable[None]] | None = None,
+        before_lock_hook: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.document_repo = document_repo
         self.storage = storage
         self.malware_scanner = malware_scanner
         self.audit_logger = audit_logger
         self.after_duplicate_lookup_hook = after_duplicate_lookup_hook
+        self.before_lock_hook = before_lock_hook
 
     async def upload_document(
         self,
@@ -82,6 +84,9 @@ class UploadService:
             raise
 
         # 3. Deduplication Lookup within Tenant Scope (serialized via advisory lock)
+        if self.before_lock_hook is not None:
+            await self.before_lock_hook()
+
         await self.document_repo.acquire_upload_lock(tenant.tenant_id, validated.sha256)
 
         existing_version = await self.document_repo.find_version_by_sha(
