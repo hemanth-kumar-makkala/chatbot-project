@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import socket
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID
 
 from app.core.ingestion.review_policy import evaluate_page_review
 from app.core.ingestion.vision_policy import (
@@ -23,16 +23,21 @@ from app.core.ingestion.vision_policy import (
     select_readings_for_chunking,
     should_trigger_vision_read,
 )
-from app.ports.chunker import Chunker
+from app.ports.chunker import Chunker, ChunkingContext, EvidenceTypeLiteral
 from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
 from app.ports.embedding_provider import EmbeddingProvider
-from app.ports.errors import ImageProcessingError
+from app.ports.errors import (
+    EmbeddingCountMismatchError,
+    ImageProcessingError,
+    InvalidEvidenceTypeError,
+)
 from app.ports.image_processor import ImageProcessor
 from app.ports.model_provider import ModelProvider
 from app.ports.storage import StorageBackend
 from app.ports.types import (
     CLEARABLE_REVIEW_REASONS,
+    CURRENT_PROCESSING_VERSION,
     ModelRole,
     PageArtifact,
     PageType,
@@ -42,6 +47,12 @@ from app.ports.types import (
 from app.ports.types import (
     PageReading as PageReadingDTO,
 )
+
+_EVIDENCE_TYPE_MAP: dict[str, EvidenceTypeLiteral] = {
+    "text": "text",
+    "visual": "visual",
+    "table": "table",
+}
 
 
 def is_retryable_error(exc: Exception) -> bool:
@@ -114,6 +125,12 @@ class PagePipelineService:
            with page_reading_id, and low-OCR text never chunked.
         5. Only then record page step as completed.
         """
+        # Resolve real document title directly once per page job
+        doc_title = await self.repository.get_document_title_for_version(
+            tenant_id=tenant_id,
+            version_id=document_version_id,
+        )
+
         # Retrieve existing page record
         page_rec = await self.repository.get_page(
             tenant_id=tenant_id,
@@ -329,22 +346,34 @@ class PagePipelineService:
 
         chunk_records: list[dict[str, Any]] = []
         for sel in selections:
-            chunks = self.chunker.chunk_page(
-                document_title="Document",
+            if sel.evidence_type not in _EVIDENCE_TYPE_MAP:
+                raise InvalidEvidenceTypeError("Unknown evidence type encountered during chunking")
+            chunk_evidence_type: EvidenceTypeLiteral = _EVIDENCE_TYPE_MAP[sel.evidence_type]
+
+            chunking_ctx = ChunkingContext(
+                tenant_id=tenant_id,
+                document_version_id=document_version_id,
+                processing_version=CURRENT_PROCESSING_VERSION,
                 page_number=page_number,
+                evidence_type=chunk_evidence_type,
+                document_title=doc_title,
+            )
+            chunks = self.chunker.chunk_page(
                 readings=[sel.text],
+                context=chunking_ctx,
                 language="english",
             )
             if not chunks:
                 continue
             chunk_texts = [c.text for c in chunks]
             embeddings = await self.embedding_provider.embed(chunk_texts)
-            for i, c in enumerate(chunks):
-                chunk_uuid = uuid5(
-                    NAMESPACE_URL,
-                    f"{tenant_id}:{document_version_id}:{page_number}:{sel.evidence_type}:{i}",
+            if len(embeddings) != len(chunks):
+                raise EmbeddingCountMismatchError(
+                    "Embedding provider returned count mismatching chunk count"
                 )
-                embedding_val = embeddings[i] if i < len(embeddings) else None
+            for i, c in enumerate(chunks):
+                chunk_uuid = UUID(c.chunk_id)
+                embedding_val = embeddings[i]
                 chunk_records.append(
                     {
                         "id": chunk_uuid,

@@ -315,8 +315,9 @@ def create_table_ingestion_service(
 def create_chunker(profile: str) -> Chunker:
     """Instantiate Chunker adapter based on profile.
 
-    MockChunker is strictly wired only in profile 'mock'.
-    Other profiles raise ConfigurationError until real chunker is built in Task 3.1.
+    - mock: MockChunker
+    - office-cpu, desktop-gpu, home-gpu, dev-free-api, cloud: StructureAwareChunker
+    - unknown profile: ConfigurationError
     """
     from app.ports.errors import ConfigurationError
 
@@ -325,9 +326,14 @@ def create_chunker(profile: str) -> Chunker:
 
         return MockChunker()
 
+    if profile in ("office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"):
+        from app.adapters.chunking.structure_aware import StructureAwareChunker
+
+        return StructureAwareChunker()
+
     raise ConfigurationError(
-        f"Chunker is not yet implemented for profile '{profile}'. "
-        "Real chunker will be implemented in Task 3.1."
+        "Unknown or unauthorized profile for Chunker",
+        error_code="UNAUTHORIZED_CHUNKER_PROFILE",
     )
 
 

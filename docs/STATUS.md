@@ -6,6 +6,21 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Adapter 2**: Structure-Aware Real Chunker (all non-mock profiles) — **COMPLETED**
+  - Completed: `StructureAwareChunker` in `backend/app/adapters/chunking/structure_aware.py` implementing `Chunker`.
+  - Completed: Page-first design: chunks never cross page boundaries. Empty or whitespace pages return zero chunks.
+  - Completed: Structure-aware: splits on headings and paragraphs first, long paragraphs on sentences with sliding window overlap (`TARGET_CHUNK_OVERLAP_WORDS = 50`) and minimum chunk size (`MIN_CHUNK_SIZE_WORDS = 20`) merging trailing sentences.
+  - Completed: Large tables split into whole rows without splitting table rows; header row preserved in `context_prefix` and not repeated in chunk text.
+  - Completed: Exact substring guarantee: stored chunk text is an exact substring of the original page text without alteration.
+  - Completed: Context prefix (`{document_title} - Page {page_number} - {heading}`) stored separately from chunk text.
+  - Completed: `ChunkingContext` typed dataclass carrying `tenant_id`, `document_version_id`, `processing_version`, `page_number`, `evidence_type`, and `document_title`.
+  - Completed: Chunk UUIDs derived deterministically (`uuid5`) strictly from `(tenant_id, document_version_id, processing_version, page_number, evidence_type, chunk_index)` only (not from title or text).
+  - Completed: Direct repository title lookup: `get_document_title_for_version` added to port and `PostgresDocumentRepository`, executed once per page job in pipeline (no `list_documents_with_status` loop, no f-string error).
+  - Completed: Explicit evidence type map `_EVIDENCE_TYPE_MAP` in pipeline; unknown value raises typed `InvalidEvidenceTypeError` with zero silent fallback.
+  - Completed: Embedding count parity enforced: `len(embeddings) != len(chunks)` raises typed `EmbeddingCountMismatchError`, guaranteeing zero chunks stored without embeddings.
+  - Completed: `TextChunk.chunk_id` mapped directly to `chunks.id` on DB batch insert.
+  - Completed: Wired in `create_chunker` in `app/wiring.py` with fixed error message (no f-string) for unknown profiles.
+  - Completed: Unit tests in `test_structure_aware_chunker.py` (11/11 passed), wiring tests in `test_worker_and_activation.py` and `test_wiring_profile_guards.py` (44/44 passed), pipeline integration tests (23/23 passed), and architecture invariants (25/25 passed) passing cleanly. Pre-commit 10/10 hooks passing.
 - **Adapter 1**: Real Ollama Model Provider (`desktop-gpu` and `home-gpu` profiles) — **COMPLETED**
   - Completed: `OllamaModelProvider` in `backend/app/adapters/models/ollama.py` implementing `ModelProvider`.
   - Completed: `OLLAMA_BASE_URL` required env var with no default; missing raises `ConfigurationError`.

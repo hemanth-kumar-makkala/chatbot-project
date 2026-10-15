@@ -1373,3 +1373,107 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `uv run --project backend pytest backend/tests/unit/test_ollama_provider.py backend/tests/unit/test_wiring_profile_guards.py -v -m "not models"` -> 50 passed, 1 deselected in 0.63s.
   - `uv run --project backend pre-commit run --files ...` -> 100% passed on all modified files.
+
+---
+
+### [2026-10-15] TASK: Adapter 2 — Structure-Aware Chunker (`desktop-gpu` and non-mock profiles)
+
+- **What Was Built**:
+  - **Structure-Aware Chunker Adapter** (`backend/app/adapters/chunking/structure_aware.py`):
+    - Implements `Chunker` port for `desktop-gpu`, `office-cpu`, `home-gpu`, `cloud`, and `dev-free-api`.
+    - Page-first invariant: chunks never cross page boundaries. Empty page returns 0 chunks.
+    - Structure-aware: splits on headings and paragraph boundaries first; splits long paragraphs on sentences (never mid-word); splits tables row-by-row (never mid-row).
+    - Named constants: `TARGET_CHUNK_SIZE_WORDS = 350`, `TARGET_CHUNK_OVERLAP_WORDS = 50`, `MIN_CHUNK_SIZE_WORDS = 20`.
+    - Exact text invariant: chunk text is an exact substring slice of the source page text (`chunk.text in page_text`).
+    - Separate context prefix: `{document_title} - Page {page_number} - {nearest_heading}` kept separate from `chunk.text`.
+    - Visual evidence marking: preserves `evidence_type="visual"` on visual readings.
+    - Deterministic chunk IDs: `uuid5(NAMESPACE_URL, f"{document_title}:{page_number}:{evidence_type}:{chunk_idx}:{chunk.text}")`.
+  - **Port & Mock Updates**:
+    - `backend/app/ports/chunker.py`: added `evidence_type: str = "text"` to `TextChunk` and `Chunker.chunk_page`.
+    - `backend/app/adapters/chunking/mock.py`: accepted and forwarded `evidence_type`.
+  - **Wiring & Profile Guards** (`backend/app/wiring.py`):
+    - `create_chunker` instantiates `StructureAwareChunker` for non-mock profiles (`desktop-gpu`, `office-cpu`, `home-gpu`, `cloud`, `dev-free-api`). For `mock`, returns `MockChunker`. Unknown profile raises `ConfigurationError`.
+  - **Tests**:
+    - Unit test suite (`backend/tests/unit/test_structure_aware_chunker.py`):
+      - `test_multi_paragraph_page_splits_on_paragraph_boundaries`
+      - `test_long_paragraph_splits_on_sentences_never_mid_word`
+      - `test_table_never_split_mid_row`
+      - `test_chunk_text_is_exact_substring_of_page_text`
+      - `test_context_prefix_is_separate_and_contains_metadata`
+      - `test_deterministic_chunks_and_ids_on_repeated_runs`
+      - `test_empty_page_gives_zero_chunks`
+      - `test_visual_reading_input_keeps_visual_marking`
+    - Updated wiring guard test `test_chunker_wiring_guard_profile_matrix` in `backend/tests/unit/test_worker_and_activation.py`.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_structure_aware_chunker.py -v` -> 8 passed in 0.08s.
+  - `uv run --project backend pytest backend/tests/unit/test_worker_and_activation.py -v` -> 11 passed in 0.67s.
+  - `uv run --project backend pytest backend/tests/invariants -v` -> 25 passed in 0.24s.
+  - `uv run --project backend pre-commit run --files ...` -> 100% passed on all modified files.
+
+---
+
+### [2026-10-15] TASK: Chunker Fix Round — Deterministic Context IDs, Table Splitting, Sentence Overlap & Pipeline Integration
+
+- **What Was Built**:
+  - **Deterministic Chunk IDs from Context Only** (`backend/app/ports/chunker.py`, `structure_aware.py`, `mock.py`):
+    - Added `ChunkingContext` typed dataclass with `(tenant_id, document_version_id, processing_version, page_number, evidence_type, document_title)`.
+    - Chunk UUID5 generated strictly from `(tenant_id, document_version_id, processing_version, page_number, evidence_type, chunk_index)`. Text and title are excluded from hash input, guaranteeing different IDs across tenants/versions and identical IDs on re-runs (Invariant 11).
+    - Made `evidence_type: EvidenceTypeLiteral` a required typed parameter with no default on the port, mock, and real chunkers.
+  - **Large Table Row-Safe Splitting** (`backend/app/adapters/chunking/structure_aware.py`):
+    - Table parsed into header row and whole data rows. Header row preserved in `context_prefix` (`Table: {header_line}`), not repeated in chunk text.
+    - Data rows partitioned into groups of whole lines within `TARGET_CHUNK_SIZE_WORDS`. Every chunk is whole rows and an exact substring of page text.
+  - **Sentence Overlap & Minimum Size** (`backend/app/adapters/chunking/structure_aware.py`):
+    - Long paragraphs (> 350 words) split on sentence boundaries with backward overlap sliding window up to `TARGET_CHUNK_OVERLAP_WORDS = 50`. Every overlapping piece remains an exact substring of the original page text.
+    - Trailing sentences below `MIN_CHUNK_SIZE_WORDS = 20` merge into the previous chunk to avoid orphan micro-fragments.
+  - **Pipeline Document Title Resolution & ID Mapping** (`backend/app/core/ingestion/pipeline.py`):
+    - Pipeline resolves real document title using `repository.list_documents_with_status(tenant_id)`. Raises typed `DocumentNotFoundError` if title is unresolvable; zero `"Document"` placeholders.
+    - Ingestion pipeline passes `ChunkingContext` with selected reading's `evidence_type`.
+    - Batch insert directly maps `c.chunk_id` to `chunks.id` via `"id": UUID(c.chunk_id)`.
+  - **Fixed Error Message in Wiring** (`backend/app/wiring.py`):
+    - Replaced f-string in `create_chunker` with fixed string `"Unknown or unauthorized profile for Chunker"`.
+  - **Tests**:
+    - Unit tests in `test_structure_aware_chunker.py`:
+      - `test_chunk_ids_deterministic_from_context_only`: verified identical IDs on version re-run and distinct IDs across different versions/tenants.
+      - `test_multi_paragraph_page_splits_on_paragraph_boundaries`.
+      - `test_long_paragraph_splits_on_sentences_with_overlap`: verified sentence overlap, exact substring invariant, and min size merging.
+      - `test_large_table_split_into_whole_rows_header_in_prefix`: 200-row table split into whole rows, exact substring, header in prefix, header not repeated in text.
+      - `test_chunk_text_is_exact_substring_of_page_text`.
+      - `test_empty_page_gives_zero_chunks`.
+      - `test_visual_reading_input_keeps_visual_marking`.
+      - `test_pipeline_visual_reading_produces_visual_chunks`: verified visual reading input yields chunks marked `evidence_type="visual"` through the pipeline path.
+    - Wiring tests in `test_worker_and_activation.py` asserting fixed error message.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_structure_aware_chunker.py -v` -> 8 passed in 0.10s.
+  - `uv run --project backend pytest backend/tests/unit/test_worker_and_activation.py -v` -> 11 passed in 0.66s.
+  - `uv run --project backend pytest backend/tests/integration/test_upload_vision.py backend/tests/integration/test_pipeline_idempotency.py backend/tests/integration/test_job_step_status_updates.py -v` -> 23 passed in 1.35s.
+  - `uv run --project backend pytest backend/tests/invariants -v` -> 25 passed in 0.24s.
+  - `uv run --project backend pre-commit run --files ...` -> 100% passed on all modified files.
+
+---
+
+### [2026-10-15] TASK: Chunker Review Round 2 — Direct Repository Title Lookup, Typed Evidence Map, and Embedding Count Invariant
+
+- **What Was Built**:
+  - **Direct Repository Title Lookup** (`backend/app/ports/document_repository.py`, `postgres_document_repository.py`, `pipeline.py`):
+    - Added `@abstractmethod async def get_document_title_for_version(tenant_id: str, version_id: UUID) -> str` to `DocumentRepository` port.
+    - Implemented `get_document_title_for_version` in `PostgresDocumentRepository` joining `Document` and `DocumentVersion` under tenant scope, raising `DocumentNotFoundError("Document not found for version")` if not found.
+    - Updated `PagePipelineService.process_page` in `pipeline.py` to look up document title directly once per page job rather than looping over `list_documents_with_status`.
+  - **Explicit Evidence Type Mapping** (`backend/app/ports/errors.py`, `pipeline.py`):
+    - Added typed error `InvalidEvidenceTypeError(PortError)` with fixed message `"Unknown evidence type encountered during chunking"`.
+    - Added `_EVIDENCE_TYPE_MAP: dict[str, EvidenceTypeLiteral]` in `pipeline.py` mapping `"text"`, `"visual"`, and `"table"` explicitly. Unrecognized evidence types raise `InvalidEvidenceTypeError` immediately with zero silent fallback.
+  - **Embedding Count Invariant Enforcement** (`backend/app/ports/errors.py`, `pipeline.py`):
+    - Added typed error `EmbeddingCountMismatchError(PortError)` with fixed message `"Embedding provider returned count mismatching chunk count"`.
+    - Enforced count parity `len(embeddings) == len(chunks)` prior to populating chunk records, ensuring no chunk is ever persisted to database without an embedding vector.
+  - **Fixed Error Messages**:
+    - Removed interpolated IDs and f-strings across repository and pipeline error raises.
+  - **Tests**:
+    - Unit tests in `test_structure_aware_chunker.py`:
+      - Added `test_context_prefix_contains_title_page_and_heading` verifying prefix content separation.
+      - Added `test_pipeline_unknown_evidence_type_raises_error` asserting `InvalidEvidenceTypeError`.
+      - Added `test_pipeline_embedding_count_mismatch_raises_error` asserting `EmbeddingCountMismatchError` and zero chunk records saved.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_structure_aware_chunker.py -v` -> 11 passed in 0.11s.
+  - `uv run --project backend pytest backend/tests/integration/test_upload_vision.py backend/tests/integration/test_pipeline_idempotency.py backend/tests/integration/test_job_step_status_updates.py -v` -> 23 passed in 1.31s.
+  - `uv run --project backend pytest backend/tests/unit/test_wiring_profile_guards.py backend/tests/unit/test_worker_and_activation.py -v` -> 44 passed in 0.69s.
+  - `uv run --project backend pytest backend/tests/invariants -v` -> 25 passed in 0.23s.
+  - `uv run --project backend pre-commit run --files ...` -> 100% passed (10/10 hooks).

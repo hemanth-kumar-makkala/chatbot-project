@@ -138,6 +138,30 @@ class PostgresDocumentRepository(DocumentRepository):
             is_retired=getattr(row, "is_retired", False),
         )
 
+    async def get_document_title_for_version(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> str:
+        """Directly retrieve the document title for a given version under tenant scope."""
+        stmt = (
+            select(Document.title)
+            .join(
+                DocumentVersion,
+                (Document.id == DocumentVersion.document_id)
+                & (Document.tenant_id == DocumentVersion.tenant_id),
+            )
+            .where(
+                DocumentVersion.tenant_id == UUID(str(tenant_id)),
+                DocumentVersion.id == version_id,
+            )
+        )
+        res = await self.session.execute(stmt)
+        title = res.scalar_one_or_none()
+        if title is None:
+            raise DocumentNotFoundError("Document not found for version")
+        return str(title)
+
     async def create_document(
         self,
         tenant_id: str,

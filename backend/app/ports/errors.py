@@ -537,3 +537,41 @@ class MalformedTaskArgsError(PortError):
             details=details,
         )
         self.code = code
+
+
+class InvalidEvidenceTypeError(PortError):
+    """Raised when an unrecognized evidence type is encountered during chunking."""
+
+    def __init__(
+        self,
+        message: str = "Unknown evidence type encountered during chunking",
+        code: str = "INVALID_EVIDENCE_TYPE",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class EmbeddingCountMismatchError(PortError):
+    """Raised when the embedding provider returns a different count of vectors than chunks."""
+
+    def __init__(
+        self,
+        message: str = "Embedding provider returned count mismatching chunk count",
+        code: str = "EMBEDDING_COUNT_MISMATCH",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=500,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

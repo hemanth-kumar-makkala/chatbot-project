@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import NAMESPACE_URL, uuid5
 
-from app.ports.chunker import Chunker, TextChunk
+from app.ports.chunker import Chunker, ChunkingContext, TextChunk
 
 
 class MockChunker(Chunker):
@@ -12,9 +12,8 @@ class MockChunker(Chunker):
 
     def chunk_page(
         self,
-        document_title: str,
-        page_number: int,
         readings: list[str],
+        context: ChunkingContext,
         language: str = "english",
     ) -> list[TextChunk]:
         """Split page readings into structure-aware chunks."""
@@ -23,15 +22,22 @@ class MockChunker(Chunker):
         for idx, text in enumerate(readings):
             if not text.strip():
                 continue
-            chunk_id = uuid5(NAMESPACE_URL, f"{document_title}:{page_number}:{idx}:{text.strip()}")
+            unique_key = (
+                f"{context.tenant_id}:{context.document_version_id}:"
+                f"{context.processing_version}:{context.page_number}:"
+                f"{context.evidence_type}:{idx}"
+            )
+            chunk_id = str(uuid5(NAMESPACE_URL, unique_key))
+            prefix = f"{context.document_title} - Page {context.page_number} - Section {idx + 1}"
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
                     text=text.strip(),
-                    context_prefix=f"{document_title} - Page {page_number} - Section {idx + 1}",
-                    page_number=page_number,
+                    context_prefix=prefix,
+                    page_number=context.page_number,
                     language=language,
                     ts_config=ts_config,
+                    evidence_type=context.evidence_type,
                 )
             )
         return chunks

@@ -57,6 +57,15 @@ class DocumentRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_document_title_for_version(
+        self,
+        tenant_id: str,
+        version_id: UUID,
+    ) -> str:
+        """Directly retrieve the document title for a given version under tenant scope."""
+        ...
+
+    @abstractmethod
     async def create_document(
         self,
         tenant_id: str,

@@ -9,7 +9,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from app.ports.chunker import Chunker
 from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.errors import ConfigurationError
 from app.ports.types import WorkerContext
@@ -27,24 +26,30 @@ class TestWorkerWiringGuards:
     """Verifies profile guards for chunker and embedding provider (Task 2.7)."""
 
     def test_chunker_wiring_guard_profile_matrix(self) -> None:
-        """MockChunker returned ONLY for 'mock' profile; other profiles raise ConfigurationError."""
-        # 1. mock profile returns Chunker port implementation
-        chunker = create_chunker("mock")
-        assert isinstance(chunker, Chunker)
+        """MockChunker returned for 'mock', StructureAwareChunker for real profiles."""
+        from app.adapters.chunking.mock import MockChunker
+        from app.adapters.chunking.structure_aware import StructureAwareChunker
 
-        # 2. All other profiles raise ConfigurationError until Task 3.1
-        disallowed_profiles = [
+        # 1. mock profile returns MockChunker
+        mock_chunker = create_chunker("mock")
+        assert isinstance(mock_chunker, MockChunker)
+
+        # 2. All non-mock profiles return StructureAwareChunker
+        real_profiles = [
             "office-cpu",
             "desktop-gpu",
             "home-gpu",
             "cloud",
             "dev-free-api",
-            "unknown-profile",
         ]
-        for prof in disallowed_profiles:
-            with pytest.raises(ConfigurationError) as exc_info:
-                create_chunker(prof)
-            assert f"Chunker is not yet implemented for profile '{prof}'" in str(exc_info.value)
+        for prof in real_profiles:
+            chunker = create_chunker(prof)
+            assert isinstance(chunker, StructureAwareChunker)
+
+        # 3. Unknown profile raises ConfigurationError
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_chunker("unknown-profile")
+        assert "Unknown or unauthorized profile for Chunker" in str(exc_info.value)
 
     def test_embedding_wiring_guard_profile_matrix(self) -> None:
         """MockEmbeddingProvider returned ONLY for 'mock'; others raise ConfigurationError."""
