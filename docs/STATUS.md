@@ -6,6 +6,17 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
+- **Adapter 1**: Real Ollama Model Provider (`desktop-gpu` and `home-gpu` profiles) — **COMPLETED**
+  - Completed: `OllamaModelProvider` in `backend/app/adapters/models/ollama.py` implementing `ModelProvider`.
+  - Completed: `OLLAMA_BASE_URL` required env var with no default; missing raises `ConfigurationError`.
+  - Completed: Dynamic role-to-model configuration loaded from `config/profiles/{profile}.yaml` (`qwen3-vl:4b` for vision on desktop-gpu).
+  - Completed: `transcribe_page` scales page image with `ImageProcessor` to fit within 6 GB VRAM, invokes Ollama `/api/generate` with fixed verbatim prompt and deterministic generation options (`temperature: 0.0`, `seed: 42`, `top_k: 1`, `top_p: 1.0`).
+  - Completed: Confidence calculated as geometric mean `exp(mean(logprob))` over text tokens, excluding special/structural tokens (`<|...|>`, `<s>`, `</s>`, `<think>`, etc.). Missing or empty logprobs returns `confidence=None` flagging page as `vision_confidence_missing`.
+  - Completed: Timeout and connection errors mapped to `TransientIngestionError` for worker retry; malformed responses mapped to typed permanent errors (`MalformedOutput`, `OllamaPermanentError`).
+  - Completed: Unused methods (`generate`, `read_page`, `extract_fields`) raise typed `OllamaMethodNotImplementedError` with fixed message.
+  - Completed: Wired in `create_model_provider` in `app/wiring.py` for `desktop-gpu` and `home-gpu` profiles only.
+  - Completed: 17 unit tests in `test_ollama_provider.py` (including deterministic payload options and fuzzy phrase matcher) and 33 wiring profile tests passing cleanly; 1 integration test marked `models` with legible synthetic fax (`ImageFont.load_default(size=44)`), robust fuzzy phrase matching, and stdout print for `-s`.
+  - Completed: `types-pyyaml==6.0.12.20260906` installed in dev group; removed `yaml` mypy override while retaining targeted docling/easyocr overrides.
 - **Task 2.8c**: Wire Real Ingestion Path & Migration 0009 — **COMPLETED**
   - Completed: Migration 0009 (`0009_version_file_extension`) adding `document_versions.file_extension` (String 20) with check constraint `ck_document_versions_file_extension` enforcing NULL or exact accepted upload extensions ('pdf', 'png', 'jpeg', 'tiff', 'xlsx', 'csv', 'txt'). Tested in throwaway DB.
   - Completed: Storage backend wired to `LOCAL_STORAGE_PATH` env var with no default; missing or non-existent folder raises `ConfigurationError`.
@@ -106,3 +117,6 @@ Phase 2 cannot pass its exit gate until this list is empty:
 - scripts/run_dev_api.py so the API starts with one command (Windows SelectorEventLoop).
 - Upload accepts png, jpeg, tiff, txt in the backend but the UI and worker only handle PDF, CSV, XLSX: decide and align.
 - Tests write to the shared dev database and never clean up: move integration tests to throwaway databases.
+- Ollama provider: generate not implemented yet
+- Ollama provider: read_page not implemented yet
+- Ollama provider: extract_fields not implemented yet

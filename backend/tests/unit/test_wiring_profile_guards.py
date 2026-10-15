@@ -34,10 +34,10 @@ class TestModelProviderWiringGuard:
 
     @pytest.mark.parametrize(
         "profile",
-        ["office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"],
+        ["office-cpu", "dev-free-api", "cloud"],
     )
-    def test_create_model_provider_non_mock_refuses_mock(self, profile: str) -> None:
-        """Non-mock profiles never return MockModelProvider; raise ConfigurationError."""
+    def test_create_model_provider_unimplemented_refuses_mock(self, profile: str) -> None:
+        """Unimplemented profiles never return MockModelProvider; raise ConfigurationError."""
         with pytest.raises(ConfigurationError) as exc_info:
             create_model_provider(profile)
         # Verify it refuses mock and signals implementation pending
@@ -46,6 +46,20 @@ class TestModelProviderWiringGuard:
             "MODEL_PROVIDER_NOT_IMPLEMENTED",
             "UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
         )
+
+    @pytest.mark.parametrize(
+        "profile",
+        ["desktop-gpu", "home-gpu"],
+    )
+    def test_create_model_provider_gpu_wires_ollama_provider(
+        self, profile: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """desktop-gpu and home-gpu return OllamaModelProvider when OLLAMA_BASE_URL is set."""
+        from app.adapters.models.ollama import OllamaModelProvider
+
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        provider = create_model_provider(profile)
+        assert isinstance(provider, OllamaModelProvider)
 
     def test_create_model_provider_unknown_profile_raises(self) -> None:
         """Unknown or unauthorized profiles raise ConfigurationError."""

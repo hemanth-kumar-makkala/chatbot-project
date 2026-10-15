@@ -19,6 +19,8 @@ dependencies = [
     "openpyxl==3.1.5",
     "defusedxml==0.7.1",
     "procrastinate==3.10.0",
+    "httpx==0.28.1",
+    "pyyaml==6.0.3",
 ]
 
 [dependency-groups]
@@ -34,6 +36,7 @@ dev = [
     "pypdf==6.19.0",
     "types-openpyxl==3.1.5.20260827",
     "types-defusedxml==0.7.0.20260504",
+    "types-pyyaml==6.0.12.20260906",
 ]
 parsing = [
     "docling[easyocr]==2.135.0",
@@ -91,6 +94,16 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = [
+    "docling.datamodel.accelerator_options",
+    "docling.datamodel.base_models",
+    "docling.datamodel.pipeline_options",
+    "docling.document_converter",
+    "easyocr",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"

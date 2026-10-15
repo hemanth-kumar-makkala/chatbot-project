@@ -1343,3 +1343,33 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run pytest tests/integration/test_migration_0010.py -v` -> 1 passed in 0.55s.
   - `uv run pytest tests/integration/test_upload_dedup_rules.py -v` -> 5 passed in 2.10s.
   - `uv run pytest tests/unit/test_worker_and_table_cleanup.py -v` -> 5 passed in 0.58s.
+
+---
+
+### [2026-10-15] TASK: Adapter 1 — Ollama Model Provider (`desktop-gpu` / `home-gpu`)
+
+- **What Was Built**:
+  - **Ollama Model Provider Adapter** (`backend/app/adapters/models/ollama.py`):
+    - Implements `ModelProvider` port for `desktop-gpu` and `home-gpu` profiles.
+    - Requires `profile` parameter and `OLLAMA_BASE_URL` env var (no defaults; raises `ConfigurationError`).
+    - Loads role-to-model configuration using `yaml.safe_load` on `config/profiles/{profile}.yaml` (`qwen3-vl:4b` for vision). Validates structure strictly; malformed config raises `ConfigurationError`.
+    - Fetches and caches model version digest from `/api/tags` or `/api/show` with HTTP timeouts and error handling.
+    - `transcribe_page`: scales page image with `ImageProcessor.fit_bounding_box(1024, 1024)`, sends verbatim page transcription instruction to `/api/generate` with `think: false` and deterministic options (`temperature: 0.0`, `seed: 42`, `top_k: 1`, `top_p: 1.0`). Strips any `<think>...</think>` tags defensively.
+    - Token confidence calculation: computes geometric mean `exp(mean(logprob))` over non-special tokens. If token logprobs are missing or empty, returns `confidence=None` (`vision_confidence_missing`).
+    - Timeout and connection errors map to `TransientIngestionError` for retry; HTTP client errors and invalid payload map to `MalformedOutput` or `OllamaPermanentError`.
+    - Unimplemented methods (`generate`, `read_page`, `extract_fields`) raise typed `OllamaMethodNotImplementedError`.
+  - **Wiring & Profile Guards** (`backend/app/wiring.py`):
+    - `create_model_provider` instantiates `OllamaModelProvider` for `desktop-gpu` and `home-gpu`. For `mock`, returns `MockModelProvider`. For `office-cpu` and `cloud`, raises `ConfigurationError`.
+  - **Synthetic Fax Test Update & Fuzzy Matcher** (`backend/tests/unit/test_ollama_provider.py`):
+    - Rendered all text in `_create_synthetic_fax_page_200dpi_png` with `ImageFont.load_default(size=44)` to maintain legibility after 1024px downscaling.
+    - Added stdout print of transcription text and confidence score in `test_real_ollama_vision_transcription_desktop_gpu` for execution with `-s`.
+    - Added `build_fuzzy_phrase_pattern` splitting on whitespace/hyphens, escaping components, joining with `[\s\-]+` with `re.IGNORECASE`.
+    - Added unit test `test_fuzzy_phrase_pattern_matching` validating positive and negative match cases.
+    - Added unit test `test_transcribe_page_payload_includes_deterministic_options` verifying options payload.
+  - **Optional Parsing Packages Mypy Overrides** (`backend/pyproject.toml`):
+    - Added override `ignore_missing_imports = true` for `docling.datamodel.accelerator_options`, `docling.datamodel.base_models`, `docling.datamodel.pipeline_options`, `docling.document_converter`, and `easyocr`.
+  - **Type Stubs & Mypy Override Cleanups** (`backend/pyproject.toml`):
+    - `types-pyyaml==6.0.12.20260906` added to dev dependency group; removed `yaml` mypy override while keeping docling/easyocr overrides.
+- **Verification**:
+  - `uv run --project backend pytest backend/tests/unit/test_ollama_provider.py backend/tests/unit/test_wiring_profile_guards.py -v -m "not models"` -> 50 passed, 1 deselected in 0.63s.
+  - `uv run --project backend pre-commit run --files ...` -> 100% passed on all modified files.

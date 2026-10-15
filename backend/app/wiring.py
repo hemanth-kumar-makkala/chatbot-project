@@ -450,8 +450,9 @@ def create_model_provider(profile: str) -> ModelProvider:
 
     Profiles:
     - mock: MockModelProvider
-    - office-cpu, desktop-gpu, home-gpu, dev-free-api, cloud: ConfigurationError
-      (real Ollama/Vertex vision providers will be implemented in their respective tasks)
+    - desktop-gpu, home-gpu: OllamaModelProvider
+    - office-cpu, dev-free-api, cloud: ConfigurationError
+      (real Vertex vision providers will be implemented in their respective tasks)
     - unknown profile: ConfigurationError
     The mock model provider must never be returned outside the mock profile.
     """
@@ -462,10 +463,15 @@ def create_model_provider(profile: str) -> ModelProvider:
 
         return MockModelProvider()
 
-    if profile in ("office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud"):
+    if profile in ("desktop-gpu", "home-gpu"):
+        from app.adapters.models.ollama import OllamaModelProvider
+
+        return OllamaModelProvider(profile=profile)
+
+    if profile in ("office-cpu", "dev-free-api", "cloud"):
         raise ConfigurationError(
             f"ModelProvider is not yet implemented for profile '{profile}'. "
-            "Real Ollama/Vertex vision providers will be implemented in subsequent tasks.",
+            "Real Vertex vision providers will be implemented in subsequent tasks.",
             error_code="MODEL_PROVIDER_NOT_IMPLEMENTED",
         )
 
