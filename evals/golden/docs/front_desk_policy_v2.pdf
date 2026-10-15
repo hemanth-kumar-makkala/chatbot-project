@@ -45,8 +45,8 @@ BT
 0 -16 Td (Issued: March 1, 2026 \(Supersedes Version 1.0\)) Tj
 0 -16 Td () Tj
 0 -16 Td (1. Patient Check-In Protocol) Tj
-0 -16 Td (Routine appointment arrival window is 15 minutes prior to scheduled visit.) Tj
-0 -16 Td (Patients arriving later than 15 minutes will be rescheduled.) Tj
+0 -16 Td (Routine appointment arrival window is 20 minutes prior to scheduled visit.) Tj
+0 -16 Td (Patients arriving later than 20 minutes will be rescheduled.) Tj
 0 -16 Td () Tj
 0 -16 Td (2. Referral & Document Transmission) Tj
 0 -16 Td (Front desk intake fax number is 555-0102.) Tj

@@ -517,7 +517,7 @@ endobj
 endobj
 38 0 obj
 <<
-/Length 743
+/Length 639
 >>
 stream
 BT
@@ -525,15 +525,14 @@ BT
 54 740 Td
 (*** SYNTHETIC TEST DOCUMENT ***) Tj
 0 -16 Td (HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL) Tj
-0 -16 Td (Chapter 12: Standard Practice Directives and Guidelines) Tj
+0 -16 Td (Chapter 12: Controlled Substance Prescription Directives) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 12.1: Administrative Guidelines) Tj
-0 -16 Td (Clinical staff in department 12 must adhere to standardized hygiene,) Tj
-0 -16 Td (patient verification, and electronic medical record entry conventions.) Tj
+0 -16 Td (Section 12.1: Logging Requirements) Tj
+0 -16 Td (Controlled substance physical prescriptions must be logged within 7 calendar days.) Tj
+0 -16 Td (Unlogged prescription forms result in dispensing audit flags.) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 12.2: Procedural Workflow) Tj
-0 -16 Td (All encounters must be finalized within 24 hours of patient discharge.) Tj
-0 -16 Td (Routine supervisory inquiries may be directed to phone 555-0175.) Tj
+0 -16 Td (Section 12.2: Department Contact) Tj
+0 -16 Td (Pharmacy liaison desk phone line is 555-0174.) Tj
 0 -16 Td () Tj
 0 -16 Td (PAGE 12 OF 15 -- SYNTHETIC TEST DOCUMENT) Tj
 ET
@@ -561,7 +560,7 @@ endobj
 endobj
 41 0 obj
 <<
-/Length 743
+/Length 673
 >>
 stream
 BT
@@ -569,15 +568,14 @@ BT
 54 740 Td
 (*** SYNTHETIC TEST DOCUMENT ***) Tj
 0 -16 Td (HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL) Tj
-0 -16 Td (Chapter 13: Standard Practice Directives and Guidelines) Tj
+0 -16 Td (Chapter 13: Critical Laboratory Panic Values and Escalation) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 13.1: Administrative Guidelines) Tj
-0 -16 Td (Clinical staff in department 13 must adhere to standardized hygiene,) Tj
-0 -16 Td (patient verification, and electronic medical record entry conventions.) Tj
+0 -16 Td (Section 13.1: Notification Timeframe) Tj
+0 -16 Td (Critical laboratory panic values must be reported to the attending clinician within 15 minutes.) Tj
+0 -16 Td (Panic thresholds include serum potassium > 6.0 mEq/L or glucose < 50 mg/dL.) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 13.2: Procedural Workflow) Tj
-0 -16 Td (All encounters must be finalized within 24 hours of patient discharge.) Tj
-0 -16 Td (Routine supervisory inquiries may be directed to phone 555-0175.) Tj
+0 -16 Td (Section 13.2: Escalation Contact) Tj
+0 -16 Td (Clinical escalation desk telephone is 555-0176.) Tj
 0 -16 Td () Tj
 0 -16 Td (PAGE 13 OF 15 -- SYNTHETIC TEST DOCUMENT) Tj
 ET
@@ -605,7 +603,7 @@ endobj
 endobj
 44 0 obj
 <<
-/Length 830
+/Length 840
 >>
 stream
 BT
@@ -622,7 +620,7 @@ BT
 0 -16 Td () Tj
 0 -16 Td (Section 14.2: Reporting Desk Contact) Tj
 0 -16 Td (Quality reporting coordinator desk telephone: 555-0177) Tj
-0 -16 Td (Documentation submission portal: audit.horizon-valley.synthetic) Tj
+0 -16 Td (Documentation submission portal address is audit.horizon-valley.synthetic) Tj
 0 -16 Td () Tj
 0 -16 Td (PAGE 14 OF 15 -- SYNTHETIC TEST DOCUMENT) Tj
 ET
@@ -650,7 +648,7 @@ endobj
 endobj
 47 0 obj
 <<
-/Length 743
+/Length 652
 >>
 stream
 BT
@@ -658,15 +656,14 @@ BT
 54 740 Td
 (*** SYNTHETIC TEST DOCUMENT ***) Tj
 0 -16 Td (HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL) Tj
-0 -16 Td (Chapter 15: Standard Practice Directives and Guidelines) Tj
+0 -16 Td (Chapter 15: Clinical Archival and Record Retention Directives) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 15.1: Administrative Guidelines) Tj
-0 -16 Td (Clinical staff in department 15 must adhere to standardized hygiene,) Tj
-0 -16 Td (patient verification, and electronic medical record entry conventions.) Tj
+0 -16 Td (Section 15.1: Medical Record Retention Period) Tj
+0 -16 Td (Adult medical records must be retained for 10 years following discharge.) Tj
+0 -16 Td (Pediatric records are preserved until patient reaches age 28 years.) Tj
 0 -16 Td () Tj
-0 -16 Td (Section 15.2: Procedural Workflow) Tj
-0 -16 Td (All encounters must be finalized within 24 hours of patient discharge.) Tj
-0 -16 Td (Routine supervisory inquiries may be directed to phone 555-0175.) Tj
+0 -16 Td (Section 15.2: Custodian Contact) Tj
+0 -16 Td (Records custodian direct telephone is 555-0179.) Tj
 0 -16 Td () Tj
 0 -16 Td (PAGE 15 OF 15 -- SYNTHETIC TEST DOCUMENT) Tj
 ET
@@ -720,16 +717,16 @@ xref
 0000011101 00000 n 
 0000011172 00000 n 
 0000011303 00000 n 
-0000012098 00000 n 
-0000012169 00000 n 
-0000012300 00000 n 
-0000013095 00000 n 
-0000013166 00000 n 
-0000013297 00000 n 
-0000014179 00000 n 
-0000014250 00000 n 
-0000014381 00000 n 
-0000015176 00000 n 
+0000011994 00000 n 
+0000012065 00000 n 
+0000012196 00000 n 
+0000012921 00000 n 
+0000012992 00000 n 
+0000013123 00000 n 
+0000014015 00000 n 
+0000014086 00000 n 
+0000014217 00000 n 
+0000014921 00000 n 
 trailer
 <<
 /Size 49
@@ -737,5 +734,5 @@ trailer
 /Info 1 0 R
 >>
 startxref
-15247
+14992
 %%EOF

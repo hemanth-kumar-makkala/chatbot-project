@@ -109,6 +109,26 @@
         {
           "fact": "Referring physician Dr. Marcus Vance authorized 6 physical therapy sessions.",
           "page": 1
+        },
+        {
+          "fact": "Referring provider Dr. Marcus Vance telephone is 555-0155.",
+          "page": 1
+        },
+        {
+          "fact": "Physical therapy frequency is 2 sessions per week for 3 weeks.",
+          "page": 1
+        },
+        {
+          "fact": "Clinical referral consultation date is 2026-02-10.",
+          "page": 1
+        },
+        {
+          "fact": "Referral diagnosis is post-operative right knee arthroscopy rehabilitation.",
+          "page": 1
+        },
+        {
+          "fact": "Referring provider fax line is 555-0156.",
+          "page": 1
         }
       ],
       "marker_in_image": true,
@@ -125,6 +145,26 @@
       "key_facts": [
         {
           "fact": "Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed.",
+          "page": 1
+        },
+        {
+          "fact": "Prescription refill dosage is 1 capsule by mouth three times daily for 10 days.",
+          "page": 1
+        },
+        {
+          "fact": "Prescription refill authorization date is 2026-02-14.",
+          "page": 1
+        },
+        {
+          "fact": "Refill authorized for patient Alex Morgan chart MRN-4412-A.",
+          "page": 1
+        },
+        {
+          "fact": "Authorized refill quantity count is 0.",
+          "page": 1
+        },
+        {
+          "fact": "Pediatric and adult urgent care clinic telephone is 555-0145.",
           "page": 1
         }
       ],
@@ -147,7 +187,39 @@
           "page": 1
         },
         {
+          "fact": "Diagnostic imaging appointment date is 2026-03-01 at 09:30 AM.",
+          "page": 1
+        },
+        {
+          "fact": "Diagnostic imaging facility location is Imaging Suite B.",
+          "page": 1
+        },
+        {
+          "fact": "Referring provider order telephone is 555-0170.",
+          "page": 1
+        },
+        {
           "fact": "Clinical justification note: chronic lower back pain with radiculopathy.",
+          "page": 2
+        },
+        {
+          "fact": "Prior physical therapy duration completed was 8 weeks.",
+          "page": 2
+        },
+        {
+          "fact": "Documented clinical pain score is 7/10.",
+          "page": 2
+        },
+        {
+          "fact": "Radiating numbness location is along L5 dermatome.",
+          "page": 2
+        },
+        {
+          "fact": "Ordering clinician telephone contact is 555-0172.",
+          "page": 2
+        },
+        {
+          "fact": "Ordering clinician signature is Dr. Evelyn Reed.",
           "page": 2
         }
       ],
@@ -202,7 +274,7 @@
           "page": 1
         },
         {
-          "fact": "Routine appointment arrival window is 15 minutes prior to scheduled visit.",
+          "fact": "Routine appointment arrival window is 20 minutes prior to scheduled visit.",
           "page": 1
         }
       ],
@@ -218,8 +290,40 @@
       "id": "doc_clinical_protocols_manual",
       "key_facts": [
         {
+          "fact": "Controlled substance physical prescriptions must be logged within 7 calendar days.",
+          "page": 12
+        },
+        {
+          "fact": "Pharmacy liaison desk phone line is 555-0174.",
+          "page": 12
+        },
+        {
+          "fact": "Critical laboratory panic values must be reported to the attending clinician within 15 minutes.",
+          "page": 13
+        },
+        {
+          "fact": "Clinical escalation desk telephone is 555-0176.",
+          "page": 13
+        },
+        {
           "fact": "Annual pediatric vaccination audit reporting deadline is November 15th.",
           "page": 14
+        },
+        {
+          "fact": "Quality reporting coordinator desk telephone: 555-0177",
+          "page": 14
+        },
+        {
+          "fact": "Documentation submission portal address is audit.horizon-valley.synthetic",
+          "page": 14
+        },
+        {
+          "fact": "Adult medical records must be retained for 10 years following discharge.",
+          "page": 15
+        },
+        {
+          "fact": "Records custodian direct telephone is 555-0179.",
+          "page": 15
         }
       ],
       "page_count": 15,

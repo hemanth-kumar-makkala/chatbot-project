@@ -162,6 +162,7 @@ def _create_deterministic_xlsx(rows: list[list[Any]]) -> bytes:
     """Build XLSX workbook and normalize timestamps for byte-for-byte reproducibility."""
     wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Sheet1"
     for row in rows:
         ws.append(row)
@@ -179,15 +180,13 @@ def _create_deterministic_xlsx(rows: list[list[Any]]) -> bytes:
             data = zin.read(item.filename)
             if item.filename == "docProps/core.xml":
                 data = re.sub(
-                    rb"<dcterms:modified [^>]*>.*?</dcterms:modified>",
-                    b'<dcterms:modified xsi:type="dcterms:W3CDTF">'
-                    b"2026-01-01T00:00:00Z</dcterms:modified>",
+                    rb"(<dcterms:modified [^>]*>)[^<]*(</dcterms:modified>)",
+                    rb"\g<1>2026-01-01T00:00:00Z\g<2>",
                     data,
                 )
                 data = re.sub(
-                    rb"<dcterms:created [^>]*>.*?</dcterms:created>",
-                    b'<dcterms:created xsi:type="dcterms:W3CDTF">'
-                    b"2026-01-01T00:00:00Z</dcterms:created>",
+                    rb"(<dcterms:created [^>]*>)[^<]*(</dcterms:created>)",
+                    rb"\g<1>2026-01-01T00:00:00Z\g<2>",
                     data,
                 )
             zinfo = zipfile.ZipInfo(item.filename, FIXED_ZIP_DT)
@@ -550,6 +549,29 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
                         "therapy sessions."
                     ),
                 },
+                {
+                    "page": 1,
+                    "fact": "Referring provider Dr. Marcus Vance telephone is 555-0155.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Physical therapy frequency is 2 sessions per week for 3 weeks.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Clinical referral consultation date is 2026-02-10.",
+                },
+                {
+                    "page": 1,
+                    "fact": (
+                        "Referral diagnosis is post-operative right knee "
+                        "arthroscopy rehabilitation."
+                    ),
+                },
+                {
+                    "page": 1,
+                    "fact": "Referring provider fax line is 555-0156.",
+                },
             ],
         }
     )
@@ -592,6 +614,29 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
                         "Urgent prescription refill request approved for Amoxicillin "
                         "500mg by Dr. Evelyn Reed."
                     ),
+                },
+                {
+                    "page": 1,
+                    "fact": (
+                        "Prescription refill dosage is 1 capsule by mouth three "
+                        "times daily for 10 days."
+                    ),
+                },
+                {
+                    "page": 1,
+                    "fact": "Prescription refill authorization date is 2026-02-14.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Refill authorized for patient Alex Morgan chart MRN-4412-A.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Authorized refill quantity count is 0.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Pediatric and adult urgent care clinic telephone is 555-0145.",
                 },
             ],
         }
@@ -647,10 +692,42 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
                     ),
                 },
                 {
+                    "page": 1,
+                    "fact": "Diagnostic imaging appointment date is 2026-03-01 at 09:30 AM.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Diagnostic imaging facility location is Imaging Suite B.",
+                },
+                {
+                    "page": 1,
+                    "fact": "Referring provider order telephone is 555-0170.",
+                },
+                {
                     "page": 2,
                     "fact": (
                         "Clinical justification note: chronic lower back pain with radiculopathy."
                     ),
+                },
+                {
+                    "page": 2,
+                    "fact": "Prior physical therapy duration completed was 8 weeks.",
+                },
+                {
+                    "page": 2,
+                    "fact": "Documented clinical pain score is 7/10.",
+                },
+                {
+                    "page": 2,
+                    "fact": "Radiating numbness location is along L5 dermatome.",
+                },
+                {
+                    "page": 2,
+                    "fact": "Ordering clinician telephone contact is 555-0172.",
+                },
+                {
+                    "page": 2,
+                    "fact": "Ordering clinician signature is Dr. Evelyn Reed.",
                 },
             ],
         }
@@ -820,8 +897,8 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
         "Issued: March 1, 2026 (Supersedes Version 1.0)",
         "",
         "1. Patient Check-In Protocol",
-        "Routine appointment arrival window is 15 minutes prior to scheduled visit.",
-        "Patients arriving later than 15 minutes will be rescheduled.",
+        "Routine appointment arrival window is 20 minutes prior to scheduled visit.",
+        "Patients arriving later than 20 minutes will be rescheduled.",
         "",
         "2. Referral & Document Transmission",
         "Front desk intake fax number is 555-0102.",
@@ -854,7 +931,7 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
                 {
                     "page": 1,
                     "fact": (
-                        "Routine appointment arrival window is 15 minutes prior to scheduled visit."
+                        "Routine appointment arrival window is 20 minutes prior to scheduled visit."
                     ),
                 },
             ],
@@ -868,7 +945,43 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
     # =========================================================================
     pages_lines_long: list[list[str]] = []
     for page_num in range(1, 16):
-        if page_num == 14:
+        if page_num == 12:
+            p_lines = [
+                f"*** {SYNTHETIC_MARKER} ***",
+                "HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL",
+                "Chapter 12: Controlled Substance Prescription Directives",
+                "",
+                "Section 12.1: Logging Requirements",
+                (
+                    "Controlled substance physical prescriptions must be logged "
+                    "within 7 calendar days."
+                ),
+                "Unlogged prescription forms result in dispensing audit flags.",
+                "",
+                "Section 12.2: Department Contact",
+                "Pharmacy liaison desk phone line is 555-0174.",
+                "",
+                f"PAGE {page_num} OF 15 -- {SYNTHETIC_MARKER}",
+            ]
+        elif page_num == 13:
+            p_lines = [
+                f"*** {SYNTHETIC_MARKER} ***",
+                "HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL",
+                "Chapter 13: Critical Laboratory Panic Values and Escalation",
+                "",
+                "Section 13.1: Notification Timeframe",
+                (
+                    "Critical laboratory panic values must be reported to the "
+                    "attending clinician within 15 minutes."
+                ),
+                ("Panic thresholds include serum potassium > 6.0 mEq/L or glucose < 50 mg/dL."),
+                "",
+                "Section 13.2: Escalation Contact",
+                "Clinical escalation desk telephone is 555-0176.",
+                "",
+                f"PAGE {page_num} OF 15 -- {SYNTHETIC_MARKER}",
+            ]
+        elif page_num == 14:
             p_lines = [
                 f"*** {SYNTHETIC_MARKER} ***",
                 "HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL",
@@ -881,7 +994,22 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
                 "",
                 "Section 14.2: Reporting Desk Contact",
                 "Quality reporting coordinator desk telephone: 555-0177",
-                "Documentation submission portal: audit.horizon-valley.synthetic",
+                "Documentation submission portal address is audit.horizon-valley.synthetic",
+                "",
+                f"PAGE {page_num} OF 15 -- {SYNTHETIC_MARKER}",
+            ]
+        elif page_num == 15:
+            p_lines = [
+                f"*** {SYNTHETIC_MARKER} ***",
+                "HORIZON VALLEY HEALTH - COMPREHENSIVE CLINICAL PROTOCOL MANUAL",
+                "Chapter 15: Clinical Archival and Record Retention Directives",
+                "",
+                "Section 15.1: Medical Record Retention Period",
+                "Adult medical records must be retained for 10 years following discharge.",
+                "Pediatric records are preserved until patient reaches age 28 years.",
+                "",
+                "Section 15.2: Custodian Contact",
+                "Records custodian direct telephone is 555-0179.",
                 "",
                 f"PAGE {page_num} OF 15 -- {SYNTHETIC_MARKER}",
             ]
@@ -918,10 +1046,52 @@ def generate_golden_dataset(output_dir: Path | str | None = None, seed: int = 42
             "flagged_pages": [],
             "key_facts": [
                 {
+                    "page": 12,
+                    "fact": (
+                        "Controlled substance physical prescriptions must be logged "
+                        "within 7 calendar days."
+                    ),
+                },
+                {
+                    "page": 12,
+                    "fact": "Pharmacy liaison desk phone line is 555-0174.",
+                },
+                {
+                    "page": 13,
+                    "fact": (
+                        "Critical laboratory panic values must be reported to the "
+                        "attending clinician within 15 minutes."
+                    ),
+                },
+                {
+                    "page": 13,
+                    "fact": "Clinical escalation desk telephone is 555-0176.",
+                },
+                {
                     "page": 14,
                     "fact": (
                         "Annual pediatric vaccination audit reporting deadline is November 15th."
                     ),
+                },
+                {
+                    "page": 14,
+                    "fact": "Quality reporting coordinator desk telephone: 555-0177",
+                },
+                {
+                    "page": 14,
+                    "fact": (
+                        "Documentation submission portal address is audit.horizon-valley.synthetic"
+                    ),
+                },
+                {
+                    "page": 15,
+                    "fact": (
+                        "Adult medical records must be retained for 10 years following discharge."
+                    ),
+                },
+                {
+                    "page": 15,
+                    "fact": "Records custodian direct telephone is 555-0179.",
                 },
             ],
         }
