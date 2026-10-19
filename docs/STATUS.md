@@ -5,7 +5,30 @@
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
-- **Task UI-3: Finish all Phase 3 UI (Chat fixes, Real Thumbnails, Status Lines, Client Switcher, Source Panel)** — **COMPLETED & VERIFIED**
+- **Task UI-4: All Phase 4 UI (Session Upload, Side-by-Side Extraction, Field States & Invariants 6 & 7)** — **COMPLETED & VERIFIED**
+  - **Session Upload in Chat (PHASE-4 Task 4.3, Invariant 7)**:
+    - Attach button in chat input (`chat-attach-button`).
+    - **Demo Assistant**: opens golden fax document picker (`skewed_fax.pdf`, `clean_fax.pdf`, `faint_fax_2page.pdf`, `patient_intake_form.pdf`). Selecting an arbitrary local file via file input displays fixed error `"Demo only reads sample fax documents from the golden set"` (never pretends to read arbitrary files).
+    - **Live Assistant**: attach button displays Demo chip and `"Session upload needs the session document route (Phase 4 Task 4.3, not built yet)"`.
+    - **Session Indicator**: attached fax displays session indicator banner confirming it stays in this conversation only and is never added to the knowledge base (Invariant 7).
+  - **Extraction View (Staff day step 6, PHASE-4 Task 4.6)**:
+    - Asking for all fields renders split view: document page preview image on left (`web/public/demo/pages/<stem>-p<N>.png`) and structured field table on right.
+    - Status line renders dynamic cited page `N`: `"Page N is a scanned image, reading it now..."`.
+  - **Field States & Badges (PHASE-4 Task 4.5, Invariant 6)**:
+    - Staffingly tokenized badges for all 7 states: `FILLED_HIGH`, `FILLED_MEDIUM`, `CONFLICTING`, `UNREADABLE`, `INVALID`, `NOT_PRESENT`, `NOT_APPLICABLE`.
+    - `CONFLICTING`: shows both readings side-by-side (`Read 1: 555-0101 | Read 2: 555-0102`).
+    - `UNREADABLE`: value cell is blank with warning flag `[Blank - Unreadable] ⚠️` and never guessed (Invariant 6).
+    - `INVALID`: renders validator failure reason (e.g., `"NPI check digit Luhn algorithm failed"`).
+    - Highlighting: unreadable and conflicting rows are highlighted with dedicated tint backgrounds (`data-highlighted="true"`).
+    - Interactivity: clicking any field row opens `SourcePanel` at that document and cited page number.
+    - Unknown field state fallback: displays fixed safe label `UNKNOWN` and logs code only via `console.warn` without leaking raw content.
+  - **Demo Fixtures & Open Questions**:
+    - Field values grounded in golden fax documents with source comments; non-golden fields labeled `"provisional demo schema"` in code comments.
+    - Missing `EXTRACTION` category gap in `evals/golden/questions.json` recorded in `docs/OPEN_QUESTIONS.md` (subsection 2.5) before Task 4.7.
+  - **Verification**: `web/__tests__/ui4.test.tsx` (12 tests), all 9 web suites (91 tests), and `npm run typecheck` pass cleanly.
+  - **Next Task**: UI-5
+
+- **Task UI-3: Finish all Phase 3 UI (Chat fixes, Real Thumbnails, Status Lines, Client Switcher, Source Panel)** — **COMPLETED & VERIFIED** (Preceding task)
   - **Phase 2 Gate Status**: Phase 2 gate not yet passed; root cause is the gate test polling `DocumentVersion` through `unscoped_session` under PostgreSQL RLS (test-only bug where `app_user` returns 0 rows without tenant context setting). Next backend task is fixing that and rerunning the gate.
   - **Vision Calibration Status**: Calibrated on golden set (`evals/reports/vision_calibration.json`). Misread scored 0.934 vs correct 0.917; confidence alone cannot separate them; threshold decision open; 0.70 threshold unchanged.
   - **Part A (UI-2 Fixes & INJ-001 Chip)**: INJ-001 renders as normal grounded answer citing `compliance_notice.pdf`; suggested chip displays exact golden question text; status lines display dynamic cited page `N` (never hardcoded 31); VR-007 cites `skewed_fax.pdf` with golden expected values; clarify and general draft scenarios labeled demo-only with no golden IDs.
@@ -14,7 +37,6 @@
   - **Part D (Client Switcher)**: Switcher dropdown mounted in `TopBar.tsx` using `DEMO_ASSISTANTS` fixtures, navigating to selected assistant's chat.
   - **Part E (Source Panel with pdf.js)**: `pdfjs-dist@6.4.299` installed (exact pin). `web/components/SourcePanel.tsx` renders PDF onto canvas with `pdfjs-dist`, page navigation (`Page N of M`, Prev/Next), zoom controls (`+`, `−`, level indicator), worker loaded from installed package without CDN. Demo assistants load `/demo/docs/<doc>.pdf`; live assistant displays Demo chip and `"Source preview needs the document file route (not built yet)"`.
   - **Verification**: `web/__tests__/ui3.test.tsx` (10 tests), all 8 web test suites (79 tests), and `npm run typecheck` pass cleanly.
-  - **Next Task**: UI-4
 
 - **Adapter 3: BGE-M3 Embeddings Adapter — COMPLETED & VERIFIED** (Preceding task)
   - **Part A (Chunker Guards)**:

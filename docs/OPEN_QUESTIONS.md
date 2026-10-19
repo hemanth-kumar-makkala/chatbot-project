@@ -100,6 +100,12 @@ The following items from the spec's "Open decisions" remain open and require sta
   - Outcome: A misread scored 0.934, above a correct read at 0.917. Confidence alone cannot separate them.
 - **Decision**: Threshold decision remains open for stakeholder review; provisional `0.70` threshold kept unchanged.
 
+### 2.5 Missing EXTRACTION Category in Golden Evaluation Set (Phase 4 Task 4.7 Gap)
+- **Status**: **OPEN / IDENTIFIED IN UI-4**
+- **Context**: In Phase 4 Task 4.7, an extraction evaluation benchmark must measure false-fill rates on unreadable fields (must be 0 per Invariant 6) and visual extraction accuracy. However, while `evals/golden/manifest.json` categorizes `eligibility_checklist.pdf` under `EXTRACTION`, `evals/golden/questions.json` currently contains zero questions with category `EXTRACTION` (only `TEXT_FACT`, `TABLE_LOOKUP`, `VISUAL_RECOVERY`, `CONFLICT`, `LENGTH`, `INJECTION`, `CROSS_TENANT`).
+- **Gap**: Before Phase 4 Task 4.7 can record baseline metrics in `evals/reports/`, formal evaluation test items with field extraction ground truth (including unreadable and conflicting test cases) must be authored in `evals/golden/questions.json` (or a dedicated extraction evaluation suite).
+- **Decision Needed**: Stakeholder agreement on whether extraction evaluation cases live in `evals/golden/questions.json` under category `EXTRACTION` or in a separate evaluation fixture file.
+
 
 ---
 

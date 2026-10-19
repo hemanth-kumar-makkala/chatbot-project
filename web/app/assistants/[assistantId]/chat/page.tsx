@@ -5,13 +5,16 @@ import { useRouter } from "next/navigation";
 import { TopBar } from "@/components/TopBar";
 import { DataSourceChip } from "@/components/DataSourceChip";
 import { SourcePanel } from "@/components/SourcePanel";
+import { ExtractionTable } from "@/components/ExtractionTable";
 import { getFeatureDataSource } from "@/lib/connections";
 import {
   getDemoConversations,
   getDemoAssistantAnswer,
   getDemoStatusLines,
   DEMO_SUGGESTED_QUESTIONS,
+  GOLDEN_FAX_DOCUMENTS,
   type DemoConversation,
+  type GoldenFaxDocument,
 } from "@/lib/demo/fixtures";
 import {
   askQuestion,
@@ -51,6 +54,12 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
   const [activeSourceDoc, setActiveSourceDoc] = useState("prior_auth_guide.pdf");
   const [activeSourcePage, setActiveSourcePage] = useState<number>(1);
+
+  // UI-4 Session upload & extraction state
+  const [attachedDoc, setAttachedDoc] = useState<GoldenFaxDocument | null>(null);
+  const [attachPickerOpen, setAttachPickerOpen] = useState(false);
+  const [liveAttachWarningOpen, setLiveAttachWarningOpen] = useState(false);
+  const [arbitraryFileError, setArbitraryFileError] = useState<string | null>(null);
 
   function handleOpenSource(docTitle: string, pageNumber: number = 1) {
     setActiveSourceDoc(docTitle);
@@ -119,14 +128,30 @@ export default function ChatPage({ params }: ChatPageProps) {
     setIsSubmitting(true);
 
     if (!isLiveAssistant || askDataSource === "demo") {
+      const isExtraction =
+        Boolean(attachedDoc) ||
+        trimmed.toLowerCase().includes("extract") ||
+        trimmed.toLowerCase().includes("all fields") ||
+        trimmed.toLowerCase().includes("patient fax") ||
+        trimmed.toLowerCase().includes("field table");
       const isVisual =
+        isExtraction ||
         trimmed.toLowerCase().includes("amoxicillin") ||
         trimmed.toLowerCase().includes("image") ||
         trimmed.toLowerCase().includes("page 31") ||
         trimmed.toLowerCase().includes("medication") ||
         trimmed.toLowerCase().includes("evelyn reed") ||
         trimmed.toLowerCase().includes("urgent refill");
-      const lines = getDemoStatusLines("Client A", isVisual, 1);
+
+      const lines = isExtraction
+        ? [
+            "Searching Pinecrest Medical Group documents...",
+            "Page 1 is a scanned image, reading it now...",
+            "Executing dual OCR and vision extraction subgraph...",
+            "Reconciling readings and running check-digit validators...",
+          ]
+        : getDemoStatusLines("Client A", isVisual, 1);
+
       setDemoStatusLines([lines[0]]);
       if (lines.length > 1) {
         setTimeout(() => {
@@ -135,6 +160,10 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
     } else {
       setDemoStatusLines([]);
+    }
+
+    if (attachedDoc) {
+      setAttachedDoc(null);
     }
 
     try {
@@ -237,6 +266,127 @@ export default function ChatPage({ params }: ChatPageProps) {
         ))}
       </div>
     );
+
+    // 0. PHI Field Extraction View (staff day step 6, PHASE-4 Task 4.6)
+    const isExtraction =
+      resp.evidence_type === "extraction" ||
+      Boolean(resp.extracted_fields && resp.extracted_fields.length > 0);
+    if (isExtraction) {
+      const fields = resp.extracted_fields || [];
+      const firstSource = resp.sources?.[0];
+      const docTitle = firstSource?.document_title || "skewed_fax.pdf";
+      const pageNum = firstSource?.page_number || 1;
+      const clean = docTitle.toLowerCase().replace(/\.pdf$/i, "").trim();
+      let stem = "skewed_fax";
+      if (clean.includes("clean")) stem = "clean_fax";
+      else if (clean.includes("faint")) stem = "faint_fax_2page";
+      else if (clean.includes("intake")) stem = "patient_intake_form";
+      else if (clean.includes("skewed")) stem = "skewed_fax";
+
+      return (
+        <div>
+          {statusLinesHeader}
+          <div style={{ marginBottom: "var(--spacing-2)" }}>
+            <span
+              style={{
+                display: "inline-block",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                backgroundColor: "var(--color-lavender)",
+                color: "var(--color-navy)",
+                padding: "2px 8px",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              Session Document Extraction
+            </span>
+          </div>
+
+          <div
+            data-testid="extraction-status-line"
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-navy)",
+              fontWeight: 600,
+              marginBottom: "var(--spacing-3)",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span>› Page {pageNum} is a scanned image, reading it now...</span>
+          </div>
+
+          <div
+            style={{
+              lineHeight: 1.5,
+              marginBottom: "var(--spacing-3)",
+              fontSize: "var(--font-size-sm)",
+            }}
+          >
+            {resp.answer}
+          </div>
+
+          {/* Side-by-Side View: Page Image beside Field Table */}
+          <div
+            data-testid="extraction-split-view"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "220px 1fr",
+              gap: "var(--spacing-4)",
+              alignItems: "start",
+              margin: "var(--spacing-3) 0",
+            }}
+          >
+            {/* Left: Page Preview */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--spacing-2)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "var(--color-navy)",
+                }}
+              >
+                <span>Document Page {pageNum}</span>
+                <span style={{ fontSize: "10px", color: "var(--color-text-muted)" }}>Click to zoom</span>
+              </div>
+              <img
+                data-testid="extraction-page-image"
+                src={`/demo/pages/${stem}-p${pageNum}.png`}
+                alt={`${docTitle} Page ${pageNum} scanned fax preview`}
+                onClick={() => handleOpenSource(docTitle, pageNum)}
+                style={{
+                  width: "100%",
+                  height: "auto",
+                  maxHeight: "360px",
+                  objectFit: "contain",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border)",
+                  boxShadow: "var(--shadow-sm)",
+                  cursor: "pointer",
+                  backgroundColor: "var(--color-white)",
+                }}
+                title={`Click to open ${docTitle} at page ${pageNum} in source viewer`}
+              />
+            </div>
+
+            {/* Right: Structured Field Table */}
+            <div>
+              <ExtractionTable fields={fields} onOpenSource={handleOpenSource} />
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     // 1. General Task Draft (Ungrounded clerical draft)
     if (isGeneral) {
@@ -1003,57 +1153,333 @@ export default function ChatPage({ params }: ChatPageProps) {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Box */}
-          <form
-            onSubmit={handleSubmit}
+          {/* Input Container */}
+          <div
             style={{
               padding: "var(--spacing-3) var(--spacing-4)",
               borderTop: "1px solid var(--color-border)",
-              display: "flex",
-              gap: "var(--spacing-2)",
               backgroundColor: "var(--color-bg-card)",
               maxWidth: "860px",
               width: "100%",
               margin: "0 auto",
             }}
           >
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ask a question about clinic documents..."
-              disabled={isSubmitting}
+            {/* Live Assistant Session Upload Route Not Built Notice */}
+            {liveAttachWarningOpen && (
+              <div
+                data-testid="session-upload-live-message"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  backgroundColor: "var(--color-bg-subtle)",
+                  border: "1px solid var(--color-navy)",
+                  borderRadius: "var(--radius-md)",
+                  marginBottom: "var(--spacing-2)",
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--color-navy)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+                  <DataSourceChip mode="demo" />
+                  <span>Session upload needs the session document route (Phase 4 Task 4.3, not built yet)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLiveAttachWarningOpen(false)}
+                  style={{ cursor: "pointer", fontWeight: 700, color: "var(--color-navy)", padding: "0 4px" }}
+                  title="Dismiss notice"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Demo Golden Fax Picker Popover */}
+            {attachPickerOpen && (
+              <div
+                data-testid="demo-attach-picker"
+                style={{
+                  padding: "var(--spacing-3)",
+                  backgroundColor: "var(--color-bg-card)",
+                  border: "1px solid var(--color-navy)",
+                  borderRadius: "var(--radius-md)",
+                  marginBottom: "var(--spacing-2)",
+                  boxShadow: "var(--shadow-md)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "var(--spacing-2)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "var(--font-size-xs)",
+                      fontWeight: 700,
+                      color: "var(--color-navy)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                    }}
+                  >
+                    Select Golden Fax Document (Session Upload)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachPickerOpen(false);
+                      setArbitraryFileError(null);
+                    }}
+                    style={{ cursor: "pointer", fontWeight: 700, color: "var(--color-navy)", padding: "0 4px" }}
+                    title="Close picker"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--color-text-muted)",
+                    marginBottom: "var(--spacing-2)",
+                  }}
+                >
+                  Document stays in this conversation only and is never added to the knowledge base (Invariant 7).
+                </p>
+
+                {/* Golden Fax Options List */}
+                <div
+                  data-testid="demo-golden-fax-list"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px",
+                    marginBottom: "var(--spacing-3)",
+                  }}
+                >
+                  {GOLDEN_FAX_DOCUMENTS.map((doc) => (
+                    <button
+                      key={doc.filename}
+                      type="button"
+                      data-testid={`picker-doc-${doc.filename}`}
+                      onClick={() => {
+                        setAttachedDoc(doc);
+                        setAttachPickerOpen(false);
+                        setArbitraryFileError(null);
+                      }}
+                      style={{
+                        padding: "8px 10px",
+                        textAlign: "left",
+                        backgroundColor: "var(--color-bg-subtle)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: "var(--radius-sm)",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s ease",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "var(--font-size-xs)",
+                          fontWeight: 700,
+                          color: "var(--color-primary-blue)",
+                          marginBottom: "2px",
+                        }}
+                      >
+                        {doc.filename}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "10px",
+                          color: "var(--color-text-muted)",
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        {doc.title} ({doc.page_count} page{doc.page_count > 1 ? "s" : ""})
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Arbitrary local file selector */}
+                <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "8px" }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: "var(--color-navy)",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    Or select local file:
+                  </label>
+                  <input
+                    type="file"
+                    data-testid="arbitrary-file-input"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        const fileName = files[0].name;
+                        const match = GOLDEN_FAX_DOCUMENTS.find((d) => d.filename === fileName);
+                        if (match) {
+                          setAttachedDoc(match);
+                          setAttachPickerOpen(false);
+                          setArbitraryFileError(null);
+                        } else {
+                          setArbitraryFileError("Demo only reads sample fax documents from the golden set");
+                        }
+                      }
+                    }}
+                    style={{ fontSize: "11px" }}
+                  />
+                  {arbitraryFileError && (
+                    <div
+                      data-testid="demo-arbitrary-file-error"
+                      style={{
+                        marginTop: "6px",
+                        color: "var(--color-status-error-text)",
+                        backgroundColor: "var(--color-status-error-bg)",
+                        padding: "6px 10px",
+                        borderRadius: "var(--radius-sm)",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {arbitraryFileError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Attached Session Document Indicator Banner (Invariant 7) */}
+            {attachedDoc && (
+              <div
+                data-testid="session-document-indicator"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  backgroundColor: "var(--color-lavender)",
+                  border: "1px solid var(--color-navy)",
+                  borderRadius: "var(--radius-md)",
+                  marginBottom: "var(--spacing-2)",
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--color-navy)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span style={{ fontSize: "14px" }}>🔒</span>
+                  <span>
+                    Session document: <strong>{attachedDoc.filename}</strong> — stays in this conversation only and is never added to the knowledge base (Invariant 7)
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="remove-attached-doc"
+                  onClick={() => setAttachedDoc(null)}
+                  style={{
+                    cursor: "pointer",
+                    color: "var(--color-navy)",
+                    fontWeight: 700,
+                    padding: "0 6px",
+                    fontSize: "14px",
+                  }}
+                  title="Remove attached session document"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Input Form */}
+            <form
+              onSubmit={handleSubmit}
               style={{
-                flex: 1,
-                padding: "10px 14px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-border)",
-                fontSize: "var(--font-size-sm)",
-                outline: "none",
-                fontFamily: "inherit",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={!inputValue.trim() || isSubmitting}
-              style={{
-                padding: "10px 20px",
-                borderRadius: "var(--radius-md)",
-                backgroundColor:
-                  !inputValue.trim() || isSubmitting
-                    ? "var(--color-border)"
-                    : "var(--color-primary-blue)",
-                color: "var(--color-white)",
-                border: "none",
-                fontWeight: 600,
-                fontSize: "var(--font-size-sm)",
-                cursor: !inputValue.trim() || isSubmitting ? "not-allowed" : "pointer",
-                transition: "background-color 0.15s ease",
+                display: "flex",
+                gap: "var(--spacing-2)",
               }}
             >
-              {isSubmitting ? "Sending..." : "Send"}
-            </button>
-          </form>
+              <button
+                type="button"
+                data-testid="chat-attach-button"
+                onClick={() => {
+                  if (isLiveAssistant) {
+                    setLiveAttachWarningOpen((prev) => !prev);
+                  } else {
+                    setAttachPickerOpen((prev) => !prev);
+                    setArbitraryFileError(null);
+                  }
+                }}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-bg-subtle)",
+                  color: "var(--color-navy)",
+                  fontWeight: 600,
+                  fontSize: "var(--font-size-sm)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  cursor: "pointer",
+                  transition: "background-color 0.15s ease",
+                }}
+                title="Attach document for session extraction (stays in this conversation only)"
+              >
+                <span>📎</span>
+                <span>Attach</span>
+              </button>
+
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={
+                  attachedDoc
+                    ? `Attached: ${attachedDoc.filename}. Ask for all fields or press Send...`
+                    : "Ask a question about clinic documents..."
+                }
+                disabled={isSubmitting}
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border)",
+                  fontSize: "var(--font-size-sm)",
+                  outline: "none",
+                  fontFamily: "inherit",
+                }}
+              />
+              <button
+                type="submit"
+                disabled={(!inputValue.trim() && !attachedDoc) || isSubmitting}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "var(--radius-md)",
+                  backgroundColor:
+                    (!inputValue.trim() && !attachedDoc) || isSubmitting
+                      ? "var(--color-border)"
+                      : "var(--color-primary-blue)",
+                  color: "var(--color-white)",
+                  border: "none",
+                  fontWeight: 600,
+                  fontSize: "var(--font-size-sm)",
+                  cursor:
+                    (!inputValue.trim() && !attachedDoc) || isSubmitting
+                      ? "not-allowed"
+                      : "pointer",
+                  transition: "background-color 0.15s ease",
+                }}
+              >
+                {isSubmitting ? "Sending..." : "Send"}
+              </button>
+            </form>
+          </div>
         </main>
       </div>
 

@@ -482,6 +482,28 @@ export interface SourceCitation {
   language?: string | null;
 }
 
+export type FieldExtractionState =
+  | "FILLED_HIGH"
+  | "FILLED_MEDIUM"
+  | "CONFLICTING"
+  | "UNREADABLE"
+  | "INVALID"
+  | "NOT_PRESENT"
+  | "NOT_APPLICABLE"
+  | string;
+
+export interface ExtractedField {
+  name: string;
+  value?: string | null;
+  read1_value?: string | null;
+  read2_value?: string | null;
+  state: FieldExtractionState;
+  confidence?: number | null;
+  validator_error?: string | null;
+  page_number: number;
+  document_title: string;
+}
+
 export interface QuestionResponse {
   request_id: string;
   tenant_id: string;
@@ -498,6 +520,7 @@ export interface QuestionResponse {
   public_error_ref?: string | null;
   sources?: SourceCitation[];
   conflict_sources?: SourceCitation[];
+  extracted_fields?: ExtractedField[] | null;
 }
 
 export async function askQuestion(

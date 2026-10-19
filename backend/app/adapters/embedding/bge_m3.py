@@ -12,8 +12,8 @@ Enforces:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -35,16 +35,14 @@ REQUIRED_CONFIG_KEYS: tuple[str, ...] = ("model", "revision", "device", "max_seq
 class TokenizerProtocol(Protocol):
     """Protocol for tokenizers providing text tokenization without vendor dependencies."""
 
-    def encode(self, text: str, **kwargs: Any) -> list[int]:
-        ...
+    def encode(self, text: str, **kwargs: Any) -> list[int]: ...
 
 
 class SentenceTransformerModelProtocol(Protocol):
     """Protocol for sentence_transformers models decoupling adapter from concrete implementation."""
 
     @property
-    def tokenizer(self) -> TokenizerProtocol:
-        ...
+    def tokenizer(self) -> TokenizerProtocol: ...
 
     def encode(
         self,
@@ -53,8 +51,7 @@ class SentenceTransformerModelProtocol(Protocol):
         batch_size: int = ...,
         normalize_embeddings: bool = ...,
         **kwargs: Any,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 @dataclass(frozen=True)

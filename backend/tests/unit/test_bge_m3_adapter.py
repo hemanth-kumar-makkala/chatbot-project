@@ -3,28 +3,25 @@
 import math
 import time
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 from app.adapters.chunking.structure_aware import StructureAwareChunker
+from app.adapters.embedding.bge_m3 import (
+    BgeM3Config,
+    BgeM3EmbeddingProvider,
+    TokenizerProtocol,
+    validate_bge_m3_config,
+)
 from app.ports.chunker import ChunkingContext
 from app.ports.errors import (
     ConfigurationError,
     DuplicateEvidenceTypeError,
-    EmbeddingCountMismatchError,
     EmbeddingInputTooLongError,
     EmbeddingOutputInvalidError,
 )
-from app.adapters.embedding.bge_m3 import (
-    BgeM3Config,
-    BgeM3EmbeddingProvider,
-    SentenceTransformerModelProtocol,
-    TokenizerProtocol,
-    validate_bge_m3_config,
-)
 from app.wiring import create_embedding_provider
-
 
 # -----------------------------------------------------------------------------
 # Fake Tokenizer and Model for Typed Protocol Unit Tests
@@ -77,7 +74,11 @@ class FakeSentenceTransformerModel:
 
         result: list[list[float]] = []
         for i, _ in enumerate(self.last_encoded_sentences):
-            val = float("nan") if self.force_non_finite and i == 0 else 1.0 / math.sqrt(self.output_dim)
+            val = (
+                float("nan")
+                if self.force_non_finite and i == 0
+                else 1.0 / math.sqrt(self.output_dim)
+            )
             vec = [val] * self.output_dim
             result.append(vec)
         return result
@@ -118,7 +119,9 @@ def test_chunk_numbering_continues_across_all_readings() -> None:
     assert len(chunks) == 2
     assert chunks[0].chunk_id != chunks[1].chunk_id, "Chunk IDs across readings must not collide"
     chunk_ids = [c.chunk_id for c in chunks]
-    assert len(chunk_ids) == len(set(chunk_ids)), "Chunk IDs must be completely unique with zero collisions"
+    assert len(chunk_ids) == len(set(chunk_ids)), (
+        "Chunk IDs must be completely unique with zero collisions"
+    )
 
 
 def test_duplicate_evidence_type_raises_typed_error() -> None:
@@ -126,8 +129,12 @@ def test_duplicate_evidence_type_raises_typed_error() -> None:
     from app.core.ingestion.vision_policy import VisionReadingSelection
 
     duplicate_selections = [
-        VisionReadingSelection(evidence_type="text", text="First text reading", page_reading_id=None),
-        VisionReadingSelection(evidence_type="text", text="Second duplicate text reading", page_reading_id=None),
+        VisionReadingSelection(
+            evidence_type="text", text="First text reading", page_reading_id=None
+        ),
+        VisionReadingSelection(
+            evidence_type="text", text="Second duplicate text reading", page_reading_id=None
+        ),
     ]
 
     seen_types: set[str] = set()
@@ -202,6 +209,7 @@ def test_bge_m3_token_count_guard_raises_typed_error() -> None:
 
     with pytest.raises(EmbeddingInputTooLongError) as exc_info:
         import asyncio
+
         asyncio.run(provider.embed(["Excessively long text token sequence"]))
 
     assert exc_info.value.code == "EMBEDDING_INPUT_TOO_LONG"
@@ -220,6 +228,7 @@ def test_bge_m3_output_dimension_mismatch_raises_typed_error() -> None:
 
     with pytest.raises(EmbeddingOutputInvalidError) as exc_info:
         import asyncio
+
         asyncio.run(provider.embed(["Valid text to embed"]))
 
     assert exc_info.value.code == "EMBEDDING_OUTPUT_INVALID"
@@ -238,6 +247,7 @@ def test_bge_m3_non_finite_values_raise_typed_error() -> None:
 
     with pytest.raises(EmbeddingOutputInvalidError) as exc_info:
         import asyncio
+
         asyncio.run(provider.embed(["Valid text producing NaN"]))
 
     assert exc_info.value.code == "EMBEDDING_OUTPUT_INVALID"
@@ -258,6 +268,7 @@ def test_bge_m3_normal_encoding_and_properties() -> None:
     assert provider.version == "5617a9f61b028005a4858fdac845db406aefb181"
 
     import asyncio
+
     texts = ["First valid sentence", "Second valid sentence"]
     embeddings = asyncio.run(provider.embed(texts))
 
@@ -288,6 +299,7 @@ def test_wiring_create_embedding_provider_profile_guards() -> None:
 
 def test_pipeline_embed_input_uses_context_prefix_and_stored_text_is_exact() -> None:
     """Pipeline passes prefix + '\\n\\n' + text to embed, while stored text stays verbatim."""
+
     class RecordingEmbeddingProvider:
         def __init__(self) -> None:
             self.embedded_inputs: list[str] = []
@@ -321,6 +333,7 @@ def test_pipeline_embed_input_uses_context_prefix_and_stored_text_is_exact() -> 
     # Emulate pipeline logic:
     embed_inputs = [f"{c.context_prefix}\n\n{c.text}" for c in chunks]
     import asyncio
+
     embeddings = asyncio.run(embedder.embed(embed_inputs))
 
     assert len(embeddings) == len(chunks)
@@ -343,11 +356,16 @@ def test_real_bge_m3_desktop_gpu_embedding() -> None:
     provider = create_bge_m3_provider("desktop-gpu")
 
     text_similar_1 = "Patient diagnosed with acute bacterial sinusitis requiring oral antibiotics."
-    text_similar_2 = "Clinical presentation of acute bacterial sinusitis treated with prescription antibiotics."
-    text_unrelated = "Quarterly financial ledger statement and commercial office rental lease agreement."
+    text_similar_2 = (
+        "Clinical presentation of acute bacterial sinusitis treated with prescription antibiotics."
+    )
+    text_unrelated = (
+        "Quarterly financial ledger statement and commercial office rental lease agreement."
+    )
 
     start_time = time.perf_counter()
     import asyncio
+
     embeddings_run_1 = asyncio.run(provider.embed([text_similar_1, text_similar_2, text_unrelated]))
     duration_1 = time.perf_counter() - start_time
     print(f"\n[BGE-M3 Real Model] Run 1 time: {duration_1:.3f}s for 3 embeddings")
@@ -359,8 +377,8 @@ def test_real_bge_m3_desktop_gpu_embedding() -> None:
         assert abs(l2_norm - 1.0) < 1e-3, f"Vector L2 norm {l2_norm} not within 1e-3 of 1.0"
 
     v1, v2, v3 = embeddings_run_1
-    sim_pair_cosine = sum(a * b for a, b in zip(v1, v2))
-    unrelated_pair_cosine = sum(a * b for a, b in zip(v1, v3))
+    sim_pair_cosine = sum(a * b for a, b in zip(v1, v2, strict=False))
+    unrelated_pair_cosine = sum(a * b for a, b in zip(v1, v3, strict=False))
 
     assert sim_pair_cosine > unrelated_pair_cosine, (
         f"Similar pair cosine ({sim_pair_cosine:.4f}) must be higher than unrelated pair cosine ({unrelated_pair_cosine:.4f})"
@@ -368,4 +386,6 @@ def test_real_bge_m3_desktop_gpu_embedding() -> None:
 
     # Determinism run 2
     embeddings_run_2 = asyncio.run(provider.embed([text_similar_1, text_similar_2, text_unrelated]))
-    assert embeddings_run_1 == embeddings_run_2, "Two consecutive runs on identical inputs must be identical"
+    assert embeddings_run_1 == embeddings_run_2, (
+        "Two consecutive runs on identical inputs must be identical"
+    )

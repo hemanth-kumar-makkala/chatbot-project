@@ -5,7 +5,7 @@
  */
 
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
-import type { QuestionResponse, SourceCitation } from "@/lib/api";
+import type { QuestionResponse, SourceCitation, ExtractedField } from "@/lib/api";
 
 export interface DemoAssistant {
   id: string;
@@ -391,6 +391,180 @@ export const DEMO_SUGGESTED_QUESTIONS: DemoSuggestedQuestion[] = [
     typeLabel: "Compliance Notice Reference",
     question: "What is the reference identifier on our information security compliance notice?",
   },
+  // 9. Session PHI Document Extraction (staff day step 6, PHASE-4 Task 4.6)
+  {
+    id: "EXT-001",
+    typeLabel: "Field Extraction (Demo)",
+    question: "Upload patient fax and extract all fields",
+  },
+];
+
+export interface GoldenFaxDocument {
+  filename: string;
+  title: string;
+  description: string;
+  page_count: number;
+  preview_page: number;
+  image_stem: string;
+}
+
+export const GOLDEN_FAX_DOCUMENTS: GoldenFaxDocument[] = [
+  {
+    // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf)
+    filename: "skewed_fax.pdf",
+    title: "Urgent Refill Request Fax",
+    description: "Urgent prescription refill authorization (Amoxicillin 500mg, Dr. Evelyn Reed).",
+    page_count: 1,
+    preview_page: 1,
+    image_stem: "skewed_fax",
+  },
+  {
+    // Source: evals/golden/manifest.json (doc_clean_fax / clean_fax.pdf)
+    filename: "clean_fax.pdf",
+    title: "Clinical Referral Consultation Fax",
+    description: "Physical therapy rehabilitation referral (Dr. Marcus Vance).",
+    page_count: 1,
+    preview_page: 1,
+    image_stem: "clean_fax",
+  },
+  {
+    // Source: evals/golden/manifest.json (doc_faint_fax_2page / faint_fax_2page.pdf)
+    filename: "faint_fax_2page.pdf",
+    title: "Diagnostic Order Fax (2-Page)",
+    description: "MRI lumbar spine order with faint page 2 clinical note.",
+    page_count: 2,
+    preview_page: 1,
+    image_stem: "faint_fax_2page",
+  },
+  {
+    // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / patient_intake_form.pdf)
+    filename: "patient_intake_form.pdf",
+    title: "Patient Registration Intake Form",
+    description: "Patient Alex Morgan registration and demographic intake form.",
+    page_count: 1,
+    preview_page: 1,
+    image_stem: "patient_intake_form",
+  },
+];
+
+export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
+  // 1. FILLED_HIGH
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Fact: "Refill authorized for patient Alex Morgan chart MRN-4412-A."
+  {
+    name: "Patient Name",
+    value: "Alex Morgan",
+    state: "FILLED_HIGH",
+    confidence: 0.99,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // provisional demo schema: standard patient demographic field
+  {
+    name: "Date of Birth",
+    value: "1985-04-12",
+    state: "FILLED_HIGH",
+    confidence: 0.97,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Fact: "Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed."
+  {
+    name: "Attending Physician",
+    value: "Dr. Evelyn Reed",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Fact: "Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed."
+  {
+    name: "Authorized Medication",
+    value: "Amoxicillin 500mg",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Fact: "Prescription refill dosage is 1 capsule by mouth three times daily for 10 days."
+  {
+    name: "Prescription Dosage",
+    value: "1 capsule by mouth 3x daily for 10 days",
+    state: "FILLED_HIGH",
+    confidence: 0.96,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // 2. FILLED_MEDIUM
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Fact: "Refill authorized for patient Alex Morgan chart MRN-4412-A."
+  // Single vision read confidence 0.82
+  {
+    name: "Chart Number",
+    value: "MRN-4412-A",
+    state: "FILLED_MEDIUM",
+    confidence: 0.82,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // 3. CONFLICTING
+  // Source: evals/golden/manifest.json (doc_front_desk_policy_v1 vs doc_front_desk_policy_v2)
+  // Dual vision readings diverged on intake fax line: 555-0101 vs 555-0102
+  {
+    name: "Intake Fax Number",
+    value: null,
+    read1_value: "555-0101",
+    read2_value: "555-0102",
+    state: "CONFLICTING",
+    confidence: 0.74,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // 4. UNREADABLE
+  // Source: evals/golden/manifest.json (doc_faint_fax_2page / faint_fax_2page.pdf, p. 2)
+  // Fact: Low-contrast scan below confidence threshold
+  // Invariant 6: Unreadable fields receive explicit state, remaining blank and flagged, never guessed
+  {
+    name: "Clinical Justification Note",
+    value: null,
+    state: "UNREADABLE",
+    page_number: 2,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // 5. INVALID
+  // provisional demo schema: Prescriber 10-digit National Provider Identifier
+  // Validator: Luhn check-digit algorithm failed
+  {
+    name: "Prescriber NPI",
+    value: "1982736451",
+    state: "INVALID",
+    validator_error: "NPI check digit Luhn algorithm failed",
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // 6. NOT_PRESENT
+  // provisional demo schema: Supplemental insurance group number
+  // Field not present on this fax template
+  {
+    name: "Secondary Insurance Group",
+    value: null,
+    state: "NOT_PRESENT",
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
+  // 7. NOT_APPLICABLE
+  // provisional demo schema: Emergency override prior auth exception code
+  // Not applicable for routine prescription refill request
+  {
+    name: "Prior Auth Emergency Override",
+    value: null,
+    state: "NOT_APPLICABLE",
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
+  },
 ];
 
 /**
@@ -422,6 +596,48 @@ export function getDemoAssistantAnswer(
 ): QuestionResponse {
   const convId = conversationId || `conv-demo-${Date.now()}`;
   const normalizedQuery = query.toLowerCase();
+
+  // 0. PHI Field Extraction (Staff day step 6, PHASE-4 Tasks 4.3, 4.5, 4.6, Invariants 6 & 7)
+  if (
+    normalizedQuery.includes("extract") ||
+    normalizedQuery.includes("all fields") ||
+    normalizedQuery.includes("patient fax") ||
+    normalizedQuery.includes("field table")
+  ) {
+    return {
+      request_id: `req-demo-${Date.now()}`,
+      tenant_id: "ten-demo",
+      conversation_id: convId,
+      message_id: `msg-demo-${Date.now()}`,
+      status: "answered",
+      answer:
+        "Extracted 11 fields from uploaded patient fax (skewed_fax.pdf). All fields adjudicated with explicit validation states: 5 fields filled with high confidence, 1 field filled with medium confidence, 1 conflicting reading showing both readings side by side, 1 unreadable note blank and flagged per Invariant 6, and 1 invalid NPI check digit flagged.",
+      citations: ["chunk-skewed-fax-p1", "chunk-faint-fax-p2"],
+      evidence_type: "extraction",
+      status_lines: [
+        "Searching Pinecrest Medical Group documents...",
+        "Page 1 is a scanned image, reading it now...",
+        "Executing dual OCR and vision extraction subgraph...",
+        "Reconciling readings and running check-digit validators...",
+      ],
+      sources: [
+        {
+          document_title: "skewed_fax.pdf",
+          version: "session",
+          page_number: 1,
+          evidence_type: "visual",
+        },
+        {
+          document_title: "faint_fax_2page.pdf",
+          version: "session",
+          page_number: 2,
+          evidence_type: "visual",
+        },
+      ],
+      conflict_sources: [],
+      extracted_fields: DEMO_EXTRACTION_FIELDS,
+    };
+  }
 
   // Alex Morgan emergency contact (UI-1 golden fact)
   // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / tenant_a/patient_intake_form.pdf, p. 1)

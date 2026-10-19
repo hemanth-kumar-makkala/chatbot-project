@@ -1799,3 +1799,44 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - All 8 web test suites (79 tests) passing; `npm run typecheck` passing with 0 errors.
 - **Documentation Updated**:
   - `docs/OPEN_QUESTIONS.md`, `docs/STATUS.md`, `docs/qa/UI_TEST_CHECKLIST.csv`, `docs/ui/CONNECTION_MAP.md`, `docs/BUILD_LOG.md`.
+
+---
+
+### [2026-10-19] TASK UI-4: All Phase 4 UI (Session Upload, Side-by-Side Extraction, Field States & Invariants 6 & 7)
+
+- **Task ID**: UI-4
+- **What Was Built**:
+  - **1. Session Upload in Chat (PHASE-4 Task 4.3, Invariant 7)**:
+    - Attach button in chat input (`chat-attach-button`, 📎 icon).
+    - **Demo Assistant Flow**: clicking attach opens golden fax document picker modal (`demo-attach-picker`) offering the golden fax set (`skewed_fax.pdf`, `clean_fax.pdf`, `faint_fax_2page.pdf`, `patient_intake_form.pdf`). Selecting an arbitrary local file via file input rejects with fixed message `"Demo only reads sample fax documents from the golden set"` (`demo-arbitrary-file-error`), never pretending to read an arbitrary local file.
+    - **Live Assistant Flow**: attach button displays Demo chip and fixed notice `"Session upload needs the session document route (Phase 4 Task 4.3, not built yet)"` (`session-upload-live-message`).
+    - **Session Indicator Banner**: selecting a golden fax displays a dedicated session banner (`session-document-indicator`) directly above the input box: `"Session document: <filename> — stays in this conversation only and is never added to the knowledge base (Invariant 7)"`, with remove action button.
+  - **2. Side-by-Side Extraction View (Staff Day Step 6, PHASE-4 Task 4.6)**:
+    - Submitting an extraction request (`"Upload patient fax and extract all fields"`) renders a two-column split view (`extraction-split-view`):
+      - Left column: rendered document page preview (`web/public/demo/pages/<stem>-p<N>.png`, e.g. `skewed_fax-p1.png`), with zoom hint and click-to-preview.
+      - Right column: structured field adjudication table (`ExtractionTable.tsx`).
+    - Dynamic status line: displays `"Page N is a scanned image, reading it now..."` with `N` citing the real scanned page.
+  - **3. Field States & Badges (PHASE-4 Task 4.5, Invariant 6)**:
+    - Component `web/components/ExtractionTable.tsx` implementing all 7 Staffingly tokenized states:
+      - `FILLED_HIGH`: green badge (`var(--color-status-success-bg)` / `var(--color-status-success-text)`).
+      - `FILLED_MEDIUM`: amber badge (`#FFF8E1` / `var(--color-dark-gold)`).
+      - `CONFLICTING`: orange badge (`#FFF3E0` / `#E65100`), displays both readings side-by-side (`Read 1: 555-0101 | Read 2: 555-0102`), and highlights row (`data-highlighted="true"`).
+      - `UNREADABLE`: red/grey badge (`var(--color-status-error-bg)` / `var(--color-status-error-text)`), value cell strictly left blank with warning flag `[Blank - Unreadable] ⚠️` and never guessed per Invariant 6, and highlights row (`data-highlighted="true"`).
+      - `INVALID`: red badge (`#FFEBEE` / `#C62828`), displays value and validator failure reason (`"NPI check digit Luhn algorithm failed"`).
+      - `NOT_PRESENT`: grey badge (`var(--color-status-queued-bg)` / `#546E7A`), value cell renders `—`.
+      - `NOT_APPLICABLE`: subdued badge (`var(--color-status-retired-bg)` / `#616161`), value cell renders `N/A`.
+    - Unknown state fallback: displays fixed safe label `UNKNOWN` (`field-badge-UNKNOWN`) and logs code only via `console.warn` without leaking raw server text or un-sanitized content.
+    - Interactivity: clicking any row opens `SourcePanel` at that document and cited page.
+  - **4. Demo Fixtures & Open Questions**:
+    - Grounded demo data in `web/lib/demo/fixtures.ts`: golden facts from `evals/golden/manifest.json` and golden faxes with explicit source comments. Field names and items not in golden set marked `"provisional demo schema"` in code comments.
+    - Added gap to `docs/OPEN_QUESTIONS.md` (subsection 2.5): `evals/golden/questions.json` lacks an `EXTRACTION` category (needed before Phase 4 Task 4.7 benchmark).
+  - **5. Types**:
+    - Added `FieldExtractionState` and `ExtractedField` interfaces to `web/lib/api.ts`, added `extracted_fields` to `QuestionResponse`.
+- **Tests Added & Verified**:
+  - `web/__tests__/ui4.test.tsx` (12 tests) testing attach flow (demo picker, arbitrary file rejection, live route disclaimer), session indicator banner, extraction split view with page preview, all 7 field state badges, unreadable values left blank, conflicting side-by-side readings, invalid validator reasons, row highlighting, row click source navigation, and unknown state fallback.
+  - TDD Failing run: initial execution failed with `Error: Failed to resolve import "@/components/ExtractionTable" from "__tests__/ui4.test.tsx"`.
+  - TDD Passing run: all 12 tests in `web/__tests__/ui4.test.tsx` passing.
+  - Full web suite run: all 9 test suites (91 tests) passing cleanly with zero regressions.
+  - Typecheck: `npm run typecheck` passing with 0 errors.
+- **Documentation Updated**:
+  - `docs/OPEN_QUESTIONS.md`, `docs/STATUS.md`, `docs/qa/UI_TEST_CHECKLIST.csv`, `docs/ui/CONNECTION_MAP.md`, `docs/BUILD_LOG.md`.
