@@ -90,6 +90,7 @@ Run FastAPI application via the `app.api.app:create_app` factory with `APP_PROFI
 cd backend
 $env:APP_PROFILE="mock"
 $env:COOKIE_SECURE="false"
+$env:HF_HUB_OFFLINE="1"
 uv run python -c "import uvicorn; from app.api.app import create_app; from app.api.config import ApiSettings; uvicorn.run(create_app(ApiSettings(profile='mock', storage_dir='./data/files', cookie_secure=False)), host='127.0.0.1', port=8000)"
 ```
 
@@ -98,6 +99,7 @@ Run Procrastinate background worker for document splitting, page processing, and
 ```powershell
 cd backend
 $env:APP_PROFILE="mock"
+$env:HF_HUB_OFFLINE="1"
 uv run procrastinate --app=app.worker.app worker --queue=ingestion --queue=builtin
 ```
 

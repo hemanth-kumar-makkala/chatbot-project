@@ -1762,3 +1762,33 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Full suite run (`APP_PROFILE=mock`): 584 passed, 1 skipped, 1 models test deselected in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-full-suite-pass.txt`.
   - Mypy: 0 errors in 148 source files (`%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-mypy.txt`).
   - Pre-commit: 10/10 hooks passing.
+
+---
+
+### [2026-10-19] TASK UI-3: Phase 3 Chat Fixes, Real Thumbnails, Status Lines, Switcher & Source Panel
+
+- **Task ID**: UI-3
+- **What Was Built**:
+  - **Part 0: Calibration Recording & Gate Status**:
+    - `docs/OPEN_QUESTIONS.md` (item 2.4): Recorded calibration results from `evals/reports/vision_calibration.json`. Misread on `skewed_fax.pdf` page 1 scored 0.934 confidence vs correct read on `faint_fax_2page.pdf` page 2 at 0.917. Confidence alone cannot separate them; threshold decision open; 0.70 threshold unchanged.
+    - `docs/STATUS.md`: Documented Phase 2 gate root cause as test-only bug polling `DocumentVersion` through `unscoped_session` under RLS (`app_user` query returns 0 rows without tenant context setting). Next backend task is fixing that test bug and rerunning gate.
+  - **Part A: UI-2 Chat Fixes (`web/lib/demo/fixtures.ts`)**:
+    - INJ-001: Renders as normal grounded answer citing `compliance_notice.pdf` page 1 with expected answer `"SEC-2026-09"`. Safe failure scenario separated to demo-only query.
+    - Status lines: `getDemoStatusLines` updated with dynamic cited page `N`, outputting `"Page N is a scanned image, reading it now..."` (never hard-coded 31).
+    - VR-007: Updated to cite `skewed_fax.pdf` page 1, returning `"Dr. Evelyn Reed authorized Amoxicillin 500mg for Alex Morgan's urgent refill."`
+    - Clarify and general-draft scenarios labeled in code comments as demo-only with no golden IDs.
+  - **Part B: Real Page Thumbnails (`backend/scripts/render_demo_pages.py`, `web/`)**:
+    - Script `backend/scripts/render_demo_pages.py` renders all 30 golden PDF pages from `evals/golden/docs/` to PNG files in `web/public/demo/pages/`: `<stem>-p<N>.png` (view size, width 800) and `<stem>-p<N>-thumb.png` (thumbnail size, width 120), and copies golden PDFs to `web/public/demo/docs/`. Golden documents only.
+    - Visual answers in `web/app/assistants/[assistantId]/chat/page.tsx` display real page thumbnails `<img data-testid="real-page-thumbnail">`; clicking opens `SourcePanel` at cited page.
+  - **Part C: Status Lines Delay**:
+    - Sequential status lines display with short delay on demo assistants; live assistant keeps only the loading indicator until SSE (Task 3.6).
+  - **Part D: Client Switcher (`web/components/TopBar.tsx`)**:
+    - Added `<select data-testid="client-switcher">` populated by `DEMO_ASSISTANTS` fixtures, navigating to `/assistants/[id]/chat`. Conditionally rendered only when `assistantId` is present to maintain picker screen clean layout.
+  - **Part E: Source Panel Component & STOP Rule (`web/components/SourcePanel.tsx`)**:
+    - Created `SourcePanel` supporting Prev/Next page navigation `#page=N`, zoom/preview controls, and golden PDF preview. Live assistant displays Demo chip and `"Source preview needs the document file route (not built yet)"`.
+    - STOP Rule: Identified latest npm registry version of `pdfjs-dist` published $\ge 14$ days ago (`pdfjs-dist@6.4.299`, published `2026-10-03T16:47:40.337Z`). Provided exact command for user confirmation.
+- **Tests Added & Verified**:
+  - `web/__tests__/ui3.test.tsx` (9 tests) covering all UI-3 specifications.
+  - All 8 web test suites (78 tests) passing; `npm run typecheck` passing.
+- **Documentation Updated**:
+  - `docs/OPEN_QUESTIONS.md`, `docs/STATUS.md`, `docs/qa/UI_TEST_CHECKLIST.csv`, `docs/ui/CONNECTION_MAP.md`, `docs/BUILD_LOG.md`.

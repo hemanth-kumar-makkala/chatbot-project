@@ -274,6 +274,15 @@ def create_bge_m3_provider(
             error_code="CONFIGURATION_ERROR",
         )
 
+    if profile in {"desktop-gpu", "home-gpu"}:
+        import os
+
+        if "HF_HUB_OFFLINE" not in os.environ or os.environ["HF_HUB_OFFLINE"] != "1":
+            raise ConfigurationError(
+                message="HF_HUB_OFFLINE must be set to '1' for real profiles. Offline mode is mandatory.",
+                error_code="HF_HUB_OFFLINE_REQUIRED",
+            )
+
     config = validate_bge_m3_config(parsed["embeddings"])
     model = load_bge_m3_model(config)
     return BgeM3EmbeddingProvider(model=model, config=config)

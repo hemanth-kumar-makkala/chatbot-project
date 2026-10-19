@@ -19,6 +19,7 @@ from app.adapters.parsing.mock import MockDocumentParser
 from app.ports.errors import ConfigurationError
 from app.wiring import (
     create_document_parser,
+    create_embedding_provider,
     create_image_processor,
     create_model_provider,
 )
@@ -225,3 +226,42 @@ def test_docling_module_has_no_top_level_docling_imports() -> None:
             top_level_docling_imports.append(node.module)
 
     assert top_level_docling_imports == []
+
+
+class TestHfHubOfflineWiringGuard:
+    """Verifies that real profiles refuse to start unless HF_HUB_OFFLINE == '1'."""
+
+    @pytest.mark.parametrize(
+        "profile",
+        ["desktop-gpu", "home-gpu"],
+    )
+    def test_real_profiles_refuse_without_hf_hub_offline(
+        self, profile: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """desktop-gpu and home-gpu raise ConfigurationError if HF_HUB_OFFLINE != '1'."""
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_embedding_provider(profile)
+        assert (
+            exc_info.value.message
+            == "HF_HUB_OFFLINE must be set to '1' for real profiles. Offline mode is mandatory."
+        )
+        assert exc_info.value.error_code == "HF_HUB_OFFLINE_REQUIRED"
+
+        with pytest.raises(ConfigurationError) as exc_parser:
+            create_document_parser(profile)
+        assert (
+            exc_parser.value.message
+            == "HF_HUB_OFFLINE must be set to '1' for real profiles. Offline mode is mandatory."
+        )
+        assert exc_parser.value.error_code == "HF_HUB_OFFLINE_REQUIRED"
+
+    def test_mock_profile_does_not_require_hf_hub_offline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mock profile does not require HF_HUB_OFFLINE == '1'."""
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        embedder = create_embedding_provider("mock")
+        assert embedder is not None
+        parser = create_document_parser("mock")
+        assert parser is not None

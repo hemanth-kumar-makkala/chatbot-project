@@ -470,7 +470,7 @@ class OllamaModelProvider(ModelProvider):
         self,
         role: ModelRole,
         image: bytes,
-        question: str,
+        question: str = "",
     ) -> PageReading:
         del role, image, question
         raise OllamaMethodNotImplementedError("Ollama provider: read_page not implemented yet")

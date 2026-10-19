@@ -5,8 +5,18 @@
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
-## Current Task
-- **Adapter 3: BGE-M3 Embeddings Adapter — COMPLETED & VERIFIED**
+- **Task UI-3: Finish all Phase 3 UI (Chat fixes, Real Thumbnails, Status Lines, Client Switcher, Source Panel)** — **COMPLETED (Parts 0–D & Part E Component; STOP at pdfjs-dist install)**
+  - **Phase 2 Gate Status**: Phase 2 gate not yet passed; root cause is the gate test polling `DocumentVersion` through `unscoped_session` under PostgreSQL RLS (test-only bug where `app_user` returns 0 rows without tenant context setting). Next backend task is fixing that and rerunning the gate.
+  - **Vision Calibration Status**: Calibrated on golden set (`evals/reports/vision_calibration.json`). Misread scored 0.934 vs correct 0.917; confidence alone cannot separate them; threshold decision open; 0.70 threshold unchanged.
+  - **Part A (UI-2 Fixes)**: INJ-001 renders as normal grounded answer citing `compliance_notice.pdf`; status lines display dynamic cited page `N` (never hardcoded 31); VR-007 cites `skewed_fax.pdf` with golden expected values; clarify and general draft scenarios labeled demo-only with no golden IDs.
+  - **Part B (Page Thumbnails)**: `backend/scripts/render_demo_pages.py` rendered all 30 golden PDF pages to PNG thumbnails and view images in `web/public/demo/pages/` and copied golden PDFs to `web/public/demo/docs/`. Real thumbnail renders in chat and opens source panel on click.
+  - **Part C (Status Lines Delay)**: Sequential status lines appear with short delay on demo assistants; live assistant keeps loading indicator only until Task 3.6 SSE.
+  - **Part D (Client Switcher)**: Switcher dropdown mounted in `TopBar.tsx` using `DEMO_ASSISTANTS` fixtures, navigating to selected assistant's chat.
+  - **Part E (Source Panel Component & STOP)**: `web/components/SourcePanel.tsx` built with page navigation `#page=N`, preview controls, and live assistant disclaimer (`"Source preview needs the document file route (not built yet)"` with `Demo` chip). STOP reached for exact pinned `pdfjs-dist` npm install command.
+  - **Verification**: `web/__tests__/ui3.test.tsx` (9 tests), all 8 web test suites (78 tests), and `npm run typecheck` pass cleanly.
+  - **Next Backend Task**: Fix test-only `DocumentVersion` polling bug under RLS and rerun Phase 2 gate.
+
+- **Adapter 3: BGE-M3 Embeddings Adapter — COMPLETED & VERIFIED** (Preceding task)
   - **Part A (Chunker Guards)**:
     - Chunk numbering continues contiguously across all readings in one `chunk_page` call (`chunk_offset` passed to `_chunk_single_reading`, zero chunk index collisions).
     - Pipeline duplicate evidence type guard enforces that two selections of the same evidence type on one page raise `DuplicateEvidenceTypeError`. Nothing stored.

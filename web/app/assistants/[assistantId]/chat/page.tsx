@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, use } from "react";
 import { useRouter } from "next/navigation";
 import { TopBar } from "@/components/TopBar";
 import { DataSourceChip } from "@/components/DataSourceChip";
+import { SourcePanel } from "@/components/SourcePanel";
 import { getFeatureDataSource } from "@/lib/connections";
 import {
   getDemoConversations,
@@ -47,6 +48,15 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [demoStatusLines, setDemoStatusLines] = useState<string[]>([]);
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
+  const [activeSourceDoc, setActiveSourceDoc] = useState("prior_auth_guide.pdf");
+  const [activeSourcePage, setActiveSourcePage] = useState<number>(1);
+
+  function handleOpenSource(docTitle: string, pageNumber: number = 1) {
+    setActiveSourceDoc(docTitle);
+    setActiveSourcePage(pageNumber);
+    setSourcePanelOpen(true);
+  }
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -113,8 +123,16 @@ export default function ChatPage({ params }: ChatPageProps) {
         trimmed.toLowerCase().includes("amoxicillin") ||
         trimmed.toLowerCase().includes("image") ||
         trimmed.toLowerCase().includes("page 31") ||
-        trimmed.toLowerCase().includes("medication");
-      setDemoStatusLines(getDemoStatusLines("Client A", isVisual));
+        trimmed.toLowerCase().includes("medication") ||
+        trimmed.toLowerCase().includes("evelyn reed") ||
+        trimmed.toLowerCase().includes("urgent refill");
+      const lines = getDemoStatusLines("Client A", isVisual, 1);
+      setDemoStatusLines([lines[0]]);
+      if (lines.length > 1) {
+        setTimeout(() => {
+          setDemoStatusLines(lines);
+        }, 80);
+      }
     } else {
       setDemoStatusLines([]);
     }
@@ -297,43 +315,84 @@ export default function ChatPage({ params }: ChatPageProps) {
             {resp.answer}
           </div>
 
-          {/* Visual Answer Page Thumbnail Placeholder Frame (Invariant 5) */}
+          {/* Visual Answer Page Real Thumbnail (PART B) */}
           {isVisual && (
             <div
               data-testid="page-thumbnail-placeholder"
-              style={{
-                margin: "var(--spacing-2) 0 var(--spacing-3) 0",
-                padding: "var(--spacing-3)",
-                border: "1px dashed var(--color-border)",
-                borderRadius: "var(--radius-md)",
-                backgroundColor: "var(--color-bg-subtle)",
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--spacing-2)",
-                fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-muted)",
-              }}
+              style={{ margin: "var(--spacing-2) 0 var(--spacing-3) 0" }}
             >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: "28px",
-                  height: "36px",
-                  backgroundColor: "var(--color-border)",
-                  borderRadius: "2px",
-                  textAlign: "center",
-                  lineHeight: "36px",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  color: "var(--color-navy)",
-                }}
-              >
-                IMG
-              </span>
-              <span>
-                <strong>[Page Thumbnail Placeholder]</strong> Read from cited document page image
-                (Invariant 5: Visual readings shown with page thumbnail).
-              </span>
+              {(() => {
+                const firstSrc = resp.sources?.[0];
+                const docTitle = firstSrc?.document_title || "skewed_fax.pdf";
+                const pageNum = firstSrc?.page_number || 1;
+                const clean = docTitle.toLowerCase().replace(/\.pdf$/i, "").trim();
+                let stem = "skewed_fax";
+                if (clean.includes("prior auth") || clean.includes("prior_auth")) stem = "prior_auth_guide";
+                else if (clean.includes("skewed")) stem = "skewed_fax";
+                else if (clean.includes("compliance")) stem = "compliance_notice";
+                else if (clean.includes("eligibility")) stem = "eligibility_checklist";
+                else if (clean.includes("clean_fax") || clean.includes("clean fax")) stem = "clean_fax";
+                else if (clean.includes("faint")) stem = "faint_fax_2page";
+                else if (clean.includes("protocols")) stem = "clinical_protocols_manual";
+                else if (clean.includes("policy") && (clean.includes("v2") || clean.includes("2"))) stem = "front_desk_policy_v2";
+                else if (clean.includes("policy") || clean.includes("v1")) stem = "front_desk_policy_v1";
+                else if (clean.includes("intake")) stem = "patient_intake_form";
+                else stem = clean.replace(/[^a-z0-9_-]/g, "_");
+
+                return (
+                  <button
+                    type="button"
+                    aria-label={`Open preview of ${docTitle} Page ${pageNum}`}
+                    onClick={() => handleOpenSource(docTitle, pageNum)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "var(--spacing-3)",
+                      padding: "var(--spacing-2) var(--spacing-3)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "var(--radius-md)",
+                      backgroundColor: "var(--color-bg-subtle)",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <img
+                      data-testid="real-page-thumbnail"
+                      src={`/demo/pages/${stem}-p${pageNum}-thumb.png`}
+                      alt={`Thumbnail of ${docTitle} Page ${pageNum}`}
+                      onClick={() => handleOpenSource(docTitle, pageNum)}
+                      style={{
+                        width: "48px",
+                        height: "auto",
+                        maxHeight: "64px",
+                        borderRadius: "var(--radius-sm)",
+                        border: "1px solid var(--color-border)",
+                        boxShadow: "var(--shadow-sm)",
+                        display: "block",
+                      }}
+                    />
+                    <div>
+                      <div
+                        style={{
+                          fontSize: "var(--font-size-xs)",
+                          fontWeight: 600,
+                          color: "var(--color-navy)",
+                        }}
+                      >
+                        Page Image Preview
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--color-text-muted)",
+                        }}
+                      >
+                        Page {pageNum} (Click to open source preview)
+                      </div>
+                    </div>
+                  </button>
+                );
+              })()}
             </div>
           )}
 
@@ -348,8 +407,11 @@ export default function ChatPage({ params }: ChatPageProps) {
               }}
             >
               {resp.sources.map((src: SourceCitation, idx: number) => (
-                <div
+                <button
                   key={`${src.document_title}-${src.page_number || 0}-${idx}`}
+                  type="button"
+                  data-testid={`source-chip-${src.document_title}`}
+                  onClick={() => handleOpenSource(src.document_title, src.page_number || 1)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -361,9 +423,15 @@ export default function ChatPage({ params }: ChatPageProps) {
                     padding: "4px 8px",
                     borderRadius: "var(--radius-sm)",
                     color: "var(--color-text-main)",
+                    cursor: "pointer",
                   }}
                 >
-                  <span style={{ fontWeight: 600 }}>{src.document_title}</span>
+                  <span
+                    style={{ fontWeight: 600 }}
+                    onClick={() => handleOpenSource(src.document_title, src.page_number || 1)}
+                  >
+                    {src.document_title}
+                  </span>
                   {src.version && <span style={{ opacity: 0.7 }}>({src.version})</span>}
                   {src.sheet_name && <span>• Sheet: {src.sheet_name}</span>}
                   {src.row_number !== undefined && src.row_number !== null && (
@@ -387,7 +455,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                       Source ({src.language})
                     </span>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -455,8 +523,11 @@ export default function ChatPage({ params }: ChatPageProps) {
           {conflictList.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-2)" }}>
               {conflictList.map((src: SourceCitation, idx: number) => (
-                <div
+                <button
                   key={`conflict-${idx}`}
+                  type="button"
+                  data-testid={`source-chip-${src.document_title}`}
+                  onClick={() => handleOpenSource(src.document_title, src.page_number || 1)}
                   style={{
                     fontSize: "var(--font-size-xs)",
                     backgroundColor: "#FFF8E1",
@@ -464,10 +535,12 @@ export default function ChatPage({ params }: ChatPageProps) {
                     padding: "6px 10px",
                     borderRadius: "var(--radius-sm)",
                     color: "#5D4037",
+                    cursor: "pointer",
+                    textAlign: "left",
                   }}
                 >
-                  <strong>{src.document_title}</strong> ({src.version}) — Page {src.page_number}
-                </div>
+                  <strong onClick={() => handleOpenSource(src.document_title, src.page_number || 1)}>{src.document_title}</strong> ({src.version}) — Page {src.page_number}
+                </button>
               ))}
             </div>
           )}
@@ -913,12 +986,12 @@ export default function ChatPage({ params }: ChatPageProps) {
                     }}
                   />
                   {isLiveAssistant ? (
-                    <span>Loading...</span>
+                    <span data-testid="live-loading-indicator">Loading...</span>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                       {demoStatusLines.map((line, idx) => (
                         <span key={`demo-status-${idx}`} style={{ color: "var(--color-navy)", fontWeight: 500 }}>
-                          {line}
+                          › {line}
                         </span>
                       ))}
                     </div>
@@ -983,6 +1056,15 @@ export default function ChatPage({ params }: ChatPageProps) {
           </form>
         </main>
       </div>
+
+      {/* Source Document Viewer Panel (PART E) */}
+      <SourcePanel
+        isOpen={sourcePanelOpen}
+        onClose={() => setSourcePanelOpen(false)}
+        documentTitle={activeSourceDoc}
+        initialPage={activeSourcePage}
+        isLiveAssistant={isLiveAssistant}
+      />
     </div>
   );
 }

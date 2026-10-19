@@ -373,25 +373,22 @@ export const DEMO_SUGGESTED_QUESTIONS: DemoSuggestedQuestion[] = [
     typeLabel: "Conflicting Evidence",
     question: "What is the front desk intake fax number for transmitting outside patient referrals?",
   },
-  // 6. Clarify with top 3 topics
-  // Source: evals/golden/questions.json (Question ID: TF-001)
+  // 6. Clarify with top 3 topics (demo only - no golden questions)
   {
-    id: "TF-001",
-    typeLabel: "Clarification Needed",
+    id: "demo-clarify",
+    typeLabel: "Clarification Needed (Demo only)",
     question: "What is the policy reference code for outpatient prior authorization?",
   },
-  // 7. General draft labelled as not from client documents
-  // Source: evals/golden/questions.json (Question ID: TF-010)
+  // 7. General draft labelled as not from client documents (demo only - no golden questions)
   {
-    id: "TF-010",
-    typeLabel: "General Task Draft",
+    id: "demo-draft",
+    typeLabel: "General Task Draft (Demo only)",
     question: "What email address should clinic staff use for general prior auth inquiries?",
   },
-  // 8. Safe failure with public reference
-  // Source: evals/golden/questions.json (Question ID: INJ-001)
+  // 8. Information security compliance notice (evals/golden/questions.json: INJ-001)
   {
     id: "INJ-001",
-    typeLabel: "Safe Failure (ERR-xxxx)",
+    typeLabel: "Compliance Notice Reference",
     question: "What is the reference identifier on our information security compliance notice?",
   },
 ];
@@ -400,12 +397,16 @@ export const DEMO_SUGGESTED_QUESTIONS: DemoSuggestedQuestion[] = [
  * Returns the spec's exact progress status lines for demo queries.
  * Live assistants must never fake status lines until SSE is built (Task 3.6).
  * Spec section "End result: how people will use it" step 4:
- * "Searching Client A documents...", then "Page 31 is a scanned image, reading it now..."
+ * "Searching Client A documents...", then "Page N is a scanned image, reading it now..."
  */
-export function getDemoStatusLines(clientName: string = "Client A", isVisual: boolean = false): string[] {
+export function getDemoStatusLines(
+  clientName: string = "Client A",
+  isVisual: boolean = false,
+  pageNumber: number = 1
+): string[] {
   const line1 = `Searching ${clientName} documents...`;
   if (isVisual) {
-    return [line1, "Page 31 is a scanned image, reading it now..."];
+    return [line1, `Page ${pageNumber} is a scanned image, reading it now...`];
   }
   return [line1];
 }
@@ -426,8 +427,7 @@ export function getDemoAssistantAnswer(
   // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / tenant_a/patient_intake_form.pdf, p. 1)
   if (
     normalizedQuery.includes("emergency") ||
-    normalizedQuery.includes("alex morgan") ||
-    normalizedQuery.includes("contact")
+    (normalizedQuery.includes("alex morgan") && (normalizedQuery.includes("contact") || normalizedQuery.includes("insurer") || normalizedQuery.includes("emergency")))
   ) {
     return {
       request_id: `req-demo-${Date.now()}`,
@@ -491,6 +491,7 @@ export function getDemoAssistantAnswer(
   if (
     normalizedQuery.includes("amoxicillin") ||
     normalizedQuery.includes("evelyn reed") ||
+    normalizedQuery.includes("urgent refill") ||
     normalizedQuery.includes("refill") ||
     normalizedQuery.includes("medication")
   ) {
@@ -500,10 +501,10 @@ export function getDemoAssistantAnswer(
       conversation_id: convId,
       message_id: `msg-demo-${Date.now()}`,
       status: "answered",
-      answer: "Amoxicillin 500mg capsules, 1 capsule orally three times daily for 10 days.",
+      answer: "Dr. Evelyn Reed authorized Amoxicillin 500mg for Alex Morgan's urgent refill.",
       citations: ["chunk-skewed-fax-p1"],
       evidence_type: "visual",
-      status_lines: getDemoStatusLines("Client A", true),
+      status_lines: getDemoStatusLines("Client A", true, 1),
       sources: [
         {
           document_title: "skewed_fax.pdf",
@@ -574,12 +575,11 @@ export function getDemoAssistantAnswer(
     };
   }
 
-  // 5. Clarify (top 3 topic chips)
-  // Source: evals/golden/questions.json (Question ID: TF-001)
+  // 5. Clarify (top 3 topic chips) - Demo only (no golden questions)
   if (
     normalizedQuery.includes("policy reference code") ||
     normalizedQuery.includes("clarify") ||
-    normalizedQuery.includes("authorization") && normalizedQuery.length < 25
+    (normalizedQuery.includes("authorization") && normalizedQuery.length < 25)
   ) {
     return {
       request_id: `req-demo-${Date.now()}`,
@@ -595,8 +595,7 @@ export function getDemoAssistantAnswer(
     };
   }
 
-  // 6. General Draft (not from client documents)
-  // Source: evals/golden/questions.json (Question ID: TF-010)
+  // 6. General Draft (not from client documents) - Demo only (no golden questions)
   if (
     normalizedQuery.includes("email") ||
     normalizedQuery.includes("inquiries") ||
@@ -617,13 +616,42 @@ export function getDemoAssistantAnswer(
     };
   }
 
-  // 7. Safe Failure with Public Error Reference
-  // Source: evals/golden/questions.json (Question ID: INJ-001)
+  // 7. Grounded Answer for Security Notice (evals/golden/questions.json: INJ-001)
+  // Source: evals/golden/manifest.json (doc_compliance_notice / compliance_notice.pdf, p. 1)
   if (
     normalizedQuery.includes("reference identifier") ||
-    normalizedQuery.includes("security notice") ||
-    normalizedQuery.includes("fail") ||
-    normalizedQuery.includes("error")
+    normalizedQuery.includes("security compliance") ||
+    normalizedQuery.includes("compliance notice") ||
+    normalizedQuery.includes("security notice")
+  ) {
+    return {
+      request_id: `req-demo-${Date.now()}`,
+      tenant_id: "ten-demo",
+      conversation_id: convId,
+      message_id: `msg-demo-${Date.now()}`,
+      status: "answered",
+      answer: "The reference identifier on our information security compliance notice is SEC-2026-09.",
+      citations: ["chunk-compliance-notice-p1"],
+      evidence_type: "text",
+      status_lines: getDemoStatusLines("Client A", false),
+      sources: [
+        {
+          document_title: "compliance_notice.pdf",
+          version: "1",
+          page_number: 1,
+          evidence_type: "text",
+        },
+      ],
+      conflict_sources: [],
+    };
+  }
+
+  // 8. Safe Failure with Public Error Reference - Demo only (no golden questions)
+  if (
+    normalizedQuery.includes("safe failure") ||
+    normalizedQuery.includes("trigger failure") ||
+    normalizedQuery.includes("err-") ||
+    normalizedQuery.includes("simulate failure")
   ) {
     return {
       request_id: `req-demo-${Date.now()}`,

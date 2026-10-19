@@ -10,6 +10,15 @@ Mandatory: All commands must execute in the foreground according to `.agents/rul
 Before reporting any task done: run uv run pre-commit run --files <changed files>. Never run git add, commit, or push. Hemanth does that.
 After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.md`.
 
+## Foreground execution only
+1. Run every command in the foreground and wait for it to finish before doing anything else.
+2. Do not use the schedule tool or background tasks to wait on commands. Do not start a second command while one is running.
+3. If the terminal tool moves a command to the background on its own (timeout), say so immediately with the task id and log path, then post the last 10 log lines about every 30 seconds until it ends. Report its exit code.
+4. Never end a turn while a process you started is still running. If one must be stopped, stop it, say so, and report how far it got.
+5. Your final report must end with the line: "Running processes started by me: none" (or list them, with what each is doing).
+6. Every file you edit must be listed in the report with the reason. Edits that were not part of the task description need a one-line justification.
+
+
 ## Build Rules ("Working with Antigravity")
 0. Never view, grep, or open .env files or any file containing credentials.
 1. One module per task, with its section of the spec referenced.

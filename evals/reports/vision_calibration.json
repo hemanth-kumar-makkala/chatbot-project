@@ -1,0 +1,88 @@
+{
+  "pages": [
+    {
+      "file_name": "clean_fax.pdf",
+      "page_number": 1,
+      "confidence": 0.9285506860064207,
+      "correct": true,
+      "expected_values": [
+        "Dr. Marcus Vance",
+        "555-0155",
+        "6",
+        "2 sessions",
+        "3 weeks",
+        "2026-02-10",
+        "knee arthroscopy",
+        "555-0156"
+      ],
+      "misread_values": [],
+      "reading_snippet": "*** SYNTHETIC TEST DOCUMENT *** FACSIMILE TRANSMISSION -- CONFIDENTIAL MEDICAL RECORD TRANSMITTED VIA SECURE FAX TO HORIZON VALLEY CLINIC From: Dr. Marcus Vance, MD (Specialty Orthopedics) Sender Phone: 555-0155 | Sender Fax: 555-0156 Date: 2026-02-10 Patient Consultation & Clinical Referral Patient",
+      "time_seconds": 13.85
+    },
+    {
+      "file_name": "skewed_fax.pdf",
+      "page_number": 1,
+      "confidence": 0.9340406513916959,
+      "correct": false,
+      "expected_values": [
+        "Amoxicillin 500mg",
+        "1 capsule",
+        "three times daily",
+        "10 days",
+        "2026-02-14",
+        "Alex Morgan",
+        "MRN-4412-A",
+        "0",
+        "555-0145",
+        "Dr. Evelyn Reed"
+      ],
+      "misread_values": [
+        "Amoxicillin 500mg"
+      ],
+      "reading_snippet": "*** SYNTHETIC TEST DOCUMENT *** FACSIMILE TRANSMISSION -- CONFIDENTIAL MEDICAL RECORD  TRANSMISSION NOTICE - PEDIATRIC & ADULT URGENT CARE Date: 2026-02-14 Attn: Pharmacy Dispensing Coordinator Clinic Phone: 555-0145  Prescription Refill Authorization: Urgent prescription refill request approved for",
+      "time_seconds": 12.0
+    },
+    {
+      "file_name": "faint_fax_2page.pdf",
+      "page_number": 1,
+      "confidence": 0.9172138022730556,
+      "correct": true,
+      "expected_values": [
+        "Jordan Taylor",
+        "MRI lumbar spine",
+        "2026-03-01",
+        "09:30",
+        "Suite B",
+        "555-0170"
+      ],
+      "misread_values": [],
+      "reading_snippet": "*** SYNTHETIC TEST DOCUMENT *** FACSIMILE TRANSMISSION -- CONFIDENTIAL MEDICAL RECORD ADVANCED RADIOLOGY ALLIANCE - ORDER CONFIRMATION Referring Provider Phone: 555-0170 Date: 2026-02-18 Diagnostic Order Details: Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor. Appointment",
+      "time_seconds": 11.14
+    },
+    {
+      "file_name": "faint_fax_2page.pdf",
+      "page_number": 2,
+      "confidence": 0.938009592525046,
+      "correct": true,
+      "expected_values": [
+        "chronic lower back pain with radiculopathy",
+        "8 weeks",
+        "7/10",
+        "L5",
+        "555-0172",
+        "Dr. Evelyn Reed"
+      ],
+      "misread_values": [],
+      "reading_snippet": "*** SYNTHETIC TEST DOCUMENT *** FACSIMILE TRANSMISSION -- CONFIDENTIAL MEDICAL RECORD  CLINICAL JUSTIFICATION & PRIOR TREATMENT SUMMARY Warning: Low toner transmission from peripheral clinic fax terminal.  Clinical justification note: chronic lower back pain with radiculopathy. Physical therapy comp",
+      "time_seconds": 7.0
+    }
+  ],
+  "summary": {
+    "total_pages_evaluated": 4,
+    "correct_pages_count": 3,
+    "misread_pages_count": 1,
+    "lowest_confidence_among_correct": 0.9172138022730556,
+    "highest_confidence_among_misreads": 0.9340406513916959,
+    "current_provisional_threshold": 0.7
+  }
+}

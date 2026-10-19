@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
+import { DEMO_ASSISTANTS } from "@/lib/demo/fixtures";
 
 interface TopBarProps {
   assistantName?: string | null;
@@ -64,20 +65,43 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
           >
             Knowledge Assistant
           </span>
-          {assistantName && (
-            <span
-              style={{
-                fontSize: "var(--font-size-sm)",
-                fontWeight: 600,
-                backgroundColor: "rgba(255, 255, 255, 0.15)",
-                padding: "4px 10px",
-                borderRadius: "var(--radius-full)",
-              }}
-            >
-              {assistantName}
-            </span>
+          {/* Client Switcher (PART D) */}
+          {assistantId && (
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)", marginLeft: "var(--spacing-1)" }}>
+              <select
+                id="client-switcher"
+                data-testid="client-switcher"
+                aria-label="Switch Client Assistant"
+                value={assistantId || DEV_DEFAULT_ASSISTANT_ID}
+                onChange={(e) => {
+                  const targetId = e.target.value;
+                  router.push(`/assistants/${encodeURIComponent(targetId)}/chat`);
+                }}
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.18)",
+                  color: "var(--color-white)",
+                  border: "1px solid rgba(255, 255, 255, 0.35)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "4px 8px",
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                }}
+              >
+                {DEMO_ASSISTANTS.map((asst) => (
+                  <option
+                    key={asst.id}
+                    value={asst.id}
+                    style={{ color: "var(--color-text-main)", backgroundColor: "var(--color-white)" }}
+                  >
+                    {asst.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
-          <nav style={{ display: "flex", gap: "var(--spacing-2)", marginLeft: "var(--spacing-3)" }}>
+          <nav style={{ display: "flex", gap: "var(--spacing-2)", marginLeft: "var(--spacing-2)" }}>
             <Link
               href={`/assistants/${encodeURIComponent(assistantId || DEV_DEFAULT_ASSISTANT_ID)}/knowledge`}
               style={{

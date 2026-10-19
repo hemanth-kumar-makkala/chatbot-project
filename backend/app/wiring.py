@@ -116,6 +116,25 @@ SYNTHETIC_LOCAL_PROFILES: frozenset[str] = frozenset(
     {"mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"}
 )
 
+HF_HUB_OFFLINE_MANDATORY_PROFILES: frozenset[str] = frozenset({"desktop-gpu", "home-gpu"})
+HF_HUB_OFFLINE_REQUIRED_MESSAGE: str = (
+    "HF_HUB_OFFLINE must be set to '1' for real profiles. Offline mode is mandatory."
+)
+
+
+def enforce_hf_hub_offline_guard(profile: str) -> None:
+    """Enforce HF_HUB_OFFLINE == '1' for real profiles at wiring time, before any model loads."""
+    if profile in HF_HUB_OFFLINE_MANDATORY_PROFILES:
+        import os
+
+        if "HF_HUB_OFFLINE" not in os.environ or os.environ["HF_HUB_OFFLINE"] != "1":
+            from app.ports.errors import ConfigurationError
+
+            raise ConfigurationError(
+                HF_HUB_OFFLINE_REQUIRED_MESSAGE,
+                error_code="HF_HUB_OFFLINE_REQUIRED",
+            )
+
 
 def create_malware_scanner(profile: str) -> MalwareScanner:
     """Create a malware scanner adapter based on runtime profile.
@@ -161,6 +180,8 @@ def create_document_parser(profile: str) -> DocumentParser:
             f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
             error_code="UNAUTHORIZED_PARSER_PROFILE",
         )
+
+    enforce_hf_hub_offline_guard(profile)
 
     import os
     from pathlib import Path
@@ -352,6 +373,7 @@ def create_embedding_provider(profile: str) -> EmbeddingProvider:
         return MockEmbeddingProvider()
 
     if profile in {"desktop-gpu", "home-gpu"}:
+        enforce_hf_hub_offline_guard(profile)
         from app.adapters.embedding.bge_m3 import create_bge_m3_provider
 
         return create_bge_m3_provider(profile)
@@ -388,6 +410,7 @@ def create_page_pipeline_service(
     from app.ports.errors import ConfigurationError
 
     if profile != "mock":
+        enforce_hf_hub_offline_guard(profile)
         if model_provider is None:
             raise ConfigurationError(
                 f"Building page pipeline in non-mock profile '{profile}' "

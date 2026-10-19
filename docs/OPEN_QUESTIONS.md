@@ -91,9 +91,15 @@ The following items from the spec's "Open decisions" remain open and require sta
   - *Option C (Deferred to Phase 5 Hardening)*: Implement sweeper as part of the Phase 5 infrastructure audit and maintenance scripts.
 
 ### 2.4 Vision Confidence Calibration & Threshold (Phase 2 Model Adapter)
-- **Status**: **PROVISIONAL / CALIBRATION REQUIRED**
-- **Context**: Vision confidence uses the geometric mean token probability from Ollama logprobs. It is uncalibrated: it measures model certainty, not correctness. The 0.70 threshold is provisional and must be calibrated on the golden set VISUAL_RECOVERY documents before Phase 3 baseline metrics.
-- Observed on a synthetic fax: a misread drug name (OCREVUS read as OCREEVUS) still scored 0.79, above the 0.70 threshold. Calibration must check that misreads of names, IDs and numbers fall below the threshold.
+- **Status**: **CALIBRATED / THRESHOLD DECISION OPEN**
+- **Context**: Vision confidence uses the geometric mean token probability from Ollama logprobs. It is uncalibrated: it measures model certainty, not correctness.
+- **Calibration Result (`evals/reports/vision_calibration.json`)**:
+  - Calibrated across golden `VISUAL_RECOVERY` pages using `qwen3-vl:4b`.
+  - Lowest confidence among correct reads: `0.9172` (`faint_fax_2page.pdf`, page 1).
+  - Highest confidence among misreads: `0.9340` (`skewed_fax.pdf`, page 1; misread "Amoxicillin 500mg" as "Amoxillin 500mg").
+  - Outcome: A misread scored 0.934, above a correct read at 0.917. Confidence alone cannot separate them.
+- **Decision**: Threshold decision remains open for stakeholder review; provisional `0.70` threshold kept unchanged.
+
 
 ---
 
