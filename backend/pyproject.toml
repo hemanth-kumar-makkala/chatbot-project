@@ -105,6 +105,8 @@ module = [
     "docling.datamodel.pipeline_options",
     "docling.document_converter",
     "easyocr",
+    "sentence_transformers",
+    "sentence_transformers.*",
 ]
 ignore_missing_imports = true
 

@@ -9,7 +9,12 @@ models:
   vision:  { provider: ollama, model: "qwen3-vl:4b" }
   extract: { provider: ollama, model: "qwen3-vl:4b" }
   judge:   { provider: ollama, model: "qwen2.5:3b" }
-embeddings: { provider: local, model: "BAAI/bge-m3", device: cpu }
+embeddings:
+  provider: local
+  model: "BAAI/bge-m3"
+  revision: "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
+  device: cpu
+  max_seq_length: 8192
 reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
 storage:    { backend: local, path: ./data/files }
 queue:      { backend: procrastinate }

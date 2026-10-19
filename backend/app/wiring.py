@@ -341,7 +341,8 @@ def create_embedding_provider(profile: str) -> EmbeddingProvider:
     """Instantiate EmbeddingProvider adapter based on profile.
 
     MockEmbeddingProvider is strictly wired only in profile 'mock'.
-    Other profiles raise ConfigurationError until real BGE-M3 provider is built in Task 3.1.
+    desktop-gpu and home-gpu wire real BgeM3EmbeddingProvider.
+    Other profiles raise ConfigurationError with fixed unauthorized error message.
     """
     from app.ports.errors import ConfigurationError
 
@@ -350,9 +351,14 @@ def create_embedding_provider(profile: str) -> EmbeddingProvider:
 
         return MockEmbeddingProvider()
 
+    if profile in {"desktop-gpu", "home-gpu"}:
+        from app.adapters.embedding.bge_m3 import create_bge_m3_provider
+
+        return create_bge_m3_provider(profile)
+
     raise ConfigurationError(
-        f"EmbeddingProvider is not yet implemented for profile '{profile}'. "
-        "Real BGE-M3 embedding provider will be implemented in Task 3.1."
+        message="Unknown or unauthorized profile for EmbeddingProvider",
+        error_code="UNAUTHORIZED_EMBEDDING_PROFILE",
     )
 
 

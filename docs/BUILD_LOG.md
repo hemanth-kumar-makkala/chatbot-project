@@ -1712,3 +1712,53 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - Ran `uv run --project backend pre-commit run --all-files` (logged in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\precommit-all-passing.txt`).
   - All 10 pre-commit hooks passed: `trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files`, `detect-private-key`, `mixed-line-ending`, `detect-secrets`, `ruff`, `ruff-format`, `mypy`, `boundary-invariants`.
+
+## 2026-10-19: Adapter 3 (BGE-M3 Embeddings Adapter) & Chunker/Pipeline Guards
+
+- **Task Overview**:
+  - Implemented Adapter 3 for Phase 2: BGE-M3 dense embeddings adapter (`backend/app/adapters/embedding/bge_m3.py`), chunker numbering continuity across readings, pipeline duplicate evidence type guard, pipeline context-prefixed embedding inputs, and real-model verification test.
+- **Part A: Chunker & Pipeline Guards**:
+  - **Chunk Numbering Continuity (`backend/app/adapters/chunking/structure_aware.py`)**:
+    - Updated `_chunk_single_reading` to accept `chunk_offset: int = 0`.
+    - Updated `chunk_page` in `StructureAwareChunker` to compute `chunk_offset=len(chunks)` across readings. Chunk indices now sequence contiguously across multiple readings within a page (never restarting at 0; zero chunk index collisions).
+  - **Duplicate Evidence Type Guard (`backend/app/core/ingestion/pipeline.py`, `backend/app/ports/errors.py`)**:
+    - Added typed error `DuplicateEvidenceTypeError` to `backend/app/ports/errors.py`.
+    - Added duplicate evidence type guard in `PagePipelineService._select_chunks_to_persist`: if two selected readings share the same evidence type on a page, raises `DuplicateEvidenceTypeError`. Nothing is persisted.
+- **Part B: BGE-M3 Adapter (`backend/app/adapters/embedding/bge_m3.py`)**:
+  - **Profile Validation & Config**:
+    - Required keys validated: `model`, `revision`, `device`, `max_seq_length`.
+    - Device allowlist strictly enforced: `{"cpu", "cuda"}`. If `device: cuda` is configured when `torch.cuda.is_available()` is False, raises typed `ConfigurationError`. Never falls back silently.
+  - **Offline-Only Loader**:
+    - `load_bge_m3_model` loads via `sentence_transformers.SentenceTransformer(cfg.model, revision=cfg.revision, device=cfg.device, local_files_only=True)`. Never downloads models.
+    - Missing local model files raise `ConfigurationError` with fixed message.
+    - Snapshot directory validated against pinned revision `5617a9f61b028005a4858fdac845db406aefb181`.
+    - Imports `sentence_transformers` lazily inside `load_bge_m3_model`; `mock` profile never imports it.
+    - Added typed protocols `SentenceTransformerModelProtocol` and `TokenizerProtocol` for unit testing with fakes.
+  - **Batching & Encoding**:
+    - `BATCH_SIZE = 32` named constant.
+    - Asynchronous encoding executed via `asyncio.to_thread` with `normalize_embeddings=True`.
+  - **Token Length & Output Bounds Guards**:
+    - Before encoding, input texts are tokenized using the model's tokenizer. Any text exceeding `max_seq_length` (8192) raises typed `EmbeddingInputTooLongError` with zero silent truncation.
+    - Post-encoding validation ensures vector count equals input count, each vector has dimension 1024, and all values are finite (no NaN or Inf). Any anomaly raises typed `EmbeddingOutputInvalidError`.
+  - **Wiring & Profiles**:
+    - Configured `backend/config/profiles/desktop-gpu.yaml` and `backend/config/profiles/home-gpu.yaml` with `model: "BAAI/bge-m3"`, `revision: "5617a9f61b028005a4858fdac845db406aefb181"`, `device: cpu`, `max_seq_length: 8192`. <!-- pragma: allowlist secret -->
+    - Wired `create_embedding_provider` in `backend/app/wiring.py` to instantiate `BgeM3EmbeddingProvider` for `desktop-gpu` and `home-gpu`, `MockEmbeddingProvider` for `mock`, and `ConfigurationError` with code `UNAUTHORIZED_EMBEDDING_PROFILE` for all other profiles.
+    - Added `sentence_transformers` mypy ignore_missing_imports override in `backend/pyproject.toml`.
+- **Part C: Pipeline Embed Input**:
+  - In `PagePipelineService._select_chunks_to_persist`, embed input text is formatted as `context_prefix + "\n\n" + chunk.text`, while stored chunk text remains the exact verbatim substring.
+  - Embedding count mismatch continues to raise `EmbeddingCountMismatchError`.
+- **Part D: Real-Model Test (`backend/tests/unit/test_bge_m3_adapter.py`)**:
+  - Implemented `test_real_bge_m3_model` marked `@pytest.mark.models`:
+    - Evaluates three short texts (two clinically/administratively similar, one completely unrelated).
+    - Asserts dimension 1024, unit L2 norm within 1e-3 of 1.0, cosine similarity of similar pair > unrelated pair, and bitwise deterministic embeddings across successive runs.
+    - Measures and prints elapsed execution time.
+- **Part E: Documentation & Gate Updates**:
+  - `docs/STATUS.md`: Set Current Task to Adapter 3 (completed) and Next Task to real Docling desktop tests, then real fax upload on desktop-gpu.
+  - Decision: Removed `test_real_docling_ocr_spanish_scanned_page` from Phase 2 gate list per multilingual deferral in `OPEN_QUESTIONS.md` (3.5); test remains in code.
+  - Verified zero personal names across docs; standardized on "the product owner".
+- **Tests & Verification**:
+  - TDD Failing run: `test_bge_m3_adapter.py` captured failing run in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-failing.txt`.
+  - TDD Passing run: 9 passed, 1 models test deselected in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-passing.txt`.
+  - Full suite run (`APP_PROFILE=mock`): 584 passed, 1 skipped, 1 models test deselected in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-full-suite-pass.txt`.
+  - Mypy: 0 errors in 148 source files (`%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\adapter3-mypy.txt`).
+  - Pre-commit: 10/10 hooks passing.

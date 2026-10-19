@@ -82,6 +82,7 @@ class StructureAwareChunker(Chunker):
                 context=context,
                 ts_config=ts_config,
                 language=language,
+                chunk_offset=len(chunks),
             )
             chunks.extend(page_chunks)
 
@@ -93,6 +94,7 @@ class StructureAwareChunker(Chunker):
         context: ChunkingContext,
         ts_config: str,
         language: str,
+        chunk_offset: int = 0,
     ) -> list[TextChunk]:
         blocks = self._parse_blocks(reading)
         if not blocks:
@@ -118,7 +120,7 @@ class StructureAwareChunker(Chunker):
                         context=context,
                         ts_config=ts_config,
                         language=language,
-                        chunk_idx=len(text_chunks),
+                        chunk_idx=chunk_offset + len(text_chunks),
                         out=text_chunks,
                     )
                     current_spans = []
@@ -131,7 +133,7 @@ class StructureAwareChunker(Chunker):
                     context=context,
                     ts_config=ts_config,
                     language=language,
-                    chunk_offset=len(text_chunks),
+                    chunk_offset=chunk_offset + len(text_chunks),
                 )
                 text_chunks.extend(table_chunks)
                 continue
@@ -150,7 +152,7 @@ class StructureAwareChunker(Chunker):
                         context=context,
                         ts_config=ts_config,
                         language=language,
-                        chunk_idx=len(text_chunks),
+                        chunk_idx=chunk_offset + len(text_chunks),
                         out=text_chunks,
                     )
                     current_spans = []
@@ -163,7 +165,7 @@ class StructureAwareChunker(Chunker):
                     context=context,
                     ts_config=ts_config,
                     language=language,
-                    chunk_offset=len(text_chunks),
+                    chunk_offset=chunk_offset + len(text_chunks),
                 )
                 text_chunks.extend(paragraph_chunks)
                 continue
@@ -177,7 +179,7 @@ class StructureAwareChunker(Chunker):
                     context=context,
                     ts_config=ts_config,
                     language=language,
-                    chunk_idx=len(text_chunks),
+                    chunk_idx=chunk_offset + len(text_chunks),
                     out=text_chunks,
                 )
                 current_spans = []
@@ -195,7 +197,7 @@ class StructureAwareChunker(Chunker):
                 context=context,
                 ts_config=ts_config,
                 language=language,
-                chunk_idx=len(text_chunks),
+                chunk_idx=chunk_offset + len(text_chunks),
                 out=text_chunks,
             )
 

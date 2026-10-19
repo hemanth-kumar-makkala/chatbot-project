@@ -28,6 +28,7 @@ from app.ports.document_parser import DocumentParser
 from app.ports.document_repository import DocumentRepository
 from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.errors import (
+    DuplicateEvidenceTypeError,
     EmbeddingCountMismatchError,
     ImageProcessingError,
     InvalidEvidenceTypeError,
@@ -344,6 +345,14 @@ class PagePipelineService:
             vision_reading_id=vision_reading_id,
         )
 
+        seen_evidence_types: set[str] = set()
+        for sel in selections:
+            if sel.evidence_type in seen_evidence_types:
+                raise DuplicateEvidenceTypeError(
+                    f"Duplicate evidence type '{sel.evidence_type}' for page {page_number}"
+                )
+            seen_evidence_types.add(sel.evidence_type)
+
         chunk_records: list[dict[str, Any]] = []
         for sel in selections:
             if sel.evidence_type not in _EVIDENCE_TYPE_MAP:
@@ -365,8 +374,8 @@ class PagePipelineService:
             )
             if not chunks:
                 continue
-            chunk_texts = [c.text for c in chunks]
-            embeddings = await self.embedding_provider.embed(chunk_texts)
+            embed_inputs = [f"{c.context_prefix}\n\n{c.text}" for c in chunks]
+            embeddings = await self.embedding_provider.embed(embed_inputs)
             if len(embeddings) != len(chunks):
                 raise EmbeddingCountMismatchError(
                     "Embedding provider returned count mismatching chunk count"

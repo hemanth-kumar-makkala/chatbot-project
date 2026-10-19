@@ -575,3 +575,60 @@ class EmbeddingCountMismatchError(PortError):
             details=details,
         )
         self.code = code
+
+
+class DuplicateEvidenceTypeError(PortError):
+    """Raised when multiple reading selections for the same page have the same evidence type."""
+
+    def __init__(
+        self,
+        message: str = "Duplicate evidence type encountered for page",
+        code: str = "DUPLICATE_EVIDENCE_TYPE",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class EmbeddingInputTooLongError(PortError):
+    """Raised when input text token count exceeds the maximum sequence length."""
+
+    def __init__(
+        self,
+        message: str = "Embedding input token length exceeds maximum sequence length",
+        code: str = "EMBEDDING_INPUT_TOO_LONG",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+        self.code = code
+
+
+class EmbeddingOutputInvalidError(PortError):
+    """Raised when embedding output vector count, dimension, or values are invalid."""
+
+    def __init__(
+        self,
+        message: str = "Embedding output vector is invalid",
+        code: str = "EMBEDDING_OUTPUT_INVALID",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=500,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

@@ -51,17 +51,31 @@ class TestWorkerWiringGuards:
             create_chunker("unknown-profile")
         assert "Unknown or unauthorized profile for Chunker" in str(exc_info.value)
 
-    def test_embedding_wiring_guard_profile_matrix(self) -> None:
-        """MockEmbeddingProvider returned ONLY for 'mock'; others raise ConfigurationError."""
+    def test_embedding_wiring_guard_profile_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """MockEmbeddingProvider for 'mock'; BgeM3 for 'desktop-gpu' and 'home-gpu'."""
+        from app.adapters.embedding.bge_m3 import BgeM3EmbeddingProvider
+        from app.adapters.embedding.mock import MockEmbeddingProvider
+        from tests.unit.test_bge_m3_adapter import FakeSentenceTransformerModel
+
         # 1. mock profile returns EmbeddingProvider port implementation
         embedder = create_embedding_provider("mock")
+        assert isinstance(embedder, MockEmbeddingProvider)
         assert isinstance(embedder, EmbeddingProvider)
 
-        # 2. All other profiles raise ConfigurationError until Task 3.1
+        # 2. desktop-gpu and home-gpu return BgeM3EmbeddingProvider
+        fake_model = FakeSentenceTransformerModel()
+        monkeypatch.setattr(
+            "app.adapters.embedding.bge_m3.load_bge_m3_model",
+            lambda _cfg: fake_model,
+        )
+        for prof in ["desktop-gpu", "home-gpu"]:
+            real_embedder = create_embedding_provider(prof)
+            assert isinstance(real_embedder, BgeM3EmbeddingProvider)
+            assert isinstance(real_embedder, EmbeddingProvider)
+
+        # 3. Disallowed profiles raise ConfigurationError
         disallowed_profiles = [
             "office-cpu",
-            "desktop-gpu",
-            "home-gpu",
             "cloud",
             "dev-free-api",
             "unknown-profile",
@@ -69,9 +83,7 @@ class TestWorkerWiringGuards:
         for prof in disallowed_profiles:
             with pytest.raises(ConfigurationError) as exc_info:
                 create_embedding_provider(prof)
-            assert f"EmbeddingProvider is not yet implemented for profile '{prof}'" in str(
-                exc_info.value
-            )
+            assert "Unknown or unauthorized profile for EmbeddingProvider" in str(exc_info.value)
 
 
 class TestWorkerConfigurationAndSecurity:

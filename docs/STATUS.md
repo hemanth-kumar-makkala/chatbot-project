@@ -6,11 +6,29 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Laptop Setup Verification & Hook Portability** — **COMPLETED & VERIFIED**
+- **Adapter 3: BGE-M3 Embeddings Adapter — COMPLETED & VERIFIED**
+  - **Part A (Chunker Guards)**:
+    - Chunk numbering continues contiguously across all readings in one `chunk_page` call (`chunk_offset` passed to `_chunk_single_reading`, zero chunk index collisions).
+    - Pipeline duplicate evidence type guard enforces that two selections of the same evidence type on one page raise `DuplicateEvidenceTypeError`. Nothing stored.
+  - **Part B (Adapter Implementation & Profile Config)**:
+    - `backend/app/adapters/embedding/bge_m3.py` created with `BgeM3EmbeddingProvider` implementing `EmbeddingProvider`.
+    - Profile validation enforces all required keys (`model`, `revision`, `device`, `max_seq_length`). Device allowlist restricted to `{"cpu", "cuda"}`; `cuda` configured when `torch.cuda.is_available()` is False raises `ConfigurationError`. Never falls back.
+    - Offline loading: `SentenceTransformer` loaded with `local_files_only=True` and pinned revision `5617a9f61b028005a4858fdac845db406aefb181`. Missing model raises `ConfigurationError` with fixed message. Snapshot hash mismatch raises typed `ConfigurationError`.
+    - Imports `sentence_transformers` only inside the loader; `mock` profile never imports it. Adapter accepts model via `SentenceTransformerModelProtocol`.
+    - `BATCH_SIZE = 32` named constant; `asyncio.to_thread` with `normalize_embeddings=True`.
+    - Tokenizer token length guard raises `EmbeddingInputTooLongError` for inputs over `max_seq_length` (8192); zero silent truncation.
+    - Output validation verifies vector count equals input count, dimension is 1024, and all values are finite; otherwise raises `EmbeddingOutputInvalidError`.
+    - Wired in `create_embedding_provider` for `desktop-gpu` and `home-gpu` (`device: cpu`, `max_seq_length: 8192`, pinned revision).
+  - **Part C (Pipeline Context Prefix)**:
+    - Embed input formatted as `context_prefix + "\n\n" + chunk.text`; stored chunk text remains the exact verbatim substring. Embedding count mismatch raises `EmbeddingCountMismatchError`.
+  - **Part D (Real-Model Test)**:
+    - Test `test_real_bge_m3_model` marked `models` in `backend/tests/unit/test_bge_m3_adapter.py`: verifies 1024 dims, L2 norm within 1e-3 of 1.0, similar pair cosine > unrelated pair cosine, and determinism. Prints execution time.
+  - **Next Task**: Real Docling desktop tests, then real fax upload on desktop-gpu.
+
+- **Laptop Setup Verification & Hook Portability** — **COMPLETED & VERIFIED** (Preceding task)
   - **Environment Verification**: Full backend test suite on mock profile verified (576 passed, 1 skipped, 0 failed). Web unit tests verified (69 passed across 7 test files). PyTorch CUDA acceleration verified (`torch==2.14.1+cu126`, CUDA enabled on RTX 3060 Laptop GPU).
   - **Hook Portability**: Local pre-commit hooks `mypy` and `boundary-invariants` in `.pre-commit-config.yaml` updated to invoke via `python -m`, resolving Windows Application Control blocking `.venv\Scripts\*.exe` (`os error 4551`). All 10 pre-commit hooks passing cleanly.
   - **Path Normalization**: `docs/ui/BUILD_NOTES.md` local run commands updated to repo-root relative paths (`cd backend`, `cd web`).
-  - **Next Task**: `UI-3` (Embedded PDF.js viewer side panel and staff document byte streaming route per UI inventory)
 
 - **Task UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios (UI-First)** — **COMPLETED & VERIFIED** (Preceding task)
   - **Part A (Authoritative Spec Quote & Section Alignment)**: Fixed all non-spec section names across `UI_INVENTORY.md` and `CONNECTION_MAP.md` strictly to the 21 authoritative spec sections. Corrected verbatim quotes for Client Admin flow step 4, Query flow Node 2, Invariant 5, and Staff day step 4. Audited every remaining double-quoted string: 32/32 quotes verified verbatim in `CONNECTION_MAP.md`; 110/110 quotes verified verbatim in `UI_INVENTORY.md`.
@@ -129,13 +147,15 @@
 
 ## Desktop Verification Pending
 Phase 2 cannot pass its exit gate until this list is empty:
-1. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_ocr_spanish_scanned_page` (Spanish scanned page with EasyOCR OCR engine)
-2. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_digital_text_and_table_extraction` (Digital PDF text and structured table data extraction)
-3. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_multipage_confidence_and_review_detection` (Multi-page document per-page confidence scores and review gating)
-4. Real BGE-M3 embedding verification (Phase 2 Task 2.7 chunking and embedding real-model test)
+1. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_digital_text_and_table_extraction` (Digital PDF text and structured table data extraction)
+2. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_multipage_confidence_and_review_detection` (Multi-page document per-page confidence scores and review gating)
+3. Real BGE-M3 embedding verification: `backend/tests/unit/test_bge_m3_adapter.py::test_real_bge_m3_model` (dim 1024, L2 norm within 1e-3 of 1.0, cosine similarity order, deterministic)
+4. Real fax upload on desktop-gpu
+
+*(Decision: `test_real_docling_ocr_spanish_scanned_page` is removed from the Phase 2 gate list per multilingual deferral in OPEN_QUESTIONS 3.5. The test stays in code.)*
 
 ## Next Task
-- **Task 2.5**: Vision Model Integration on Mock Provider (or Task 2.8: Review Flagging & Knowledge Admin UI)
+- Real Docling desktop tests, then real fax upload on desktop-gpu.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
