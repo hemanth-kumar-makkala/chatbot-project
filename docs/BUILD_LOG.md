@@ -1840,3 +1840,33 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Typecheck: `npm run typecheck` passing with 0 errors.
 - **Documentation Updated**:
   - `docs/OPEN_QUESTIONS.md`, `docs/STATUS.md`, `docs/qa/UI_TEST_CHECKLIST.csv`, `docs/ui/CONNECTION_MAP.md`, `docs/BUILD_LOG.md`.
+
+---
+
+### [2026-10-19] TASK UI-5: All Phase 5 UI (Feedback, Rate Limiting & Input Guardrails) & UI-4 Fixes
+
+- **Task ID**: UI-5 & UI-4 Fixes
+- **What Was Built**:
+  - **PART A: UI-4 Fixes**:
+    - **1. Pre-commit All-Files Fix**: Fixed E501 line length wrap in `backend/app/adapters/embedding/bge_m3.py`, resolved ruff E501 lines and unused test kwargs, added `# pragma: allowlist secret` to BGE-M3 model revision hash literals in `backend/tests/unit/test_bge_m3_adapter.py`. Ran `uv run --project backend pre-commit run --all-files` from repo root; all 10 hooks passed cleanly.
+    - **2. One Document Per Extraction**: Every extracted field strictly cites the attached document and its own pages. Removed the `faint_fax_2page.pdf` field from the `skewed_fax.pdf` extraction. Each golden fax document in the picker (`skewed_fax.pdf`, `faint_fax_2page.pdf`, `clean_fax.pdf`, `patient_intake_form.pdf`) has its own distinct field set.
+    - **3. Same-Page OCR-vs-Vision Disagreement (`CONFLICTING`)**: Replaced cross-document policy example with same-page OCR vs vision conflict on `Authorized Medication` (`skewed_fax.pdf`, page 1), labelled `"Read 1 (OCR):"` and `"Read 2 (vision):"` in `ExtractionTable.tsx`.
+    - **4. Demo Value Grounding**: Every demo value sourced from `evals/golden` (manifest, docs, or questions.json) with an explicit source comment, or marked `"provisional demo value"`. Chart Number `MRN-4412-A` explicitly cited from `evals/golden/manifest.json:doc_skewed_fax` and `questions.json:VR-009`.
+    - **5. Truly Failing Invalid NPI**: Verified that `1982736451` truly fails the 10-digit NPI check digit (Luhn algorithm with `80840` prefix, where base `198273645` requires check digit 0; actual check digit is 1). Authored test in `web/__tests__/ui4.test.tsx` proving the failure.
+    - **6. Rule Numbers Masked in UI**: Removed internal rule numbers (`(Invariant 7)`) from user-facing picker text and session indicator banner; kept in code comments.
+  - **PART B: UI-5 (Phase 5 UI)**:
+    - **1. Feedback Controls (Task 5.5)**: Added thumbs up / thumbs down icon buttons on every assistant answer card. Thumbs down opens optional reason popover (choices: "Inaccurate facts", "Too long", "Wrong source", plus free text comment textarea). Demo assistant persists feedback in memory with Demo chip and `"Saved for this demo session"` note. Live assistant displays Demo chip and notice `"Feedback needs the feedback route (Phase 5 Task 5.5, not built yet)"`.
+    - **2. Rate Limit Error Handling (Task 5.1)**: Mapped HTTP 429 to `RATE_LIMIT_EXCEEDED` in `web/lib/api.ts:extractErrorCode`. When the question endpoint returns HTTP 429, displays fixed friendly message `"You've reached the query rate limit. Please wait a moment and try again."` without leaking raw server text, status codes, or stack traces.
+    - **3. Input Guardrails (Task 5.1)**: Documented specification silence regarding question character/token length limit as an open decision under item 2.6 in `docs/OPEN_QUESTIONS.md`, adhering to the rule to ask rather than invent a number.
+  - **4. Test-Driven Development (Tests First)**:
+    - `web/__tests__/ui5.test.tsx` authored first, capturing failing run (5/5 failed) before implementing feedback and rate limiting UI.
+    - Passing run verified: all 5 tests passing.
+    - Updated `web/__tests__/ui4.test.tsx` with one-document-per-extraction assertions, OCR/vision conflict labels, and NPI Luhn check digit test: all 14 tests passing.
+    - Full web test suite: 10 test suites (98 tests) passing cleanly.
+    - TypeScript: `npm run typecheck` passing with zero errors.
+- **Documentation Updated**:
+  - `docs/OPEN_QUESTIONS.md` (item 2.6 Question Input Length Limit gap)
+  - `docs/ui/CONNECTION_MAP.md` (UI-SCR-22 and UI-SCR-23 updated)
+  - `docs/qa/UI_TEST_CHECKLIST.csv` (UI-038 and UI-039 marked Pass)
+  - `docs/STATUS.md` (UI batches complete; next: connect backend starting with Phase 2 gate test RLS fix)
+  - `docs/BUILD_LOG.md` (this entry)

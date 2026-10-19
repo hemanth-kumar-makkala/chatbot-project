@@ -276,7 +276,10 @@ def create_bge_m3_provider(
 
         if "HF_HUB_OFFLINE" not in os.environ or os.environ["HF_HUB_OFFLINE"] != "1":
             raise ConfigurationError(
-                message="HF_HUB_OFFLINE must be set to '1' for real profiles. Offline mode is mandatory.",
+                message=(
+                    "HF_HUB_OFFLINE must be set to '1' for real profiles. "
+                    "Offline mode is mandatory."
+                ),
                 error_code="HF_HUB_OFFLINE_REQUIRED",
             )
 

@@ -5,6 +5,13 @@ import { ExtractionTable } from "@/components/ExtractionTable";
 import * as api from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 import type { ExtractedField } from "@/lib/api";
+import {
+  SKEWED_FAX_EXTRACTION_FIELDS,
+  FAINT_FAX_EXTRACTION_FIELDS,
+  CLEAN_FAX_EXTRACTION_FIELDS,
+  INTAKE_FORM_EXTRACTION_FIELDS,
+  GOLDEN_FAX_DOCUMENTS,
+} from "@/lib/demo/fixtures";
 
 // Mock API methods
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -169,6 +176,8 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       expect(sessionIndicator.textContent).toContain(
         "stays in this conversation only and is never added to the knowledge base"
       );
+      // User-facing text never shows internal rule numbers (Part A.6)
+      expect(sessionIndicator.textContent).not.toContain("(Invariant 7)");
     });
   });
 
@@ -236,20 +245,20 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
         document_title: "skewed_fax.pdf",
       },
       {
-        name: "Intake Fax Number",
+        name: "Authorized Medication",
         value: null,
-        read1_value: "555-0101",
-        read2_value: "555-0102",
+        read1_value: "Amoxicillin 500mg",
+        read2_value: "Amoxillin 500mg",
         state: "CONFLICTING",
         page_number: 1,
         document_title: "skewed_fax.pdf",
       },
       {
-        name: "Clinical Justification Note",
+        name: "Prescriber Signature Line",
         value: null,
         state: "UNREADABLE",
-        page_number: 2,
-        document_title: "faint_fax_2page.pdf",
+        page_number: 1,
+        document_title: "skewed_fax.pdf",
       },
       {
         name: "Prescriber NPI",
@@ -292,7 +301,7 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       const handleOpen = vi.fn();
       render(<ExtractionTable fields={mockFields} onOpenSource={handleOpen} />);
 
-      const unreadableRow = screen.getByTestId("extraction-row-clinical-justification-note");
+      const unreadableRow = screen.getByTestId("extraction-row-prescriber-signature-line");
       expect(unreadableRow).toBeDefined();
 
       const valueCell = within(unreadableRow).getByTestId("field-value-cell");
@@ -301,16 +310,18 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       expect(within(unreadableRow).getByTestId("unreadable-flag")).toBeDefined();
     });
 
-    it("conflicting field displays both readings side by side", () => {
+    it("conflicting field displays both readings labelled Read 1 (OCR) and Read 2 (vision)", () => {
       const handleOpen = vi.fn();
       render(<ExtractionTable fields={mockFields} onOpenSource={handleOpen} />);
 
-      const conflictRow = screen.getByTestId("extraction-row-intake-fax-number");
+      const conflictRow = screen.getByTestId("extraction-row-authorized-medication");
       expect(conflictRow).toBeDefined();
 
       const conflictValues = within(conflictRow).getByTestId("conflicting-readings");
-      expect(conflictValues.textContent).toContain("555-0101");
-      expect(conflictValues.textContent).toContain("555-0102");
+      expect(conflictValues.textContent).toContain("Read 1 (OCR):");
+      expect(conflictValues.textContent).toContain("Read 2 (vision):");
+      expect(conflictValues.textContent).toContain("Amoxicillin 500mg");
+      expect(conflictValues.textContent).toContain("Amoxillin 500mg");
     });
 
     it("invalid field displays validator failure reason", () => {
@@ -325,8 +336,8 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       const handleOpen = vi.fn();
       render(<ExtractionTable fields={mockFields} onOpenSource={handleOpen} />);
 
-      const unreadableRow = screen.getByTestId("extraction-row-clinical-justification-note");
-      const conflictRow = screen.getByTestId("extraction-row-intake-fax-number");
+      const unreadableRow = screen.getByTestId("extraction-row-prescriber-signature-line");
+      const conflictRow = screen.getByTestId("extraction-row-authorized-medication");
       const highRow = screen.getByTestId("extraction-row-patient-name");
 
       expect(unreadableRow.getAttribute("data-highlighted")).toBe("true");
@@ -338,10 +349,73 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       const handleOpen = vi.fn();
       render(<ExtractionTable fields={mockFields} onOpenSource={handleOpen} />);
 
-      const unreadableRow = screen.getByTestId("extraction-row-clinical-justification-note");
+      const unreadableRow = screen.getByTestId("extraction-row-prescriber-signature-line");
       fireEvent.click(unreadableRow);
 
-      expect(handleOpen).toHaveBeenCalledWith("faint_fax_2page.pdf", 2);
+      expect(handleOpen).toHaveBeenCalledWith("skewed_fax.pdf", 1);
+    });
+
+    it("every golden fax extraction field set cites strictly its own document and pages (Part A.2)", () => {
+      // 1. Skewed fax: all 10 fields cite skewed_fax.pdf page 1; no faint_fax fields
+      expect(SKEWED_FAX_EXTRACTION_FIELDS.length).toBeGreaterThan(0);
+      for (const field of SKEWED_FAX_EXTRACTION_FIELDS) {
+        expect(field.document_title).toBe("skewed_fax.pdf");
+        expect(field.page_number).toBe(1);
+      }
+
+      // 2. Faint fax: all fields cite faint_fax_2page.pdf pages 1 or 2
+      expect(FAINT_FAX_EXTRACTION_FIELDS.length).toBeGreaterThan(0);
+      for (const field of FAINT_FAX_EXTRACTION_FIELDS) {
+        expect(field.document_title).toBe("faint_fax_2page.pdf");
+        expect([1, 2]).toContain(field.page_number);
+      }
+
+      // 3. Clean fax: all fields cite clean_fax.pdf page 1
+      expect(CLEAN_FAX_EXTRACTION_FIELDS.length).toBeGreaterThan(0);
+      for (const field of CLEAN_FAX_EXTRACTION_FIELDS) {
+        expect(field.document_title).toBe("clean_fax.pdf");
+        expect(field.page_number).toBe(1);
+      }
+
+      // 4. Patient intake form: all fields cite patient_intake_form.pdf page 1
+      expect(INTAKE_FORM_EXTRACTION_FIELDS.length).toBeGreaterThan(0);
+      for (const field of INTAKE_FORM_EXTRACTION_FIELDS) {
+        expect(field.document_title).toBe("patient_intake_form.pdf");
+        expect(field.page_number).toBe(1);
+      }
+
+      // Each golden fax has its own distinct field set
+      expect(GOLDEN_FAX_DOCUMENTS.length).toBe(4);
+    });
+
+    it("invalid NPI 1982736451 truly fails the Luhn check digit with 80840 prefix (Part A.5)", () => {
+      function computeNpiCheckDigit(base9: string): number {
+        const full = "80840" + base9;
+        let total = 0;
+        const digits = full.split("").reverse().map(Number);
+        for (let i = 0; i < digits.length; i++) {
+          const digit = digits[i];
+          if (i % 2 === 0) {
+            const doubled = digit * 2;
+            total += doubled < 10 ? doubled : doubled - 9;
+          } else {
+            total += digit;
+          }
+        }
+        const units = total % 10;
+        return (10 - units) % 10;
+      }
+
+      const base9 = "198273645";
+      const validCheckDigit = computeNpiCheckDigit(base9);
+      // Valid check digit for base 198273645 is 0
+      expect(validCheckDigit).toBe(0);
+
+      // Demo value has 1 as the 10th digit: 1982736451
+      const invalidNpi = "1982736451";
+      const actualCheckDigit = Number(invalidNpi[9]);
+      expect(actualCheckDigit).toBe(1);
+      expect(actualCheckDigit).not.toBe(validCheckDigit);
     });
 
     it("unknown field state renders fixed safe label and logs code only", () => {

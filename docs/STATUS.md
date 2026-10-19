@@ -5,7 +5,29 @@
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
-- **Task UI-4: All Phase 4 UI (Session Upload, Side-by-Side Extraction, Field States & Invariants 6 & 7)** — **COMPLETED & VERIFIED**
+- **Task UI-5: All Phase 5 UI (Feedback Controls, Rate Limiting & Input Guardrails) & UI-4 Fixes** — **COMPLETED & VERIFIED**
+  - **UI Batches Complete**: All UI screens and demo flows (UI-0 through UI-5) are complete, strictly typed, and verified across 10 test suites (98 unit/integration tests passing).
+  - **Feedback Controls (Task 5.5)**:
+    - Thumbs up / thumbs down on every assistant answer card.
+    - Thumbs down opens reason popover with choices ("Inaccurate facts", "Too long", "Wrong source") and free text comment textarea.
+    - Demo assistant: saves feedback in memory, rendering Demo chip and note `"Saved for this demo session"`.
+    - Live assistant: displays Demo chip and route disclaimer `"Feedback needs the feedback route (Phase 5 Task 5.5, not built yet)"`.
+  - **Rate Limiting Error Handling (Task 5.1)**:
+    - HTTP 429 mapped to `RATE_LIMIT_EXCEEDED` in `web/lib/api.ts:extractErrorCode`.
+    - Chat UI displays friendly wait message `"You've reached the query rate limit. Please wait a moment and try again."` without leaking raw server text, codes, or traces.
+  - **Input Guardrails (Task 5.1)**:
+    - Spec gap for question input character/token length limit recorded in `docs/OPEN_QUESTIONS.md` (item 2.6) without inventing a number.
+  - **Part A UI-4 Fixes**:
+    - Pre-commit: `uv run --project backend pre-commit run --all-files` runs clean from repo root with all 10 hooks passing.
+    - One document per extraction: every field cites only its attached document and pages; removed `faint_fax_2page.pdf` field from `skewed_fax.pdf` extraction; each golden fax document has its own field set.
+    - Same-page OCR vs vision conflict: replaced cross-document conflict with same-page disagreement on `Authorized Medication`, labelled `"Read 1 (OCR):"` and `"Read 2 (vision):"`.
+    - Golden grounding: all demo values sourced from `evals/golden` (manifest, docs, or questions.json) with source comments or marked `"provisional demo value"`; `MRN-4412-A` explicitly cited from `manifest.json:doc_skewed_fax` and `questions.json:VR-009`.
+    - Invalid NPI: `1982736451` proven to fail Luhn check digit with `80840` prefix (check digit is 0; actual is 1) via automated unit test.
+    - User-facing text: removed `"(Invariant 7)"` from visible UI text (kept in code comments).
+  - **Verification**: `web/__tests__/ui5.test.tsx` (5 tests), `web/__tests__/ui4.test.tsx` (14 tests), full web suite (98 tests across 10 suites), and `npm run typecheck` pass cleanly.
+  - **Next Backend Step**: Connect the backend, starting with the Phase 2 gate test RLS fix (polled `DocumentVersion` via `unscoped_session` under RLS).
+
+- **Task UI-4: All Phase 4 UI (Session Upload, Side-by-Side Extraction, Field States & Invariants 6 & 7)** — **COMPLETED & VERIFIED** (Preceding task)
   - **Session Upload in Chat (PHASE-4 Task 4.3, Invariant 7)**:
     - Attach button in chat input (`chat-attach-button`).
     - **Demo Assistant**: opens golden fax document picker (`skewed_fax.pdf`, `clean_fax.pdf`, `faint_fax_2page.pdf`, `patient_intake_form.pdf`). Selecting an arbitrary local file via file input displays fixed error `"Demo only reads sample fax documents from the golden set"` (never pretends to read arbitrary files).

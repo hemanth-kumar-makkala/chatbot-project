@@ -1,4 +1,4 @@
-"""Unit tests for Adapter 3: BGE-M3 embeddings, chunker numbering guards, and pipeline embed input."""
+"""Unit tests for Adapter 3: BGE-M3 embeddings, chunker numbering guards, and pipeline input."""
 
 import math
 import time
@@ -35,6 +35,7 @@ class FakeTokenizer:
         self.token_count_per_text = token_count_per_text
 
     def encode(self, text: str, **kwargs: Any) -> list[int]:
+        _ = kwargs
         if not text:
             return []
         return list(range(self.token_count_per_text))
@@ -68,6 +69,7 @@ class FakeSentenceTransformerModel:
         normalize_embeddings: bool = True,
         **kwargs: Any,
     ) -> Any:
+        _ = (batch_size, normalize_embeddings, kwargs)
         self.last_encoded_sentences = list(inputs)
         if self.return_wrong_count:
             return [[0.0] * self.output_dim]
@@ -90,7 +92,7 @@ class FakeSentenceTransformerModel:
 
 
 def test_chunk_numbering_continues_across_all_readings() -> None:
-    """Chunk numbering must continue across all readings in one chunk_page call (never restart at 0)."""
+    """Chunk numbering must continue across readings in one chunk_page call (never restart at 0)."""
     chunker = StructureAwareChunker()
     ctx = ChunkingContext(
         tenant_id="tenant-123",
@@ -103,7 +105,8 @@ def test_chunk_numbering_continues_across_all_readings() -> None:
 
     reading_1 = (
         "Section 1: Initial Requirements.\n\n"
-        "All patients must provide photo identification upon initial clinic intake registration.\n\n"
+        "All patients must provide photo identification upon initial clinic "
+        "intake registration.\n\n"
         "Section 2: Secondary Requirements.\n\n"
         "Insurance verification cards must be presented prior to physician examination."
     )
@@ -125,7 +128,7 @@ def test_chunk_numbering_continues_across_all_readings() -> None:
 
 
 def test_duplicate_evidence_type_raises_typed_error() -> None:
-    """Duplicate reading selections of the same evidence type on one page must raise DuplicateEvidenceTypeError."""
+    """Duplicate reading selections of same evidence type on one page raise typed error."""
     from app.core.ingestion.vision_policy import VisionReadingSelection
 
     duplicate_selections = [
@@ -158,14 +161,14 @@ def test_bge_m3_config_validation_requires_all_keys() -> None:
     """All profile configuration keys are mandatory and strictly validated."""
     valid_raw: dict[str, Any] = {
         "model": "BAAI/bge-m3",
-        "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+        "revision": "5617a9f61b028005a4858fdac845db406aefb181",  # pragma: allowlist secret
         "device": "cpu",
         "max_seq_length": 8192,
     }
 
     cfg = validate_bge_m3_config(valid_raw)
     assert cfg.model == "BAAI/bge-m3"
-    assert cfg.revision == "5617a9f61b028005a4858fdac845db406aefb181"
+    assert cfg.revision == "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
     assert cfg.device == "cpu"
     assert cfg.max_seq_length == 8192
 
@@ -196,12 +199,12 @@ def test_bge_m3_config_validation_requires_all_keys() -> None:
 
 
 def test_bge_m3_token_count_guard_raises_typed_error() -> None:
-    """Input exceeding max_seq_length raises EmbeddingInputTooLongError without silent truncation."""
+    """Input over max_seq_length raises EmbeddingInputTooLongError without silent truncation."""
     fake_tokenizer = FakeTokenizer(token_count_per_text=8193)
     fake_model = FakeSentenceTransformerModel(tokenizer=fake_tokenizer)
     cfg = BgeM3Config(
         model="BAAI/bge-m3",
-        revision="5617a9f61b028005a4858fdac845db406aefb181",
+        revision="5617a9f61b028005a4858fdac845db406aefb181",  # pragma: allowlist secret
         device="cpu",
         max_seq_length=8192,
     )
@@ -220,7 +223,7 @@ def test_bge_m3_output_dimension_mismatch_raises_typed_error() -> None:
     fake_model = FakeSentenceTransformerModel(output_dim=512)
     cfg = BgeM3Config(
         model="BAAI/bge-m3",
-        revision="5617a9f61b028005a4858fdac845db406aefb181",
+        revision="5617a9f61b028005a4858fdac845db406aefb181",  # pragma: allowlist secret
         device="cpu",
         max_seq_length=8192,
     )
@@ -239,7 +242,7 @@ def test_bge_m3_non_finite_values_raise_typed_error() -> None:
     fake_model = FakeSentenceTransformerModel(force_non_finite=True)
     cfg = BgeM3Config(
         model="BAAI/bge-m3",
-        revision="5617a9f61b028005a4858fdac845db406aefb181",
+        revision="5617a9f61b028005a4858fdac845db406aefb181",  # pragma: allowlist secret
         device="cpu",
         max_seq_length=8192,
     )
@@ -258,14 +261,15 @@ def test_bge_m3_normal_encoding_and_properties() -> None:
     fake_model = FakeSentenceTransformerModel()
     cfg = BgeM3Config(
         model="BAAI/bge-m3",
-        revision="5617a9f61b028005a4858fdac845db406aefb181",
+        revision="5617a9f61b028005a4858fdac845db406aefb181",  # pragma: allowlist secret
         device="cpu",
         max_seq_length=8192,
     )
     provider = BgeM3EmbeddingProvider(model=fake_model, config=cfg)
 
     assert provider.model_id == "BAAI/bge-m3"
-    assert provider.version == "5617a9f61b028005a4858fdac845db406aefb181"
+    expected_rev = "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
+    assert provider.version == expected_rev
 
     import asyncio
 
@@ -279,7 +283,7 @@ def test_bge_m3_normal_encoding_and_properties() -> None:
 
 
 def test_wiring_create_embedding_provider_profile_guards() -> None:
-    """Wiring creates Mock for 'mock', BgeM3 for 'desktop-gpu' and 'home-gpu', and rejects unauthorized profiles."""
+    """Wiring creates Mock for 'mock', BgeM3 for desktop/home GPU, rejects unauthorized profiles."""
     mock_provider = create_embedding_provider("mock")
     assert mock_provider.model_id == "mock-bge-m3"
 
@@ -314,7 +318,7 @@ def test_pipeline_embed_input_uses_context_prefix_and_stored_text_is_exact() -> 
 
         @property
         def version(self) -> str:
-            return "5617a9f61b028005a4858fdac845db406aefb181"
+            return "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
 
     embedder = RecordingEmbeddingProvider()
     chunker = StructureAwareChunker()
@@ -326,7 +330,10 @@ def test_pipeline_embed_input_uses_context_prefix_and_stored_text_is_exact() -> 
         evidence_type="text",
         document_title="Sample Document",
     )
-    raw_text = "Section 1: Guidelines.\n\nAll patients must provide photo identification upon initial clinic intake."
+    raw_text = (
+        "Section 1: Guidelines.\n\n"
+        "All patients must provide photo identification upon initial clinic intake."
+    )
     chunks = chunker.chunk_page(readings=[raw_text], context=ctx)
     assert len(chunks) >= 1
 
@@ -350,7 +357,7 @@ def test_pipeline_embed_input_uses_context_prefix_and_stored_text_is_exact() -> 
 
 @pytest.mark.models
 def test_real_bge_m3_desktop_gpu_embedding() -> None:
-    """Real BGE-M3 test asserting dim 1024, L2 norm within 1e-3 of 1.0, cosine ranking, and determinism."""
+    """Real BGE-M3 test asserting dim 1024, L2 norm within 1e-3, cosine ranking, and determinism."""
     from app.adapters.embedding.bge_m3 import create_bge_m3_provider
 
     provider = create_bge_m3_provider("desktop-gpu")
@@ -381,7 +388,8 @@ def test_real_bge_m3_desktop_gpu_embedding() -> None:
     unrelated_pair_cosine = sum(a * b for a, b in zip(v1, v3, strict=False))
 
     assert sim_pair_cosine > unrelated_pair_cosine, (
-        f"Similar pair cosine ({sim_pair_cosine:.4f}) must be higher than unrelated pair cosine ({unrelated_pair_cosine:.4f})"
+        f"Similar pair cosine ({sim_pair_cosine:.4f}) must be higher than "
+        f"unrelated pair cosine ({unrelated_pair_cosine:.4f})"
     )
 
     # Determinism run 2

@@ -106,6 +106,14 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Gap**: Before Phase 4 Task 4.7 can record baseline metrics in `evals/reports/`, formal evaluation test items with field extraction ground truth (including unreadable and conflicting test cases) must be authored in `evals/golden/questions.json` (or a dedicated extraction evaluation suite).
 - **Decision Needed**: Stakeholder agreement on whether extraction evaluation cases live in `evals/golden/questions.json` under category `EXTRACTION` or in a separate evaluation fixture file.
 
+### 2.6 Question Input Length Limit (Task 5.1 Gap)
+- **Status**: **OPEN / SPEC GAP IDENTIFIED IN UI-5 (TASK 5.1)**
+- **Context**: Task 5.1 specifies an input guard for questions (e.g. rate limiting and input length bounds). However, neither the architecture specification (`Client Knowledge Assistant Architecture and Build Plan.md`) nor `docs/phases/PHASE-5.md` specifies an explicit maximum character or token count limit for incoming questions.
+- **Rule**: Antigravity build rule 9 decrees: *"Stop and ask when the spec is silent. Do not fill gaps with assumptions."* UI-5 prompt specifically instructs: *"if the docs specify a question length limit, show it; if they do not, list it as a question, do not invent a number."*
+- **Question**: What is the approved maximum length (in characters and/or tokens) for question input before rejecting or truncating queries at Node 1 (`guard_input`) and the UI input field?
+  - *Option A*: 1,000 characters (~200 tokens), suitable for clinical and operational inquiries.
+  - *Option B*: 2,000 characters (~400 tokens), accommodating longer pasted clinical case summaries or referral paragraphs.
+  - *Option C*: Bound strictly to tokenizer context limit (e.g. 512 tokens for BGE-M3 query encoder).
 
 ---
 

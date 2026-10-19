@@ -447,9 +447,11 @@ export const GOLDEN_FAX_DOCUMENTS: GoldenFaxDocument[] = [
   },
 ];
 
-export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
+// 1. Skewed Fax (skewed_fax.pdf - 1 page)
+// Every field cites skewed_fax.pdf page 1.
+export const SKEWED_FAX_EXTRACTION_FIELDS: ExtractedField[] = [
   // 1. FILLED_HIGH
-  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1) & questions.json (VR-007, VR-008)
   // Fact: "Refill authorized for patient Alex Morgan chart MRN-4412-A."
   {
     name: "Patient Name",
@@ -459,7 +461,7 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     page_number: 1,
     document_title: "skewed_fax.pdf",
   },
-  // provisional demo schema: standard patient demographic field
+  // provisional demo value: standard patient demographic field
   {
     name: "Date of Birth",
     value: "1985-04-12",
@@ -468,21 +470,11 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     page_number: 1,
     document_title: "skewed_fax.pdf",
   },
-  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1) & questions.json (VR-007)
   // Fact: "Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed."
   {
     name: "Attending Physician",
     value: "Dr. Evelyn Reed",
-    state: "FILLED_HIGH",
-    confidence: 0.98,
-    page_number: 1,
-    document_title: "skewed_fax.pdf",
-  },
-  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
-  // Fact: "Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed."
-  {
-    name: "Authorized Medication",
-    value: "Amoxicillin 500mg",
     state: "FILLED_HIGH",
     confidence: 0.98,
     page_number: 1,
@@ -499,9 +491,8 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     document_title: "skewed_fax.pdf",
   },
   // 2. FILLED_MEDIUM
-  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1)
+  // Source: evals/golden/manifest.json (doc_skewed_fax / skewed_fax.pdf, p. 1) & questions.json (VR-009)
   // Fact: "Refill authorized for patient Alex Morgan chart MRN-4412-A."
-  // Single vision read confidence 0.82
   {
     name: "Chart Number",
     value: "MRN-4412-A",
@@ -511,32 +502,31 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     document_title: "skewed_fax.pdf",
   },
   // 3. CONFLICTING
-  // Source: evals/golden/manifest.json (doc_front_desk_policy_v1 vs doc_front_desk_policy_v2)
-  // Dual vision readings diverged on intake fax line: 555-0101 vs 555-0102
+  // Source: evals/golden/manifest.json (doc_skewed_fax, p. 1) & evals/reports/vision_calibration.json
+  // Same-page dual readings disagreed: Read 1 (OCR) read "Amoxicillin 500mg" vs Read 2 (vision) read "Amoxillin 500mg"
   {
-    name: "Intake Fax Number",
+    name: "Authorized Medication",
     value: null,
-    read1_value: "555-0101",
-    read2_value: "555-0102",
+    read1_value: "Amoxicillin 500mg",
+    read2_value: "Amoxillin 500mg",
     state: "CONFLICTING",
     confidence: 0.74,
     page_number: 1,
     document_title: "skewed_fax.pdf",
   },
   // 4. UNREADABLE
-  // Source: evals/golden/manifest.json (doc_faint_fax_2page / faint_fax_2page.pdf, p. 2)
-  // Fact: Low-contrast scan below confidence threshold
-  // Invariant 6: Unreadable fields receive explicit state, remaining blank and flagged, never guessed
+  // provisional demo value: skewed cursive signature unreadable; left blank and flagged per Invariant 6
   {
-    name: "Clinical Justification Note",
+    name: "Prescriber Signature Line",
     value: null,
     state: "UNREADABLE",
-    page_number: 2,
-    document_title: "faint_fax_2page.pdf",
+    confidence: 0.42,
+    page_number: 1,
+    document_title: "skewed_fax.pdf",
   },
   // 5. INVALID
-  // provisional demo schema: Prescriber 10-digit National Provider Identifier
-  // Validator: Luhn check-digit algorithm failed
+  // provisional demo value: Prescriber 10-digit National Provider Identifier
+  // Validator: Luhn check-digit algorithm failed (computed check digit is 0 for 80840+198273645; provided is 1)
   {
     name: "Prescriber NPI",
     value: "1982736451",
@@ -546,8 +536,7 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     document_title: "skewed_fax.pdf",
   },
   // 6. NOT_PRESENT
-  // provisional demo schema: Supplemental insurance group number
-  // Field not present on this fax template
+  // provisional demo value: Supplemental insurance group number not present on fax template
   {
     name: "Secondary Insurance Group",
     value: null,
@@ -556,14 +545,219 @@ export const DEMO_EXTRACTION_FIELDS: ExtractedField[] = [
     document_title: "skewed_fax.pdf",
   },
   // 7. NOT_APPLICABLE
-  // provisional demo schema: Emergency override prior auth exception code
-  // Not applicable for routine prescription refill request
+  // provisional demo value: Emergency override code not applicable to routine refill request
   {
     name: "Prior Auth Emergency Override",
     value: null,
     state: "NOT_APPLICABLE",
     page_number: 1,
     document_title: "skewed_fax.pdf",
+  },
+];
+
+export const DEMO_EXTRACTION_FIELDS = SKEWED_FAX_EXTRACTION_FIELDS;
+
+// 2. Faint Fax (faint_fax_2page.pdf - 2 pages)
+// Every field cites faint_fax_2page.pdf pages 1 or 2.
+export const FAINT_FAX_EXTRACTION_FIELDS: ExtractedField[] = [
+  // provisional demo value: patient demographic name
+  {
+    name: "Patient Name",
+    value: "Jordan Hayes",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_faint_fax_2page / faint_fax_2page.pdf, p. 1)
+  // Fact: "MRI lumbar spine order with faint page 2 clinical note."
+  {
+    name: "Procedure Ordered",
+    value: "MRI Lumbar Spine without Contrast",
+    state: "FILLED_HIGH",
+    confidence: 0.97,
+    page_number: 1,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // provisional demo value: ordering provider
+  {
+    name: "Ordering Physician",
+    value: "Dr. Rachel Brooks",
+    state: "FILLED_HIGH",
+    confidence: 0.95,
+    page_number: 1,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_faint_fax_2page / faint_fax_2page.pdf, p. 2)
+  // Fact: Low-contrast cursive scan flagged for review; value blank and flagged per Invariant 6
+  {
+    name: "Clinical Justification Note",
+    value: null,
+    state: "UNREADABLE",
+    confidence: 0.38,
+    page_number: 2,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // provisional demo value: faint page 2 scale score dual reading disagreement
+  {
+    name: "Pain Scale Assessment",
+    value: null,
+    read1_value: "7/10",
+    read2_value: "1/10",
+    state: "CONFLICTING",
+    confidence: 0.68,
+    page_number: 2,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // provisional demo value: valid NPI passing Luhn check digit
+  {
+    name: "Prescriber NPI",
+    value: "1982736450",
+    state: "FILLED_HIGH",
+    confidence: 0.99,
+    page_number: 1,
+    document_title: "faint_fax_2page.pdf",
+  },
+  // provisional demo value: prior auth code not present on diagnostic order form
+  {
+    name: "Prior Auth Reference",
+    value: null,
+    state: "NOT_PRESENT",
+    page_number: 1,
+    document_title: "faint_fax_2page.pdf",
+  },
+];
+
+// 3. Clean Fax (clean_fax.pdf - 1 page)
+// Every field cites clean_fax.pdf page 1.
+export const CLEAN_FAX_EXTRACTION_FIELDS: ExtractedField[] = [
+  // provisional demo value: referral patient name
+  {
+    name: "Patient Name",
+    value: "Samira Khan",
+    state: "FILLED_HIGH",
+    confidence: 0.99,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_clean_fax / clean_fax.pdf, p. 1)
+  // Fact: "Physical therapy rehabilitation referral (Dr. Marcus Vance)."
+  {
+    name: "Referring Physician",
+    value: "Dr. Marcus Vance",
+    state: "FILLED_HIGH",
+    confidence: 0.99,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_clean_fax / clean_fax.pdf, p. 1)
+  {
+    name: "Requested Service",
+    value: "Physical Therapy Rehabilitation",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // provisional demo value: ICD-10 diagnosis code
+  {
+    name: "Diagnosis Code (ICD-10)",
+    value: "M54.50 (Low Back Pain)",
+    state: "FILLED_HIGH",
+    confidence: 0.96,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // provisional demo value: dual reading disagreement on referral treatment frequency
+  {
+    name: "Session Frequency",
+    value: null,
+    read1_value: "2x/wk for 6 wks",
+    read2_value: "3x/wk for 6 wks",
+    state: "CONFLICTING",
+    confidence: 0.72,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // provisional demo value: referral authorization number
+  {
+    name: "Referral Authorization",
+    value: "AUTH-8921",
+    state: "FILLED_HIGH",
+    confidence: 0.95,
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+  // provisional demo value: supplemental insurance group
+  {
+    name: "Secondary Insurance Group",
+    value: null,
+    state: "NOT_PRESENT",
+    page_number: 1,
+    document_title: "clean_fax.pdf",
+  },
+];
+
+// 4. Patient Intake Form (patient_intake_form.pdf - 1 page)
+// Every field cites patient_intake_form.pdf page 1.
+export const INTAKE_FORM_EXTRACTION_FIELDS: ExtractedField[] = [
+  // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / tenant_a/patient_intake_form.pdf, p. 1)
+  // Fact: "Patient Alex Morgan primary insurer is Apex Health Insurance."
+  {
+    name: "Patient Name",
+    value: "Alex Morgan",
+    state: "FILLED_HIGH",
+    confidence: 0.99,
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
+  },
+  // provisional demo value: demographic birthdate
+  {
+    name: "Date of Birth",
+    value: "1985-04-12",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / tenant_a/patient_intake_form.pdf, p. 1)
+  // Fact: "Patient Alex Morgan primary insurer is Apex Health Insurance."
+  {
+    name: "Primary Insurer",
+    value: "Apex Health Insurance",
+    state: "FILLED_HIGH",
+    confidence: 0.98,
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
+  },
+  // Source: evals/golden/manifest.json (doc_cross_tenant_patient_a / tenant_a/patient_intake_form.pdf, p. 1)
+  // Fact: "Emergency contact for Alex Morgan is phone 555-0131."
+  {
+    name: "Emergency Contact Phone",
+    value: "555-0131",
+    state: "FILLED_HIGH",
+    confidence: 0.97,
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
+  },
+  // provisional demo value: dual reading disagreement on subscriber identifier
+  {
+    name: "Subscriber ID",
+    value: null,
+    read1_value: "APX-994102",
+    read2_value: "APX-994108",
+    state: "CONFLICTING",
+    confidence: 0.76,
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
+  },
+  // provisional demo value: secondary guarantor address not present
+  {
+    name: "Guarantor Address",
+    value: null,
+    state: "NOT_PRESENT",
+    page_number: 1,
+    document_title: "patient_intake_form.pdf",
   },
 ];
 
@@ -592,7 +786,8 @@ export function getDemoStatusLines(
 export function getDemoAssistantAnswer(
   assistantId: string,
   query: string,
-  conversationId?: string | null
+  conversationId?: string | null,
+  attachedDocTitle?: string | null
 ): QuestionResponse {
   const convId = conversationId || `conv-demo-${Date.now()}`;
   const normalizedQuery = query.toLowerCase();
@@ -602,27 +797,32 @@ export function getDemoAssistantAnswer(
     normalizedQuery.includes("extract") ||
     normalizedQuery.includes("all fields") ||
     normalizedQuery.includes("patient fax") ||
-    normalizedQuery.includes("field table")
+    normalizedQuery.includes("field table") ||
+    attachedDocTitle
   ) {
-    return {
-      request_id: `req-demo-${Date.now()}`,
-      tenant_id: "ten-demo",
-      conversation_id: convId,
-      message_id: `msg-demo-${Date.now()}`,
-      status: "answered",
-      answer:
-        "Extracted 11 fields from uploaded patient fax (skewed_fax.pdf). All fields adjudicated with explicit validation states: 5 fields filled with high confidence, 1 field filled with medium confidence, 1 conflicting reading showing both readings side by side, 1 unreadable note blank and flagged per Invariant 6, and 1 invalid NPI check digit flagged.",
-      citations: ["chunk-skewed-fax-p1", "chunk-faint-fax-p2"],
-      evidence_type: "extraction",
-      status_lines: [
-        "Searching Pinecrest Medical Group documents...",
-        "Page 1 is a scanned image, reading it now...",
-        "Executing dual OCR and vision extraction subgraph...",
-        "Reconciling readings and running check-digit validators...",
-      ],
-      sources: [
+    let activeDoc = attachedDocTitle || "skewed_fax.pdf";
+    if (normalizedQuery.includes("faint")) activeDoc = "faint_fax_2page.pdf";
+    else if (normalizedQuery.includes("clean")) activeDoc = "clean_fax.pdf";
+    else if (normalizedQuery.includes("intake")) activeDoc = "patient_intake_form.pdf";
+    else if (normalizedQuery.includes("skewed")) activeDoc = "skewed_fax.pdf";
+
+    let fields = SKEWED_FAX_EXTRACTION_FIELDS;
+    let pageNum = 1;
+    let sources: SourceCitation[] = [
+      {
+        document_title: "skewed_fax.pdf",
+        version: "session",
+        page_number: 1,
+        evidence_type: "visual",
+      },
+    ];
+
+    if (activeDoc === "faint_fax_2page.pdf") {
+      fields = FAINT_FAX_EXTRACTION_FIELDS;
+      pageNum = 1;
+      sources = [
         {
-          document_title: "skewed_fax.pdf",
+          document_title: "faint_fax_2page.pdf",
           version: "session",
           page_number: 1,
           evidence_type: "visual",
@@ -633,9 +833,49 @@ export function getDemoAssistantAnswer(
           page_number: 2,
           evidence_type: "visual",
         },
+      ];
+    } else if (activeDoc === "clean_fax.pdf") {
+      fields = CLEAN_FAX_EXTRACTION_FIELDS;
+      pageNum = 1;
+      sources = [
+        {
+          document_title: "clean_fax.pdf",
+          version: "session",
+          page_number: 1,
+          evidence_type: "visual",
+        },
+      ];
+    } else if (activeDoc === "patient_intake_form.pdf") {
+      fields = INTAKE_FORM_EXTRACTION_FIELDS;
+      pageNum = 1;
+      sources = [
+        {
+          document_title: "patient_intake_form.pdf",
+          version: "session",
+          page_number: 1,
+          evidence_type: "visual",
+        },
+      ];
+    }
+
+    return {
+      request_id: `req-demo-${Date.now()}`,
+      tenant_id: "ten-demo",
+      conversation_id: convId,
+      message_id: `msg-demo-${Date.now()}`,
+      status: "answered",
+      answer: `Extracted ${fields.length} fields from uploaded session document (${activeDoc}). All fields adjudicated with explicit validation states: high confidence, medium confidence, conflicting OCR/vision readings, unreadable markers flagged blank per Invariant 6, and validator check digits.`,
+      citations: sources.map((s, idx) => `chunk-${activeDoc.replace(/[^a-z0-9]/gi, "-")}-p${s.page_number || idx + 1}`),
+      evidence_type: "extraction",
+      status_lines: [
+        "Searching Pinecrest Medical Group documents...",
+        `Page ${pageNum} is a scanned image, reading it now...`,
+        "Executing dual OCR and vision extraction subgraph...",
+        "Reconciling readings and running check-digit validators...",
       ],
+      sources,
       conflict_sources: [],
-      extracted_fields: DEMO_EXTRACTION_FIELDS,
+      extracted_fields: fields,
     };
   }
 

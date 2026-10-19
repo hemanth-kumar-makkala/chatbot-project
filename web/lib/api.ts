@@ -150,6 +150,8 @@ export function extractErrorCode(status: number, data: unknown): string {
       return "FILE_TOO_LARGE";
     case 422:
       return "VALIDATION_ERROR";
+    case 429:
+      return "RATE_LIMIT_EXCEEDED";
     case 500:
       return "INTERNAL_SERVER_ERROR";
     default:

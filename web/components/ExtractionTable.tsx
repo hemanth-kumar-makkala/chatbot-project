@@ -234,11 +234,11 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                         }}
                       >
                         <span>
-                          Read 1: <strong>{field.read1_value || "—"}</strong>
+                          Read 1 (OCR): <strong>{field.read1_value || "—"}</strong>
                         </span>
                         <span>|</span>
                         <span>
-                          Read 2: <strong>{field.read2_value || "—"}</strong>
+                          Read 2 (vision): <strong>{field.read2_value || "—"}</strong>
                         </span>
                       </div>
                     ) : stateKey === "INVALID" ? (

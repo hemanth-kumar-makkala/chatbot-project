@@ -61,6 +61,59 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [liveAttachWarningOpen, setLiveAttachWarningOpen] = useState(false);
   const [arbitraryFileError, setArbitraryFileError] = useState<string | null>(null);
 
+  // UI-5 Feedback state (Task 5.5)
+  const [feedbackMap, setFeedbackMap] = useState<
+    Record<
+      string,
+      {
+        rating: "up" | "down";
+        reasonChoice?: string;
+        comments?: string;
+        saved?: boolean;
+      }
+    >
+  >({});
+  const [activeReasonMsgId, setActiveReasonMsgId] = useState<string | null>(null);
+  const [selectedReasonChoice, setSelectedReasonChoice] = useState<string>("Inaccurate facts");
+  const [reasonComments, setReasonComments] = useState<string>("");
+  const [liveFeedbackWarningId, setLiveFeedbackWarningId] = useState<string | null>(null);
+
+  function handleFeedbackClick(msgId: string, rating: "up" | "down") {
+    if (isLiveAssistant) {
+      setLiveFeedbackWarningId(msgId);
+      return;
+    }
+
+    if (rating === "up") {
+      setFeedbackMap((prev) => ({
+        ...prev,
+        [msgId]: { rating: "up", saved: true },
+      }));
+      if (activeReasonMsgId === msgId) {
+        setActiveReasonMsgId(null);
+      }
+    } else {
+      // thumbs down opens reason choices + optional free text
+      setActiveReasonMsgId(msgId);
+      setSelectedReasonChoice("Inaccurate facts");
+      setReasonComments("");
+    }
+  }
+
+  function handleSubmitReason(msgId: string) {
+    setFeedbackMap((prev) => ({
+      ...prev,
+      [msgId]: {
+        rating: "down",
+        reasonChoice: selectedReasonChoice,
+        comments: reasonComments,
+        saved: true,
+      },
+    }));
+    setActiveReasonMsgId(null);
+    setReasonComments("");
+  }
+
   function handleOpenSource(docTitle: string, pageNumber: number = 1) {
     setActiveSourceDoc(docTitle);
     setActiveSourcePage(pageNumber);
@@ -162,6 +215,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       setDemoStatusLines([]);
     }
 
+    const currentAttachedDocName = attachedDoc?.filename;
     if (attachedDoc) {
       setAttachedDoc(null);
     }
@@ -169,7 +223,12 @@ export default function ChatPage({ params }: ChatPageProps) {
     try {
       if (!isLiveAssistant || askDataSource === "demo") {
         // Demo assistant: strictly uses demo fixtures, never calls live backend
-        const demoRes = getDemoAssistantAnswer(assistantId, trimmed, conversationId);
+        const demoRes = getDemoAssistantAnswer(
+          assistantId,
+          trimmed,
+          conversationId,
+          currentAttachedDocName
+        );
         if (demoRes.conversation_id) {
           setConversationId(demoRes.conversation_id);
         }
@@ -194,11 +253,17 @@ export default function ChatPage({ params }: ChatPageProps) {
           };
           setMessages((prev) => [...prev, asstMsg]);
         } else {
+          // Task 5.1: Friendly wait message on HTTP 429 without leaking raw server text
+          let errorMsgText = `Unable to complete question (${res.code}). Please try again.`;
+          if (res.code === "RATE_LIMIT_EXCEEDED" || res.status === 429) {
+            errorMsgText =
+              "You've reached the query rate limit. Please wait a moment and try again.";
+          }
           const errorMsg: ChatMessage = {
             id: `err-${Date.now()}`,
             role: "assistant",
             content: "",
-            errorMessage: `Unable to complete question (${res.code}). Please try again.`,
+            errorMessage: errorMsgText,
           };
           setMessages((prev) => [...prev, errorMsg]);
         }
@@ -223,8 +288,10 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   function renderAssistantContent(msg: ChatMessage) {
     if (msg.errorMessage) {
+      const isRateLimit = msg.errorMessage.includes("rate limit");
       return (
         <div
+          data-testid={isRateLimit ? "rate-limit-error-message" : "chat-error-message"}
           style={{
             backgroundColor: "var(--color-status-error-bg)",
             color: "var(--color-status-error-text)",
@@ -1103,7 +1170,228 @@ export default function ChatPage({ params }: ChatPageProps) {
                       fontSize: "var(--font-size-sm)",
                     }}
                   >
-                    {isUser ? msg.content : renderAssistantContent(msg)}
+                    {isUser ? (
+                      msg.content
+                    ) : (
+                      <>
+                        {renderAssistantContent(msg)}
+
+                        {/* Task 5.5: Feedback Controls (Thumbs up / Thumbs down) on Assistant Answer */}
+                        {!msg.errorMessage && (
+                          <div
+                            data-testid="message-feedback-row"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "var(--spacing-2)",
+                              marginTop: "var(--spacing-3)",
+                              paddingTop: "var(--spacing-2)",
+                              borderTop: "1px solid var(--color-border-subtle)",
+                            }}
+                          >
+                            <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>
+                              Was this answer helpful?
+                            </span>
+                            <button
+                              type="button"
+                              data-testid="feedback-thumbs-up"
+                              aria-label="Thumbs up - answer was helpful"
+                              onClick={() => handleFeedbackClick(msg.id, "up")}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "14px",
+                                padding: "2px 6px",
+                                borderRadius: "var(--radius-sm)",
+                                backgroundColor:
+                                  feedbackMap[msg.id]?.rating === "up"
+                                    ? "var(--color-status-success-bg)"
+                                    : "transparent",
+                              }}
+                            >
+                              👍
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="feedback-thumbs-down"
+                              aria-label="Thumbs down - answer was not helpful"
+                              onClick={() => handleFeedbackClick(msg.id, "down")}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "14px",
+                                padding: "2px 6px",
+                                borderRadius: "var(--radius-sm)",
+                                backgroundColor:
+                                  feedbackMap[msg.id]?.rating === "down"
+                                    ? "var(--color-status-error-bg)"
+                                    : "transparent",
+                              }}
+                            >
+                              👎
+                            </button>
+
+                            {/* Live assistant message: feedback route not built yet */}
+                            {isLiveAssistant && liveFeedbackWarningId === msg.id && (
+                              <div
+                                data-testid="feedback-live-message"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  fontSize: "11px",
+                                  color: "var(--color-navy)",
+                                  backgroundColor: "var(--color-bg-subtle)",
+                                  border: "1px solid var(--color-border)",
+                                  padding: "2px 8px",
+                                  borderRadius: "var(--radius-sm)",
+                                  marginLeft: "var(--spacing-2)",
+                                }}
+                              >
+                                <DataSourceChip mode="demo" />
+                                <span>
+                                  Feedback needs the feedback route (Phase 5 Task 5.5, not built yet)
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Demo assistant: saved in memory note */}
+                            {!isLiveAssistant && feedbackMap[msg.id]?.saved && (
+                              <div
+                                data-testid="feedback-demo-saved-note"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  fontSize: "11px",
+                                  color: "var(--color-navy)",
+                                  backgroundColor: "var(--color-lavender)",
+                                  border: "1px solid var(--color-border)",
+                                  padding: "2px 8px",
+                                  borderRadius: "var(--radius-sm)",
+                                  marginLeft: "var(--spacing-2)",
+                                }}
+                              >
+                                <DataSourceChip mode="demo" />
+                                <span>Saved for this demo session</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Thumbs down reason popover (demo assistants) */}
+                        {!isLiveAssistant && activeReasonMsgId === msg.id && (
+                          <div
+                            data-testid="feedback-reason-popover"
+                            style={{
+                              marginTop: "var(--spacing-2)",
+                              padding: "var(--spacing-3)",
+                              backgroundColor: "var(--color-bg-subtle)",
+                              border: "1px solid var(--color-border)",
+                              borderRadius: "var(--radius-md)",
+                              fontSize: "var(--font-size-xs)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontWeight: 600,
+                                color: "var(--color-navy)",
+                                marginBottom: "var(--spacing-2)",
+                              }}
+                            >
+                              Help us improve (Optional reason):
+                            </div>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "6px",
+                                marginBottom: "var(--spacing-2)",
+                              }}
+                            >
+                              {["Inaccurate facts", "Too long", "Wrong source"].map((choice) => (
+                                <label
+                                  key={choice}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    cursor: "pointer",
+                                    color: "var(--color-text-main)",
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`feedback-reason-${msg.id}`}
+                                    value={choice}
+                                    checked={selectedReasonChoice === choice}
+                                    onChange={() => setSelectedReasonChoice(choice)}
+                                  />
+                                  <span>{choice}</span>
+                                </label>
+                              ))}
+                            </div>
+                            <div style={{ marginBottom: "var(--spacing-2)" }}>
+                              <textarea
+                                data-testid="feedback-comments-input"
+                                value={reasonComments}
+                                onChange={(e) => setReasonComments(e.target.value)}
+                                placeholder="Additional comments (optional)..."
+                                rows={2}
+                                style={{
+                                  width: "100%",
+                                  padding: "6px 8px",
+                                  borderRadius: "var(--radius-sm)",
+                                  border: "1px solid var(--color-border)",
+                                  fontSize: "11px",
+                                  fontFamily: "inherit",
+                                  resize: "vertical",
+                                }}
+                              />
+                            </div>
+                            <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+                              <button
+                                type="button"
+                                data-testid="feedback-submit-reason"
+                                onClick={() => handleSubmitReason(msg.id)}
+                                style={{
+                                  padding: "4px 10px",
+                                  backgroundColor: "var(--color-primary-blue)",
+                                  color: "var(--color-white)",
+                                  border: "none",
+                                  borderRadius: "var(--radius-sm)",
+                                  fontWeight: 600,
+                                  fontSize: "11px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Submit Feedback
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveReasonMsgId(null);
+                                  setReasonComments("");
+                                }}
+                                style={{
+                                  padding: "4px 8px",
+                                  backgroundColor: "transparent",
+                                  color: "var(--color-text-muted)",
+                                  border: "1px solid var(--color-border)",
+                                  borderRadius: "var(--radius-sm)",
+                                  fontSize: "11px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -1247,7 +1535,8 @@ export default function ChatPage({ params }: ChatPageProps) {
                     marginBottom: "var(--spacing-2)",
                   }}
                 >
-                  Document stays in this conversation only and is never added to the knowledge base (Invariant 7).
+                  {/* Invariant 7: Document stays in this conversation only */}
+                  Document stays in this conversation only and is never added to the knowledge base.
                 </p>
 
                 {/* Golden Fax Options List */}
@@ -1375,7 +1664,8 @@ export default function ChatPage({ params }: ChatPageProps) {
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                   <span style={{ fontSize: "14px" }}>🔒</span>
                   <span>
-                    Session document: <strong>{attachedDoc.filename}</strong> — stays in this conversation only and is never added to the knowledge base (Invariant 7)
+                    {/* Invariant 7: Document stays in this conversation only */}
+                    Session document: <strong>{attachedDoc.filename}</strong> — stays in this conversation only and is never added to the knowledge base
                   </span>
                 </div>
                 <button
