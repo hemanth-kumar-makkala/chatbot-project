@@ -6,7 +6,13 @@
 - **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
 
 ## Current Task
-- **Task UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios (UI-First)** — **COMPLETED & VERIFIED**
+- **Laptop Setup Verification & Hook Portability** — **COMPLETED & VERIFIED**
+  - **Environment Verification**: Full backend test suite on mock profile verified (576 passed, 1 skipped, 0 failed). Web unit tests verified (69 passed across 7 test files). PyTorch CUDA acceleration verified (`torch==2.14.1+cu126`, CUDA enabled on RTX 3060 Laptop GPU).
+  - **Hook Portability**: Local pre-commit hooks `mypy` and `boundary-invariants` in `.pre-commit-config.yaml` updated to invoke via `python -m`, resolving Windows Application Control blocking `.venv\Scripts\*.exe` (`os error 4551`). All 10 pre-commit hooks passing cleanly.
+  - **Path Normalization**: `docs/ui/BUILD_NOTES.md` local run commands updated to repo-root relative paths (`cd backend`, `cd web`).
+  - **Next Task**: `UI-3` (Embedded PDF.js viewer side panel and staff document byte streaming route per UI inventory)
+
+- **Task UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios (UI-First)** — **COMPLETED & VERIFIED** (Preceding task)
   - **Part A (Authoritative Spec Quote & Section Alignment)**: Fixed all non-spec section names across `UI_INVENTORY.md` and `CONNECTION_MAP.md` strictly to the 21 authoritative spec sections. Corrected verbatim quotes for Client Admin flow step 4, Query flow Node 2, Invariant 5, and Staff day step 4. Audited every remaining double-quoted string: 32/32 quotes verified verbatim in `CONNECTION_MAP.md`; 110/110 quotes verified verbatim in `UI_INVENTORY.md`.
   - **Answer Presentation Types**:
     - Standard text answer with interactive source chips (`document_title`, `version`, `page_number`) and source language label (`Source (Spanish)` / `[Spanish]`, spec section "Query flow" ("Language")).

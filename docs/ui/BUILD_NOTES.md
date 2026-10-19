@@ -78,7 +78,7 @@ All packages are pinned to exact versions (no `^` or `~`) published at least 14 
 ### 1. Seed Development Data
 Provision synthetic tenants, users, and assistants:
 ```powershell
-cd D:\chatbots-project\backend
+cd backend
 uv run python scripts/seed_dev_data.py
 ```
 - Seeded Client Admin: `admin@clinic-a.local` / `DevPassword123!`
@@ -87,7 +87,7 @@ uv run python scripts/seed_dev_data.py
 ### 2. Start Backend API
 Run FastAPI application via the `app.api.app:create_app` factory with `APP_PROFILE=mock` and `COOKIE_SECURE=false` (for local HTTP):
 ```powershell
-cd D:\chatbots-project\backend
+cd backend
 $env:APP_PROFILE="mock"
 $env:COOKIE_SECURE="false"
 uv run python -c "import uvicorn; from app.api.app import create_app; from app.api.config import ApiSettings; uvicorn.run(create_app(ApiSettings(profile='mock', storage_dir='./data/files', cookie_secure=False)), host='127.0.0.1', port=8000)"
@@ -96,7 +96,7 @@ uv run python -c "import uvicorn; from app.api.app import create_app; from app.a
 ### 3. Start Ingestion Worker
 Run Procrastinate background worker for document splitting, page processing, and periodic sweeps:
 ```powershell
-cd D:\chatbots-project\backend
+cd backend
 $env:APP_PROFILE="mock"
 uv run procrastinate --app=app.worker.app worker --queue=ingestion --queue=builtin
 ```
@@ -104,7 +104,7 @@ uv run procrastinate --app=app.worker.app worker --queue=ingestion --queue=built
 ### 4. Start Frontend Web App
 Start Next.js dev server forwarding `/v1/*` to the backend:
 ```powershell
-cd D:\chatbots-project\web
+cd web
 $env:API_ORIGIN="http://localhost:8000"
 npm run dev
 ```
@@ -114,7 +114,7 @@ Navigate to:
 
 ### 5. Run Web Tests and Validation
 ```powershell
-cd D:\chatbots-project\web
+cd web
 npm run typecheck
 npm test
 $env:API_ORIGIN="http://localhost:8000"; npm run build

@@ -31,13 +31,13 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: uv --directory backend run mypy app tests
+        entry: uv --directory backend run python -m mypy app tests
         language: system
         pass_filenames: false
         always_run: true
       - id: boundary-invariants
         name: boundary-invariants
-        entry: uv --directory backend run pytest tests/invariants
+        entry: uv --directory backend run python -m pytest tests/invariants
         language: system
         pass_filenames: false
         always_run: true

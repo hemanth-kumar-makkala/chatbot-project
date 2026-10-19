@@ -1695,3 +1695,20 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - **TDD Passing Run**: Post-implementation run on `ui2.test.tsx` passed all 12 tests in 314ms (logged in `D:\dev\tmp\agent-logs\main-passing-ui2.txt`).
   - **Full Web Suite Run**: All 7 test files (69 tests) pass (`D:\dev\tmp\agent-logs\main-all-web-tests-4.txt`).
   - **Typecheck**: `npm --prefix web run typecheck` passed with 0 errors.
+
+## 2026-10-19: Laptop Environment Verification & Hook Portability
+
+- **Context & Verification**:
+  - Environment verification on development laptop with NVIDIA RTX 3060 Laptop GPU (6 GB VRAM).
+  - Backend full test suite executed on mock profile (`APP_PROFILE=mock`): 576 passed, 1 skipped (`test_docling_parser.py:77`), 0 failed (logged in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\verify-1.txt`).
+  - PyTorch CUDA environment verified: `torch==2.14.1+cu126`, `torch.cuda.is_available()=True`, device `NVIDIA GeForce RTX 3060 Laptop GPU`.
+  - Web unit tests executed (`NEXT_PUBLIC_DATA_SOURCE=live`): 69 passed across 7 test files (`smoke.test.ts`, `foundations.test.ts`, `review_drawer.test.tsx`, `ui1.test.tsx`, `knowledge_page.test.tsx`, `chat.test.tsx`, `ui2.test.tsx`).
+- **Changes & Fixes**:
+  - **Hook Portability (`.pre-commit-config.yaml`)**:
+    - Changed `mypy` and `boundary-invariants` local hooks from direct binary wrappers (`uv --directory backend run mypy app tests` and `uv --directory backend run pytest tests/invariants`) to explicit Python module invocations (`uv --directory backend run python -m mypy app tests` and `uv --directory backend run python -m pytest tests/invariants`).
+    - Resolves Windows Application Control blocking `.venv\Scripts\*.exe` with OS error 4551.
+  - **Path Normalization (`docs/ui/BUILD_NOTES.md`)**:
+    - Updated run and validation commands from machine-specific `D:\chatbots-project` paths to repo-root relative paths (`cd backend`, `cd web`).
+- **Verification**:
+  - Ran `uv run --project backend pre-commit run --all-files` (logged in `%USERPROFILE%\Downloads\Projects\chatbots\tmp\agent-logs\precommit-all-passing.txt`).
+  - All 10 pre-commit hooks passed: `trailing-whitespace`, `end-of-file-fixer`, `check-added-large-files`, `detect-private-key`, `mixed-line-ending`, `detect-secrets`, `ruff`, `ruff-format`, `mypy`, `boundary-invariants`.
