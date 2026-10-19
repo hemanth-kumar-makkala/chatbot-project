@@ -1784,11 +1784,18 @@ Append-only record of all completed tasks, architectural choices, and test recor
     - Sequential status lines display with short delay on demo assistants; live assistant keeps only the loading indicator until SSE (Task 3.6).
   - **Part D: Client Switcher (`web/components/TopBar.tsx`)**:
     - Added `<select data-testid="client-switcher">` populated by `DEMO_ASSISTANTS` fixtures, navigating to `/assistants/[id]/chat`. Conditionally rendered only when `assistantId` is present to maintain picker screen clean layout.
-  - **Part E: Source Panel Component & STOP Rule (`web/components/SourcePanel.tsx`)**:
-    - Created `SourcePanel` supporting Prev/Next page navigation `#page=N`, zoom/preview controls, and golden PDF preview. Live assistant displays Demo chip and `"Source preview needs the document file route (not built yet)"`.
-    - STOP Rule: Identified latest npm registry version of `pdfjs-dist` published $\ge 14$ days ago (`pdfjs-dist@6.4.299`, published `2026-10-03T16:47:40.337Z`). Provided exact command for user confirmation.
+  - **Part E: Source Panel with pdf.js Rendering (`web/components/SourcePanel.tsx`)**:
+    - Installed pinned dependency `pdfjs-dist@6.4.299` (published 2026-10-03T16:47:40.337Z).
+    - Replaced placeholder image with pdf.js `<canvas data-testid="pdf-canvas">` rendering.
+    - Implemented `Page N of M` dynamic indicator, Prev/Next buttons with page boundaries, and zoom controls (`+`, `−`, percentage indicator).
+    - Configured worker loading strictly from the installed package (`pdfjs-dist/build/pdf.worker.mjs` / `pdf.worker.min.mjs` via `GlobalWorkerOptions.workerPort` / `workerSrc`), with zero CDN usage.
+    - Demo assistants load golden PDF `/demo/docs/<doc>.pdf`; live assistant preserves Demo chip and route disclaimer `"Source preview needs the document file route (not built yet)"`.
+  - **Part A.1b: INJ-001 Suggested Chip Golden Text**:
+    - Verified suggested question chip displays exact golden question text `"What is the reference identifier on our information security compliance notice?"` from `evals/golden/questions.json`, rather than an injection-style prompt.
 - **Tests Added & Verified**:
-  - `web/__tests__/ui3.test.tsx` (9 tests) covering all UI-3 specifications.
-  - All 8 web test suites (78 tests) passing; `npm run typecheck` passing.
+  - `web/__tests__/ui3.test.tsx` (10 tests) with mocked `pdfjs-dist` rendering and page navigation.
+  - TDD failing run: `AssertionError: expected "vi.fn()" to be called with arguments: [ '/demo/docs/prior_auth_guide.pdf' ]`.
+  - Passing run: all 10 tests in `ui3.test.tsx` passing.
+  - All 8 web test suites (79 tests) passing; `npm run typecheck` passing with 0 errors.
 - **Documentation Updated**:
   - `docs/OPEN_QUESTIONS.md`, `docs/STATUS.md`, `docs/qa/UI_TEST_CHECKLIST.csv`, `docs/ui/CONNECTION_MAP.md`, `docs/BUILD_LOG.md`.

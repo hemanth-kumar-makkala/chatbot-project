@@ -28,6 +28,31 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// Mock pdfjs-dist
+const mockRenderTask = {
+  promise: Promise.resolve(),
+  cancel: vi.fn(),
+};
+const mockPage = {
+  getViewport: vi.fn().mockReturnValue({ width: 600, height: 800 }),
+  render: vi.fn().mockReturnValue(mockRenderTask),
+};
+const mockPdfDoc = {
+  numPages: 4,
+  getPage: vi.fn().mockResolvedValue(mockPage),
+};
+const mockGetDocument = vi.fn().mockImplementation((src: string) => ({
+  promise: Promise.resolve(mockPdfDoc),
+}));
+
+vi.mock("pdfjs-dist", () => ({
+  getDocument: (src: string) => mockGetDocument(src),
+  GlobalWorkerOptions: {
+    workerSrc: "",
+    workerPort: null,
+  },
+}));
+
 describe("UI-3: Phase 3 Chat Fixes, Thumbnails, Status Lines, Switcher & Source Panel", () => {
   const liveAssistantId = DEV_DEFAULT_ASSISTANT_ID;
   const demoAssistantId = "00000000-0000-0000-0002-000000000002"; // Pinecrest Medical Group
@@ -88,6 +113,15 @@ describe("UI-3: Phase 3 Chat Fixes, Thumbnails, Status Lines, Switcher & Source 
       expect(screen.getByText(/SEC-2026-09/i)).toBeInTheDocument();
       expect(screen.getByText(/compliance_notice\.pdf/i)).toBeInTheDocument();
     });
+  });
+
+  it("PART A.1b: INJ-001 suggested chip uses golden question text, not an injection-style prompt", () => {
+    const injChip = DEMO_SUGGESTED_QUESTIONS.find((q) => q.id === "INJ-001");
+    expect(injChip).toBeDefined();
+    expect(injChip?.question).toBe(
+      "What is the reference identifier on our information security compliance notice?"
+    );
+    expect(injChip?.question.toLowerCase()).not.toContain("ignore");
   });
 
   it("PART A.2: visual status line renders cited page N, never hard-coded 31", () => {
@@ -281,7 +315,7 @@ describe("UI-3: Phase 3 Chat Fixes, Thumbnails, Status Lines, Switcher & Source 
     });
   });
 
-  it("PART E: source panel page navigation changes active page", async () => {
+  it("PART E: source panel renders PDF with pdf.js, shows Page N of M, zoom, and navigation", async () => {
     await renderChatPage(demoAssistantId);
 
     // Ask outpatient surgery question (cites Prior Auth Guide, page 2)
@@ -299,20 +333,39 @@ describe("UI-3: Phase 3 Chat Fixes, Thumbnails, Status Lines, Switcher & Source 
     await waitFor(() => {
       const panel = screen.getByTestId("source-panel");
       expect(panel).toBeInTheDocument();
-      expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 2/i);
+      expect(mockGetDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ url: "/demo/docs/prior_auth_guide.pdf" })
+      );
+      expect(screen.getByTestId("pdf-canvas")).toBeInTheDocument();
+      expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 2 of 4/i);
     });
+
+    // Zoom controls
+    const zoomIn = screen.getByTestId("source-panel-zoom-in");
+    const zoomOut = screen.getByTestId("source-panel-zoom-out");
+    expect(screen.getByTestId("source-panel-zoom-level")).toHaveTextContent("100%");
+    fireEvent.click(zoomIn);
+    expect(screen.getByTestId("source-panel-zoom-level")).toHaveTextContent("125%");
+    fireEvent.click(zoomOut);
+    expect(screen.getByTestId("source-panel-zoom-level")).toHaveTextContent("100%");
 
     // Click previous page button
     const prevButton = screen.getByRole("button", { name: /Previous Page/i });
     fireEvent.click(prevButton);
 
-    expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 1/i);
+    await waitFor(() => {
+      expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 1 of 4/i);
+      expect(mockPdfDoc.getPage).toHaveBeenCalledWith(1);
+    });
 
     // Click next page button
     const nextButton = screen.getByRole("button", { name: /Next Page/i });
     fireEvent.click(nextButton);
 
-    expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 2/i);
+    await waitFor(() => {
+      expect(screen.getByTestId("source-panel-page-indicator")).toHaveTextContent(/Page 2 of 4/i);
+      expect(mockPdfDoc.getPage).toHaveBeenCalledWith(2);
+    });
 
     // Close button closes panel
     const closeButton = screen.getByRole("button", { name: /Close Source Panel/i });

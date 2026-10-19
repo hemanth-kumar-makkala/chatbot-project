@@ -1,7 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 import { DataSourceChip } from "@/components/DataSourceChip";
+
+// Set worker from installed package (no CDN)
+if (typeof window !== "undefined" && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(
+      new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url),
+      { type: "module" }
+    );
+  } catch {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url
+    ).toString();
+  }
+}
 
 interface SourcePanelProps {
   isOpen: boolean;
@@ -23,6 +39,8 @@ function getDocStem(docTitle: string): string {
   if (clean.includes("policy") && (clean.includes("v2") || clean.includes("2"))) return "front_desk_policy_v2";
   if (clean.includes("policy") || clean.includes("v1")) return "front_desk_policy_v1";
   if (clean.includes("intake")) return "patient_intake_form";
+  if (clean.includes("fee")) return "fee_schedule";
+  if (clean.includes("contact") || clean.includes("payer")) return "payer_contact_table";
   return clean.replace(/[^a-z0-9_-]/g, "_");
 }
 
@@ -34,15 +52,117 @@ export function SourcePanel({
   isLiveAssistant = false,
 }: SourcePanelProps) {
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [scale, setScale] = useState<number>(1.0);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderTaskRef = useRef<any>(null);
+  const pdfDocRef = useRef<any>(null);
 
   useEffect(() => {
     setCurrentPage(initialPage || 1);
   }, [documentTitle, initialPage]);
 
-  if (!isOpen) return null;
+  // Load PDF Document when panel opens or documentTitle changes
+  useEffect(() => {
+    if (!isOpen || isLiveAssistant) return;
 
-  const stem = getDocStem(documentTitle);
-  const pdfFileName = documentTitle.split("/").pop() || `${stem}.pdf`;
+    let isMounted = true;
+    const stem = getDocStem(documentTitle);
+    const pdfUrl = `/demo/docs/${stem}.pdf`;
+
+    async function loadPdf() {
+      setLoading(true);
+      setError(null);
+      try {
+        const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
+        const doc = await loadingTask.promise;
+        if (!isMounted) return;
+        pdfDocRef.current = doc;
+        setTotalPages(doc.numPages || 1);
+      } catch (err: any) {
+        if (!isMounted) return;
+        setError(err?.message || "Failed to load document");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    loadPdf();
+
+    return () => {
+      isMounted = false;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [isOpen, documentTitle, isLiveAssistant]);
+
+  // Render current page when page, scale, or doc changes
+  useEffect(() => {
+    if (!isOpen || isLiveAssistant || !pdfDocRef.current) return;
+
+    let isMounted = true;
+
+    async function renderPage() {
+      try {
+        const doc = pdfDocRef.current;
+        const pageNum = Math.min(Math.max(1, currentPage), doc.numPages || 1);
+        const page = await doc.getPage(pageNum);
+        if (!isMounted) return;
+
+        const viewport = page.getViewport({ scale });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch {
+            // ignore
+          }
+        }
+
+        const task = page.render({
+          canvasContext: ctx,
+          viewport: viewport,
+        });
+        renderTaskRef.current = task;
+        await task.promise;
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException" && isMounted) {
+          // handle error gracefully
+        }
+      }
+    }
+
+    renderPage();
+
+    return () => {
+      isMounted = false;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [isOpen, currentPage, scale, isLiveAssistant, totalPages]);
+
+  if (!isOpen) return null;
 
   return (
     <aside
@@ -53,8 +173,8 @@ export function SourcePanel({
         top: 0,
         right: 0,
         bottom: 0,
-        width: "500px",
-        maxWidth: "92vw",
+        width: "560px",
+        maxWidth: "94vw",
         backgroundColor: "var(--color-white)",
         boxShadow: "var(--shadow-xl)",
         borderLeft: "1px solid var(--color-border)",
@@ -76,7 +196,7 @@ export function SourcePanel({
       >
         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: "var(--spacing-2)" }}>
           <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Source Document Preview
+            Source Document Preview (pdf.js)
           </div>
           <h3
             data-testid="source-panel-doc-title"
@@ -116,7 +236,7 @@ export function SourcePanel({
         </button>
       </div>
 
-      {/* Page Navigation Controls */}
+      {/* Page Navigation & Zoom Toolbar */}
       {!isLiveAssistant && (
         <div
           style={{
@@ -126,57 +246,118 @@ export function SourcePanel({
             justifyContent: "space-between",
             borderBottom: "1px solid var(--color-border-subtle)",
             backgroundColor: "var(--color-white)",
+            flexWrap: "wrap",
+            gap: "var(--spacing-2)",
           }}
         >
-          <button
-            type="button"
-            data-testid="source-panel-prev-page"
-            aria-label="Previous Page"
-            disabled={currentPage <= 1}
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            style={{
-              padding: "4px 12px",
-              fontSize: "var(--font-size-xs)",
-              fontWeight: 500,
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--color-border)",
-              backgroundColor: currentPage <= 1 ? "var(--color-bg-subtle)" : "var(--color-white)",
-              color: currentPage <= 1 ? "var(--color-text-muted)" : "var(--color-navy)",
-              cursor: currentPage <= 1 ? "not-allowed" : "pointer",
-            }}
-          >
-            Previous Page
-          </button>
+          {/* Navigation Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+            <button
+              type="button"
+              data-testid="source-panel-prev-page"
+              aria-label="Previous Page"
+              disabled={currentPage <= 1 || loading}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              style={{
+                padding: "4px 10px",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 500,
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: currentPage <= 1 ? "var(--color-bg-subtle)" : "var(--color-white)",
+                color: currentPage <= 1 ? "var(--color-text-muted)" : "var(--color-navy)",
+                cursor: currentPage <= 1 ? "not-allowed" : "pointer",
+              }}
+            >
+              Previous Page
+            </button>
 
-          <span
-            data-testid="source-panel-page-indicator"
-            style={{
-              fontSize: "var(--font-size-sm)",
-              fontWeight: 600,
-              color: "var(--color-navy)",
-            }}
-          >
-            Page {currentPage}
-          </span>
+            <span
+              data-testid="source-panel-page-indicator"
+              style={{
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                color: "var(--color-navy)",
+                padding: "0 var(--spacing-1)",
+              }}
+            >
+              Page {currentPage} of {totalPages || 1}
+            </span>
 
-          <button
-            type="button"
-            data-testid="source-panel-next-page"
-            aria-label="Next Page"
-            onClick={() => setCurrentPage((p) => p + 1)}
-            style={{
-              padding: "4px 12px",
-              fontSize: "var(--font-size-xs)",
-              fontWeight: 500,
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-white)",
-              color: "var(--color-navy)",
-              cursor: "pointer",
-            }}
-          >
-            Next Page
-          </button>
+            <button
+              type="button"
+              data-testid="source-panel-next-page"
+              aria-label="Next Page"
+              disabled={(totalPages > 0 && currentPage >= totalPages) || loading}
+              onClick={() => setCurrentPage((p) => (totalPages ? Math.min(totalPages, p + 1) : p + 1))}
+              style={{
+                padding: "4px 10px",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 500,
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: totalPages > 0 && currentPage >= totalPages ? "var(--color-bg-subtle)" : "var(--color-white)",
+                color: totalPages > 0 && currentPage >= totalPages ? "var(--color-text-muted)" : "var(--color-navy)",
+                cursor: totalPages > 0 && currentPage >= totalPages ? "not-allowed" : "pointer",
+              }}
+            >
+              Next Page
+            </button>
+          </div>
+
+          {/* Zoom Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-1)" }}>
+            <button
+              type="button"
+              data-testid="source-panel-zoom-out"
+              aria-label="Zoom Out"
+              disabled={scale <= 0.5 || loading}
+              onClick={() => setScale((s) => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
+              style={{
+                padding: "4px 8px",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: scale <= 0.5 ? "var(--color-bg-subtle)" : "var(--color-white)",
+                color: "var(--color-navy)",
+                cursor: scale <= 0.5 ? "not-allowed" : "pointer",
+              }}
+            >
+              −
+            </button>
+            <span
+              data-testid="source-panel-zoom-level"
+              style={{
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                color: "var(--color-text-muted)",
+                minWidth: "42px",
+                textAlign: "center",
+              }}
+            >
+              {Math.round(scale * 100)}%
+            </span>
+            <button
+              type="button"
+              data-testid="source-panel-zoom-in"
+              aria-label="Zoom In"
+              disabled={scale >= 3.0 || loading}
+              onClick={() => setScale((s) => Math.min(3.0, Number((s + 0.25).toFixed(2))))}
+              style={{
+                padding: "4px 8px",
+                fontSize: "var(--font-size-xs)",
+                fontWeight: 600,
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: scale >= 3.0 ? "var(--color-bg-subtle)" : "var(--color-white)",
+                color: "var(--color-navy)",
+                cursor: scale >= 3.0 ? "not-allowed" : "pointer",
+              }}
+            >
+              +
+            </button>
+          </div>
         </div>
       )}
 
@@ -184,9 +365,13 @@ export function SourcePanel({
       <div
         style={{
           flex: 1,
-          overflowY: "auto",
+          overflow: "auto",
           padding: "var(--spacing-4)",
           backgroundColor: isLiveAssistant ? "var(--color-white)" : "var(--color-bg-subtle)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: isLiveAssistant ? "center" : "stretch",
+          justifyContent: isLiveAssistant ? "center" : "flex-start",
         }}
       >
         {isLiveAssistant ? (
@@ -214,48 +399,39 @@ export function SourcePanel({
             </p>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-3)" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-muted)",
-              }}
-            >
-              <span>Golden Document Page #{currentPage}</span>
-              <a
-                href={`/demo/docs/${pdfFileName}#page=${currentPage}`}
-                target="_blank"
-                rel="noopener noreferrer"
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+            {error && (
+              <div
                 style={{
-                  color: "var(--color-navy)",
-                  textDecoration: "underline",
-                  fontWeight: 500,
+                  padding: "var(--spacing-3)",
+                  backgroundColor: "var(--color-status-error-bg)",
+                  color: "var(--color-status-error-text)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "var(--font-size-xs)",
+                  marginBottom: "var(--spacing-3)",
+                  width: "100%",
                 }}
               >
-                Open Original PDF (#page={currentPage})
-              </a>
-            </div>
-
+                {error}
+              </div>
+            )}
             <div
               style={{
                 border: "1px solid var(--color-border)",
                 borderRadius: "var(--radius-md)",
                 overflow: "hidden",
                 backgroundColor: "var(--color-white)",
-                boxShadow: "var(--shadow-sm)",
+                boxShadow: "var(--shadow-md)",
+                maxWidth: "100%",
               }}
             >
-              <img
-                data-testid="source-panel-view-image"
-                src={`/demo/pages/${stem}-p${currentPage}.png`}
-                alt={`${documentTitle} Page ${currentPage}`}
+              <canvas
+                ref={canvasRef}
+                data-testid="pdf-canvas"
                 style={{
-                  width: "100%",
-                  height: "auto",
                   display: "block",
+                  maxWidth: "100%",
+                  height: "auto",
                 }}
               />
             </div>
