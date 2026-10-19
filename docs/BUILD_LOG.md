@@ -1870,3 +1870,143 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `docs/qa/UI_TEST_CHECKLIST.csv` (UI-038 and UI-039 marked Pass)
   - `docs/STATUS.md` (UI batches complete; next: connect backend starting with Phase 2 gate test RLS fix)
   - `docs/BUILD_LOG.md` (this entry)
+
+---
+
+### [2026-10-19] TASK UI-POLISH: UI Backlog Resolution & Responsive Chat Layout
+
+- **Task ID**: UI-POLISH
+- **What Was Built**:
+  - **1. Login Open-Redirect Sanitization (STATUS.md UI Backlog)**:
+    - Implemented `getSafeRedirectUrl(target: string | null | undefined): string` in `web/lib/api.ts`.
+    - Strictly enforces relative paths starting with a single `/`. Rejects protocol-relative URLs (`//evil.com`), Windows backslash bypasses (`/\evil.com`, `\evil.com`), and arbitrary absolute URI schemes (`https://`, `http://`, `javascript:`, `data:`).
+    - Wired into `web/app/login/page.tsx:LoginForm`.
+  - **2. Tablet Responsive Chat Sidebar (UI-023)**:
+    - Added `sidebarOpen` state and interactive toggle button (`☰ Hide` / `☰ Conversations`) in `web/app/assistants/[assistantId]/chat/page.tsx`.
+    - Added `data-testid="chat-sidebar"` and class `.chat-sidebar`.
+    - Added responsive drawer styling in `web/styles/globals.css` under `@media (max-width: 768px)` so on narrow/tablet screens the sidebar overlays as an accessible slide-out drawer without cramping chat message bubbles.
+  - **3. Test-Driven Development (Tests First)**:
+    - Authored 5 unit tests for `getSafeRedirectUrl` in `web/__tests__/foundations.test.ts`: verified failing run (`TypeError: getSafeRedirectUrl is not a function`), then passing run (27/27 passed).
+    - Authored responsive toggle test in `web/__tests__/chat.test.tsx`: verified failing run (`Unable to find element by data-testid="chat-sidebar"`), then passing run (9/9 passed).
+    - Full web test suite: 10 test files (104 tests) passing cleanly with zero regressions.
+    - TypeScript: `npm run typecheck` passing with zero errors.
+- **Documentation Updated**:
+  - `docs/qa/UI_TEST_CHECKLIST.csv` (UI-023 updated to Pass)
+  - `docs/STATUS.md` (UI backlog updated; next task: connect backend starting with Phase 2 gate test RLS fix)
+  - `docs/BUILD_LOG.md` (this entry)
+
+---
+
+### [2026-10-20] Phase 2 Exit Gate: Golden Documents Ingestion Verification & Schema Fixes
+
+- **Task ID**: Phase 2 Exit Gate Verification
+- **Target Specification**: Phase 2 Exit Gate (`TestPhase2ExitGateGoldenDocuments::test_golden_documents_ingested_twice_zero_duplicates`)
+- **What Was Built / Fixed**:
+  - **1. Procrastinate Schema Qualification**:
+    - Addressed `psycopg.errors.UndefinedTable: relation "procrastinate_jobs" does not exist` when executing raw SQL counts in `backend/tests/integration/test_pipeline_idempotency.py`.
+    - Explicitly qualified all queries to use `procrastinate.procrastinate_jobs`.
+  - **2. Model Digest Column Widening (`0011_widen_model_version.py`)**:
+    - Identified failure during upload-time vision transcription where Ollama reports 64-character SHA-256 model digests (`1343d82ebee38e26a4dd6b0180b915eb91550184e67c505dea97509571c8f683` for `qwen3-vl:4b`).
+    - Attempting to insert into `page_readings.model_version VARCHAR(50)` threw `psycopg.errors.StringDataRightTruncation: value too long for type character varying(50)`, which aborted transactions and caused repeated worker retries.
+    - Authored Alembic migration `backend/app/db/migrations/versions/0011_widen_model_version.py` altering `page_readings.model_version` and `run_steps.model_version` to `VARCHAR(255)`.
+    - Updated SQLAlchemy declarative models in `backend/app/db/models.py` (`PageReading.model_version` and `RunStep.model_version` to `String(255)`).
+    - Applied migration via `alembic upgrade head`.
+  - **3. Queue Scoping & Worker Queue Configuration**:
+    - Configured in-process test worker in `test_pipeline_idempotency.py` to listen on `queues=["ingestion", "builtin"]`.
+    - Scoped pipeline idempotency assertions strictly to `WHERE queue_name = 'ingestion' AND status IN ('todo', 'doing')` (and `status = 'failed'`). This isolates ingestion pipeline checks from unrelated periodic background cron tasks (such as `stalled_job_sweep_task` in `builtin`).
+    - Added progress logging during queue wait intervals.
+  - **4. Exit Gate Execution & Verification**:
+    - Executed `uv run pytest -s -m models tests/integration/test_pipeline_idempotency.py::TestPhase2ExitGateGoldenDocuments` against live local services (`desktop-gpu` profile: Docling GPU parser, Ollama `qwen3-vl:4b` vision, BGE-M3 embeddings, isolated throwaway PostgreSQL database).
+    - All 15 golden documents ingested in Run 1, all 15 re-ingested in Run 2.
+    - Zero new pages, zero new page readings, zero new tables, zero new chunks, zero new embeddings.
+    - Generated `evals/reports/phase2_gate.json` with `"gate_passed": true`.
+- **Exit Gate Metrics (`evals/reports/phase2_gate.json`)**:
+  - Run 1 Totals: 30 pages, 1 page reading, 12 tables data, 30 chunks, 30 embeddings.
+  - Run 2 Totals: 30 pages, 1 page reading, 12 tables data, 30 chunks, 30 embeddings.
+  - Run 2 Deltas: 0 pages, 0 page readings, 0 tables data, 0 chunks, 0 embeddings (`all_zero_deltas: true`).
+  - `all_versions_ready_or_review: true`, `no_jobs_failed: true`, `gate_passed: true`.
+  - Execution Time: 231.17s (0:03:51).
+- **Pre-commit**: All 10 pre-commit hooks passed cleanly on all modified files (`uv run --project backend pre-commit run --files ...`).
+
+---
+
+### [2026-10-20] Task 3.1: Contextual Chunking & Hybrid Search (Node 3 `retrieve`)
+
+- **Task ID**: Task 3.1
+- **Target Specification**: Architecture spec section "Query flow" (Node 3 `retrieve`), Phase 3 Plan (`docs/phases/PHASE-3.md:Task 3.1`), Invariant 1 (`retriever_user` read-only role).
+- **What Was Built**:
+  - **1. Ports & Type Definitions (`backend/app/ports/retriever.py`, `backend/app/ports/types.py`)**:
+    - Added `RetrievalFilters.limit: int = 10` for parameterized result window scoping.
+    - Added abstract coroutine `get_evidence_text(self, tenant_ctx: TenantContext, evidence_ids: list[str]) -> dict[str, str]` to `Retriever` port, fetching formatted chunk texts (`{context_prefix}\n\n{text}`) strictly within caller tenant boundaries.
+    - Updated `MockRetriever` in `backend/app/adapters/retrieval/mock.py` to implement `get_evidence_text`.
+  - **2. Ingestion Fixture Hardening (`backend/tests/fixtures/database_seeding.py`)**:
+    - Extended `seed_chunk` with `context_prefix`, `embedding`, `evidence_type`, and `page_reading_id`.
+    - Auto-provisioned vision reading when `evidence_type="visual"` without an explicit `page_reading_id` to satisfy check constraint `ck_chunks_visual_requires_reading` (Invariant 5).
+  - **3. Test-Driven Development First (`backend/tests/integration/test_hybrid_retrieval.py`)**:
+    - Authored 10 integration tests against PostgreSQL:
+      - `test_retriever_user_cannot_write_invariant_1`: Verifies `retriever_user` role can SELECT evidence tables, but INSERT, UPDATE, and DELETE operations are immediately rejected with SQLSTATE `42501` (`permission denied`).
+      - `test_hybrid_search_tenant_isolation`: Cross-tenant search strictly returns 0 results for another tenant's stored chunks.
+      - `test_hybrid_search_active_chunks_only`: Verifies inactive chunks (`is_active=False`) are never returned.
+      - `test_dense_vector_search_ordering`: Dense pgvector cosine distance orders semantically close candidate above distant candidate.
+      - `test_sparse_keyword_search_ranking`: `ts_rank_cd` orders keyword-matching chunk above unrelated text.
+      - `test_rrf_merging_combined_modalities`: Reciprocal Rank Fusion ($k=60$) formula elevates dual-modality hits to rank #1.
+      - `test_retrieval_fallback_when_modality_has_zero_hits`: Dense vector hits safely returned via RRF even when keyword search has 0 hits.
+      - `test_hybrid_search_filters`: Scoping by `document_ids`, `evidence_types`, and `limit`.
+      - `test_search_titles_for_clarify`: Clarify topic discovery searches active tenant document titles only.
+      - `test_get_evidence_text_within_tenant_boundary`: Loads `{context_prefix}\n\n{text}` for caller tenant only.
+    - Verified initial test failure before implementing adapter.
+  - **4. Hybrid Search Adapter (`backend/app/adapters/retrieval/postgres_retriever.py`)**:
+    - Implemented `PostgresRetriever` combining dense pgvector search (`embedding <=> :query_embedding`) and sparse full-text search (`ts_rank_cd(to_tsvector('english', c.text), plainto_tsquery('english', :query))`).
+    - Merged candidates via Reciprocal Rank Fusion ($RRF = \sum \frac{1}{k + rank}$, $k=60$).
+    - Applied tenant scoping via `retriever_tenant_session` and `SET LOCAL app.current_tenant_id = :tenant_id`.
+  - **5. Graph & Wiring Integration (`backend/app/wiring.py`, `backend/app/core/graph.py`)**:
+    - Wired `MockRetriever` on `mock` profile and `PostgresRetriever` across `desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, and `cloud`.
+    - Connected `node_retrieve` to call `ports.retriever.search` and load formatted context texts into `runtime.context.evidence_text` via `ports.retriever.get_evidence_text`.
+    - Connected `node_route` to invoke `ports.retriever.search_titles` during clarification.
+  - **6. Architectural Decision Record (`docs/decisions/ADR-0012-hybrid-retrieval-and-rrf.md`)**:
+    - Formally recorded decisions on RRF constant $k=60$, `retriever_user` read-only role, and context prefix storage.
+- **Verification**:
+  - `backend/tests/integration/test_hybrid_retrieval.py`: 10 passed in 0.70s.
+  - `backend/tests/unit/test_wiring_profile_guards.py`: 39 passed in 0.64s.
+  - `backend/tests/unit/test_ports_contracts.py`: 32 passed in 0.11s.
+  - `backend/tests/unit/test_architecture_boundaries.py`: 24 passed in 0.37s.
+  - Pre-commit: All 10 hooks passed cleanly on changed files.
+- **Next Task**: Task 3.2: Cross-Encoder Reranking (Node 4 `rerank`) per `docs/phases/PHASE-3.md`.
+
+---
+
+### [2026-10-20] Task 3.2: Cross-Encoder Reranking (Node 4 `rerank`)
+
+- **Task ID**: Task 3.2
+- **Target Specification**: Architecture spec section "Query flow" (Node 4 `rerank`), Phase 3 Plan (`docs/phases/PHASE-3.md:Task 3.2`), Failure Modes (Table row: "Reranker fails -> Merged results unranked, then the evidence gate"), Invariant 9.
+- **What Was Built**:
+  - **1. Exception & Protocol Definitions (`backend/app/ports/errors.py`, `backend/app/adapters/reranking/bge_reranker.py`)**:
+    - Added `RerankerOutputInvalidError` domain exception for candidate count mismatches or non-finite float scores.
+    - Added `CrossEncoderModelProtocol` decoupling `BgeRerankerAdapter` from concrete sentence-transformers models.
+  - **2. BGE Reranker Adapter (`backend/app/adapters/reranking/bge_reranker.py`)**:
+    - Implemented `BgeRerankerAdapter` implementing `Reranker` port interface (`app.ports.reranker.Reranker`).
+    - Configured for `BAAI/bge-reranker-v2-m3` running on CPU via `asyncio.to_thread` with batching, input pair construction (`[query, c.text]`), finite score validation, and descending rank assignment.
+    - Configuration validator `validate_bge_reranker_config` enforcing allowed devices (`cpu`, `cuda`) and required keys.
+    - Singleton model loader `load_bge_reranker_model` caching instantiated `CrossEncoder` instances.
+  - **3. Mock Reranker Adapter (`backend/app/adapters/reranking/mock.py`)**:
+    - Implemented `MockReranker` implementing `Reranker` port interface for fast $0 test execution and the `mock` profile.
+    - Supports query term overlap scoring with deterministic tie-breaking and explicit `score_map` injection.
+    - Fixed `MockRetriever` in `backend/app/adapters/retrieval/mock.py` to respect explicit empty lists/dicts when passed `canned_evidence_ids=[]` or `canned_evidence_text={}`.
+  - **4. Graph Node 4 Integration (`backend/app/core/graph.py`)**:
+    - Added `reranker: Reranker | None = None` to `GraphPorts`.
+    - Implemented `node_rerank`: maps `state["evidence_ids"]` to `RerankCandidate` using `runtime.context.evidence_text`.
+    - Fail-safe fallback: when `ports.mock_reranker_down` is True or when the reranker service raises an exception, catches the error, logs operational telemetry, and returns the original RRF retrieval candidate order without breaking the graph (Invariant 9).
+  - **5. Wiring & Profile Guards (`backend/app/wiring.py`)**:
+    - Updated `create_production_ports` and `create_mock_ports` to accept and wire `reranker`.
+    - Implemented `create_reranker(profile)` wiring `MockReranker` on `mock` and `BgeRerankerAdapter` across `desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, and `cloud`.
+    - Rejects unknown profiles with typed `ConfigurationError`.
+  - **6. Architectural Decision Record (`docs/decisions/ADR-0013-cross-encoder-reranking.md`)**:
+    - Formally recorded decisions on CPU execution for VRAM protection, `asyncio.to_thread` encapsulation, and fail-safe unranked candidate fallback.
+- **Verification**:
+  - `backend/tests/unit/test_reranker_node.py`: 19 passed in 0.54s.
+  - `backend/tests/unit/test_wiring_profile_guards.py`: 41 passed in 0.72s.
+  - `backend/tests/unit/test_retrieval_fallbacks.py`: 4 passed.
+  - `backend/tests/unit/test_graph_contracts.py`: 40 passed.
+  - Full backend and web test suites (104 web tests, 114 core backend tests) passing cleanly.
+  - Pre-commit: All 10 hooks passed cleanly on changed files.
+- **Next Task**: Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`) per `docs/phases/PHASE-3.md`.

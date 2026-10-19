@@ -632,3 +632,22 @@ class EmbeddingOutputInvalidError(PortError):
             details=details,
         )
         self.code = code
+
+
+class RerankerOutputInvalidError(PortError):
+    """Raised when reranker output candidate count, score, or rank values are invalid."""
+
+    def __init__(
+        self,
+        message: str = "Reranker output is invalid",
+        code: str = "RERANKER_OUTPUT_INVALID",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=code,
+            status_code=500,
+            retryable=False,
+            details=details,
+        )
+        self.code = code

@@ -15,6 +15,7 @@ Enforces:
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
@@ -28,17 +29,21 @@ from app.ports.errors import (
     MalformedOutput,
 )
 from app.ports.model_provider import ModelProvider
+from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
 from app.ports.tracer import Tracer
 from app.ports.types import (
     ChatMessage,
     ModelRole,
+    RerankCandidate,
     StepEndPayload,
     StepErrorPayload,
     StepStartPayload,
     TenantContext,
     UserRole,
 )
+
+logger = logging.getLogger(__name__)
 
 # --- 1. Graph State & Runtime Context ---
 
@@ -73,6 +78,7 @@ class GraphPorts:
 
     model_provider: ModelProvider | None = None
     retriever: Retriever | None = None
+    reranker: Reranker | None = None
     tracer: Tracer | None = None
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
     is_mock_profile: bool = False
@@ -243,7 +249,12 @@ async def node_route(
             computed_mode = "short"
 
         if computed_route == "clarify":
-            titles = ports.mock_titles or ["General Guide", "Policy Document"]
+            if ports.is_mock_profile and ports.mock_titles:
+                titles = ports.mock_titles
+            elif ports.retriever is not None:
+                titles = await ports.retriever.search_titles(ctx.tenant, ctx.question_text, limit=3)
+            else:
+                titles = ports.mock_titles or ["General Guide", "Policy Document"]
             ctx.response_text = f"Please clarify. Top matching topics: {', '.join(titles)}"
             return {
                 "route": "clarify",
@@ -263,20 +274,36 @@ async def node_retrieve(
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
         ports = runtime.context.ports
+        ctx = runtime.context
         evidence_ids: list[str] = []
 
-        # Internal fallback: vector vs keyword
-        if not ports.mock_vector_down and not ports.mock_keyword_down:
-            evidence_ids = list(runtime.context.evidence_text.keys()) or ["c1"]
-        elif ports.mock_vector_down and not ports.mock_keyword_down:
-            evidence_ids = [k for k in runtime.context.evidence_text if "kw" in k] or ["kw_chunk_1"]
-        elif not ports.mock_vector_down and ports.mock_keyword_down:
-            evidence_ids = [k for k in runtime.context.evidence_text if "vec" in k] or [
-                "vec_chunk_1"
-            ]
-        else:
-            evidence_ids = []
+        # Internal fallback: vector vs keyword simulation on mock profile
+        if ports.is_mock_profile and (ports.mock_vector_down or ports.mock_keyword_down):
+            if ports.mock_vector_down and not ports.mock_keyword_down:
+                evidence_ids = [k for k in ctx.evidence_text if "kw" in k] or ["kw_chunk_1"]
+            elif not ports.mock_vector_down and ports.mock_keyword_down:
+                evidence_ids = [k for k in ctx.evidence_text if "vec" in k] or ["vec_chunk_1"]
+            else:
+                evidence_ids = []
+            return {"evidence_ids": evidence_ids}
 
+        # If retriever is available:
+        if ports.retriever is not None:
+            retrieved = await ports.retriever.search(
+                tenant_ctx=ctx.tenant,
+                query=ctx.question_text,
+            )
+            evidence_ids = [e.chunk_id for e in retrieved]
+            if evidence_ids:
+                texts = await ports.retriever.get_evidence_text(
+                    tenant_ctx=ctx.tenant,
+                    evidence_ids=evidence_ids,
+                )
+                ctx.evidence_text.update(texts)
+            return {"evidence_ids": evidence_ids}
+
+        # Mock fallback when no retriever is injected
+        evidence_ids = list(ctx.evidence_text.keys()) or ["c1"]
         return {"evidence_ids": evidence_ids}
 
     return await _execute_with_telemetry("retrieve", 3, state, runtime, _action)
@@ -287,8 +314,42 @@ async def node_rerank(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        # If reranker service down, keep existing RRF retrieval order
-        return {"evidence_ids": state.get("evidence_ids", [])}
+        evidence_ids = state.get("evidence_ids", [])
+        if not evidence_ids:
+            return {"evidence_ids": []}
+
+        ports = runtime.context.ports
+        ctx = runtime.context
+
+        # Check mock failure switch or missing reranker
+        if ports.is_mock_profile and ports.mock_reranker_down:
+            return {"evidence_ids": evidence_ids}
+
+        if ports.reranker is None:
+            return {"evidence_ids": evidence_ids}
+
+        candidates = [
+            RerankCandidate(
+                candidate_id=eid,
+                text=ctx.evidence_text.get(eid, ""),
+            )
+            for eid in evidence_ids
+        ]
+
+        try:
+            results = await ports.reranker.rerank(
+                query=ctx.question_text,
+                candidates=candidates,
+            )
+            ordered_ids = [res.candidate_id for res in results]
+            return {"evidence_ids": ordered_ids}
+        except Exception:
+            # Spec Failure Handling: "Reranker fails -> Merged results unranked, then evidence gate"
+            logger.warning(
+                "Reranker failed; falling back to unranked retrieval candidates",
+                exc_info=True,
+            )
+            return {"evidence_ids": evidence_ids}
 
     return await _execute_with_telemetry("rerank", 4, state, runtime, _action)
 

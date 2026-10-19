@@ -312,4 +312,23 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("sidebar toggle button toggles conversations sidebar visibility for responsive layouts (UI-023)", async () => {
+    await renderChatPage();
+
+    // Initially sidebar is visible
+    expect(screen.getByTestId("chat-sidebar")).toBeInTheDocument();
+    expect(screen.getByText("Conversations")).toBeInTheDocument();
+
+    const toggleBtn = screen.getByTestId("sidebar-toggle-button");
+    expect(toggleBtn).toBeInTheDocument();
+
+    // Click to hide sidebar
+    fireEvent.click(toggleBtn);
+    expect(screen.queryByTestId("chat-sidebar")).not.toBeInTheDocument();
+
+    // Click to show sidebar again
+    fireEvent.click(toggleBtn);
+    expect(screen.getByTestId("chat-sidebar")).toBeInTheDocument();
+  });
 });

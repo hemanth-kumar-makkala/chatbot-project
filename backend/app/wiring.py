@@ -33,6 +33,7 @@ from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.image_processor import ImageProcessor
 from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
+from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
 from app.ports.storage import StorageBackend
 from app.ports.table_extractor import TableExtractor
@@ -51,12 +52,14 @@ def build_app_graph(
 def create_production_ports(
     model_provider: ModelProvider,
     retriever: Retriever,
+    reranker: Reranker | None = None,
     tracer: Tracer | None = None,
 ) -> GraphPorts:
     """Create production GraphPorts with is_mock_profile=False and simulation triggers disabled."""
     return GraphPorts(
         model_provider=model_provider,
         retriever=retriever,
+        reranker=reranker,
         tracer=tracer,
         is_mock_profile=False,
         mock_evidence_state=None,
@@ -85,15 +88,18 @@ def create_production_context(
 def create_mock_ports(
     model_provider: ModelProvider | None = None,
     retriever: Retriever | None = None,
+    reranker: Reranker | None = None,
     tracer: Tracer | None = None,
 ) -> GraphPorts:
     """Create mock GraphPorts wired with mock adapters for local Phase 1 execution."""
     from app.adapters.models.mock import MockModelProvider
+    from app.adapters.reranking.mock import MockReranker
     from app.adapters.retrieval.mock import MockRetriever
 
     return GraphPorts(
         model_provider=model_provider or MockModelProvider(),
         retriever=retriever or MockRetriever(),
+        reranker=reranker or MockReranker(),
         tracer=tracer,
         is_mock_profile=True,
     )
@@ -524,3 +530,63 @@ def create_image_processor(profile: str = "mock") -> ImageProcessor:
     from app.adapters.images.pillow import PillowImageProcessor
 
     return PillowImageProcessor()
+
+
+def create_retriever(
+    profile: str,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> Retriever:
+    """Create Retriever adapter based on runtime profile.
+
+    Profiles:
+    - mock: MockRetriever
+    - desktop-gpu, home-gpu, office-cpu, dev-free-api, cloud: PostgresRetriever
+    - unknown profile: ConfigurationError
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.retrieval.mock import MockRetriever
+
+        return MockRetriever()
+
+    if profile in ("desktop-gpu", "home-gpu", "office-cpu", "dev-free-api", "cloud"):
+        from app.adapters.retrieval.postgres_retriever import PostgresRetriever
+
+        embedder = embedding_provider or create_embedding_provider(profile=profile)
+        return PostgresRetriever(embedding_provider=embedder)
+
+    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
+    raise ConfigurationError(
+        f"Unknown or unauthorized profile '{profile}' for Retriever. "
+        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+        error_code="UNAUTHORIZED_RETRIEVER_PROFILE",
+    )
+
+
+def create_reranker(profile: str) -> Reranker:
+    """Create Reranker adapter based on runtime profile.
+
+    Profiles:
+    - mock: MockReranker
+    - desktop-gpu, home-gpu, office-cpu, dev-free-api, cloud: BgeRerankerAdapter
+    - unknown profile: ConfigurationError
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.reranking.mock import MockReranker
+
+        return MockReranker()
+
+    if profile in ("desktop-gpu", "home-gpu", "office-cpu", "dev-free-api", "cloud"):
+        from app.adapters.reranking.bge_reranker import create_bge_reranker_adapter
+
+        return create_bge_reranker_adapter(profile)
+
+    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
+    raise ConfigurationError(
+        f"Unknown or unsupported profile '{profile}' for Reranker. "
+        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+        error_code="UNAUTHORIZED_RERANKER_PROFILE",
+    )

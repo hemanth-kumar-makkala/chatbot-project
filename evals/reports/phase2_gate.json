@@ -1,0 +1,196 @@
+{
+  "timestamp": "2026-10-19T18:42:44.023196+00:00",
+  "profile": "desktop-gpu",
+  "documents": [
+    {
+      "file_name": "prior_auth_guide.pdf",
+      "document_id": "7c67d9f6-eec6-457c-8343-9a1202ac753c",
+      "version_id": "ed2871de-de4c-4731-b9fa-fe1f3248caaa",
+      "status": "ready",
+      "pages": 2,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 21.063
+    },
+    {
+      "file_name": "eligibility_checklist.pdf",
+      "document_id": "b417665d-b0c7-4cbf-85b7-a2c368c7edde",
+      "version_id": "383cd521-6148-4552-8d11-8f7fbcb64200",
+      "status": "ready",
+      "pages": 2,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 15.735
+    },
+    {
+      "file_name": "front_desk_policy_v1.pdf",
+      "document_id": "51a62cb1-9e0e-4a57-8451-c92c396e8780",
+      "version_id": "e36e2f19-f4ea-4a04-a4c2-f15dc1e61f6c",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 7.015
+    },
+    {
+      "file_name": "payer_contact_table.pdf",
+      "document_id": "92fa256c-a688-4548-a725-70466ef038f4",
+      "version_id": "5cf44541-2c4e-4bd9-b1ce-e6b3469f4646",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 6.532
+    },
+    {
+      "file_name": "fee_schedule.pdf",
+      "document_id": "2b7d3bf9-4514-48df-b34f-17679b30979d",
+      "version_id": "8654fc9b-f482-4b6d-b231-4e0fd87a7421",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 6.766
+    },
+    {
+      "file_name": "clean_fax.pdf",
+      "document_id": "d1ba868e-bad6-49d1-87a4-0f2246a659c0",
+      "version_id": "bd81174a-3360-44e6-a23d-5d01d839e937",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 7.0
+    },
+    {
+      "file_name": "skewed_fax.pdf",
+      "document_id": "b9495e3a-4968-49d1-a3f3-b2d3090e7d9c",
+      "version_id": "d7ef08c8-b743-402b-87ee-4b1a4fa65c0f",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 7.25
+    },
+    {
+      "file_name": "faint_fax_2page.pdf",
+      "document_id": "f40d77a8-24c9-42c3-ac34-ec37eb084c10",
+      "version_id": "9071f024-8b8b-4d58-aa63-db1723f9d9cf",
+      "status": "ready",
+      "pages": 2,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 13.297
+    },
+    {
+      "file_name": "accepted_plans.csv",
+      "document_id": "c773975b-3ab9-4ad0-93c9-284487fd7985",
+      "version_id": "71c84005-da77-4120-aec4-bf5cd48d3844",
+      "status": "ready",
+      "pages": 0,
+      "page_readings": 0,
+      "chunks": 0,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 24.187
+    },
+    {
+      "file_name": "pa_turnaround_times.xlsx",
+      "document_id": "8f37fd33-4be9-4707-b9c9-e4b764ae0956",
+      "version_id": "09152715-87eb-4f44-9b29-a8ee39fc8e5e",
+      "status": "ready",
+      "pages": 0,
+      "page_readings": 0,
+      "chunks": 0,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 0.547
+    },
+    {
+      "file_name": "front_desk_policy_v2.pdf",
+      "document_id": "e8362c09-5fef-498a-8cbf-3a6279fe8194",
+      "version_id": "13447514-432a-45d0-bb0e-230db0dac7f1",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 11.656
+    },
+    {
+      "file_name": "clinical_protocols_manual.pdf",
+      "document_id": "afe7b51b-88ee-496a-b9de-04153e4ab81e",
+      "version_id": "2b8f5d90-3bcf-4d7f-9eaa-e2a3552449f3",
+      "status": "ready",
+      "pages": 15,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 12.203
+    },
+    {
+      "file_name": "compliance_notice.pdf",
+      "document_id": "8102bc0f-03f6-4073-8d2b-76e49bdac7d8",
+      "version_id": "19f97d73-2723-4779-880f-309b0ea11f9e",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 83.531
+    },
+    {
+      "file_name": "patient_intake_form.pdf",
+      "document_id": "39488c55-bcbb-4105-a02d-8987d834b3c9",
+      "version_id": "fbb77b76-4c59-424c-aace-fdc40ed1b487",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 6.204
+    },
+    {
+      "file_name": "patient_intake_form.pdf",
+      "document_id": "fa77a773-e050-4014-9b7c-5ef2f82e4d25",
+      "version_id": "5a0eefa3-4664-4c9b-9de8-f089b6c6a89c",
+      "status": "ready",
+      "pages": 1,
+      "page_readings": 0,
+      "chunks": 1,
+      "review_flagged_pages": [],
+      "time_taken_seconds": 6.063
+    }
+  ],
+  "run_1_totals": {
+    "pages": 30,
+    "page_readings": 1,
+    "tables_data": 12,
+    "chunks": 30,
+    "embeddings": 30
+  },
+  "run_2_totals": {
+    "pages": 30,
+    "page_readings": 1,
+    "tables_data": 12,
+    "chunks": 30,
+    "embeddings": 30
+  },
+  "run_2_deltas": {
+    "pages": 0,
+    "page_readings": 0,
+    "tables_data": 0,
+    "chunks": 0,
+    "embeddings": 0
+  },
+  "all_zero_deltas": true,
+  "all_versions_ready_or_review": true,
+  "no_jobs_failed": true,
+  "gate_passed": true
+}

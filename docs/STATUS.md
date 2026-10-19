@@ -3,9 +3,41 @@
 ## Active Phase
 - **Phase 0**: Foundations (Compliance route, retention rules, pilot workload, synthetic golden set, UI design spec; governance ongoing)
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
-- **Phase 2**: Ingestion Pipeline (Runs on office PC then desktop-gpu; exit gate: Golden docs ingested twice with zero duplicates)
+- **Phase 2**: Ingestion Pipeline — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase2_gate.json`: 15 golden documents ingested twice with zero duplicates across pages, readings, tables, chunks, and embeddings)
+- **Phase 3**: RAG Engine & Core Logic (Active Phase)
+  - **Task 3.1: Contextual Chunking & Hybrid Search (Node 3 `retrieve`)** — **COMPLETED & VERIFIED**
+    - **Hybrid Search Adapter (`PostgresRetriever`)**: Implemented dense pgvector cosine distance + sparse PostgreSQL tsvector search (`plainto_tsquery`) fused with Reciprocal Rank Fusion (RRF, $k=60$).
+    - **Invariant 1 (`retriever_user` Read-Only Role)**: Verified via integration tests that `retriever_tenant_session` operates under `retriever_user` and `SET LOCAL app.current_tenant_id = :tenant_id`. SELECT succeeds; INSERT/UPDATE/DELETE immediately fail with SQLSTATE `42501` (permission denied).
+    - **Context Prefix & Stored Chunk Separation**: Implemented `get_evidence_text` returning `{context_prefix}\n\n{text}` strictly scoped within the authenticated tenant boundary.
+    - **Node 3 & Node 2 Graph Integration**: Connected `node_retrieve` and `node_route` in `backend/app/core/graph.py` to `ports.retriever.search`, `search_titles`, and `get_evidence_text`.
+    - **Wiring & Profile Guards**: Wired `MockRetriever` on `mock` profile and `PostgresRetriever` across all real profiles (`desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, `cloud`).
+    - **ADR-0012**: Authored architectural decision record for hybrid retrieval, RRF, and read-only role scoping.
+    - **Verification**: `backend/tests/integration/test_hybrid_retrieval.py` (10 tests), `backend/tests/unit/test_wiring_profile_guards.py` (39 tests), `backend/tests/unit/test_ports_contracts.py` (32 tests), and `backend/tests/unit/test_architecture_boundaries.py` (24 tests) passing cleanly. All 10 pre-commit hooks passing.
+  - **Task 3.2: Cross-Encoder Reranking (Node 4 `rerank`)** — **COMPLETED & VERIFIED**
+    - **Cross-Encoder Adapter (`BgeRerankerAdapter`)**: Implemented `Reranker` wrapping `BAAI/bge-reranker-v2-m3` running on CPU via `asyncio.to_thread` with batching, input pair construction, score validation, and descending rank assignment.
+    - **Fail-Safe Fallback**: If the reranker model crashes, times out, or fails to initialize, Node 4 catches the error, logs operational telemetry, and preserves the unranked RRF retrieval candidate order. The downstream evidence gate (Node 5) remains fully protected (Invariant 9).
+    - **Mock Adapter (`MockReranker`)**: Implemented deterministic in-memory reranker supporting term overlap scoring and explicit score maps for fast $0 test execution.
+    - **Wiring & Profile Guards**: Wired `MockReranker` on `mock` and `BgeRerankerAdapter` across all real profiles (`desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, `cloud`).
+    - **ADR-0013**: Authored architectural decision record for cross-encoder reranking on CPU and fail-safe degradation.
+    - **Verification**: `backend/tests/unit/test_reranker_node.py` (19 tests), `backend/tests/unit/test_wiring_profile_guards.py` (41 tests), `backend/tests/unit/test_retrieval_fallbacks.py` (4 tests), and full backend/web suites passing cleanly. All 10 pre-commit hooks passing.
+    - **Next Step**: Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`).
 
-- **Task UI-5: All Phase 5 UI (Feedback Controls, Rate Limiting & Input Guardrails) & UI-4 Fixes** — **COMPLETED & VERIFIED**
+- **Phase 2 Exit Gate Verification & Ingestion Schema Resolution** — **COMPLETED & VERIFIED**
+  - **Exit Gate Test**: `TestPhase2ExitGateGoldenDocuments::test_golden_documents_ingested_twice_zero_duplicates` in `backend/tests/integration/test_pipeline_idempotency.py`.
+  - **Issues Identified and Resolved**:
+    1. **PostgreSQL Schema Isolation**: Raw SQL queries checking Procrastinate job tables in `test_pipeline_idempotency.py` now explicitly qualify the isolated schema as `procrastinate.procrastinate_jobs`.
+    2. **Model Version Digest Length Overflow**: `PageReading.model_version` and `RunStep.model_version` were defined as `VARCHAR(50)`, which overflowed when storing 64-character SHA-256 Ollama digests (`qwen3-vl:4b`). Created Alembic migration `0011_widen_model_version.py` widening both columns to `VARCHAR(255)`, updated SQLAlchemy declarative models in `backend/app/db/models.py`, and applied migration.
+    3. **Worker Queue Scoping & Cron Isolation**: The in-process test worker runs on `queues=["ingestion", "builtin"]`, and pipeline idempotency assertions strictly scope job count queries to `WHERE queue_name = 'ingestion'`, preventing test timeouts when periodic cron jobs (e.g. `stalled_job_sweep_task` in `builtin`) trigger.
+  - **Exit Gate Results (`evals/reports/phase2_gate.json`)**:
+    - Profile: `desktop-gpu` (Docling parser, Ollama vision, BGE-M3 embeddings).
+    - Run 1 Totals: 30 pages, 1 page reading, 12 tables data, 30 chunks, 30 embeddings.
+    - Run 2 Totals: 30 pages, 1 page reading, 12 tables data, 30 chunks, 30 embeddings.
+    - Run 2 Deltas: 0 pages, 0 page readings, 0 tables data, 0 chunks, 0 embeddings (all zero deltas: true).
+    - All versions ready or needs_review: true. No jobs failed: true. Gate passed: true.
+  - **Verification**: `uv run pytest -s -m models tests/integration/test_pipeline_idempotency.py::TestPhase2ExitGateGoldenDocuments` passed in 231.17s. All 10 pre-commit hooks passed.
+  - **Next Step**: Phase 3 Tasks (RAG Engine & Core Logic).
+
+- **Task UI-5: All Phase 5 UI (Feedback Controls, Rate Limiting & Input Guardrails) & UI-4 Fixes** — **COMPLETED & VERIFIED** (Preceding task)
   - **UI Batches Complete**: All UI screens and demo flows (UI-0 through UI-5) are complete, strictly typed, and verified across 10 test suites (98 unit/integration tests passing).
   - **Feedback Controls (Task 5.5)**:
     - Thumbs up / thumbs down on every assistant answer card.
@@ -209,7 +241,7 @@ Phase 2 cannot pass its exit gate until this list is empty:
 *(Decision: `test_real_docling_ocr_spanish_scanned_page` is removed from the Phase 2 gate list per multilingual deferral in OPEN_QUESTIONS 3.5. The test stays in code.)*
 
 ## Next Task
-- Real Docling desktop tests, then real fax upload on desktop-gpu.
+- Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`) per `docs/phases/PHASE-3.md`.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
@@ -230,7 +262,7 @@ Phase 2 cannot pass its exit gate until this list is empty:
 
 ## UI backlog
 - Assistants list route and client picker, replacing DEV_DEFAULT_ASSISTANT_ID.
-- Login redirect accepts only relative paths starting with "/" and not "//".
+- [Closed in UI-POLISH] Login redirect accepts only relative paths starting with "/" and not "//".
 - scripts/run_dev_api.py so the API starts with one command (Windows SelectorEventLoop).
 - Upload accepts png, jpeg, tiff, txt in the backend but the UI and worker only handle PDF, CSV, XLSX: decide and align.
 - Tests write to the shared dev database and never clean up: move integration tests to throwaway databases.

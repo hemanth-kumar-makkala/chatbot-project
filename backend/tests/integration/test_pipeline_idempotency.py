@@ -400,6 +400,7 @@ class TestPipelineExecutionAndIdempotency:
         from tests.fixtures.database_seeding import seed_chunk, seed_job
 
         tenant_id, user_id = seeded_tenant_and_user
+        monkeypatch.setenv("APP_PROFILE", "mock")
         worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
 
         async with worker_tenant_session(worker_ctx) as session:
@@ -524,6 +525,7 @@ class TestPipelineExecutionAndIdempotency:
         from tests.fixtures.database_seeding import seed_chunk, seed_job
 
         tenant_id, user_id = seeded_tenant_and_user
+        monkeypatch.setenv("APP_PROFILE", "mock")
         worker_ctx = WorkerContext(tenant_id=str(tenant_id), job_id=str(uuid4()))
 
         async with worker_tenant_session(worker_ctx) as session:
@@ -741,7 +743,7 @@ class TestPhase2ExitGateGoldenDocuments:
                 async with worker_app.open_async():
                     worker_task = asyncio.create_task(
                         worker_app.run_worker_async(
-                            queues=["ingestion"],
+                            queues=["ingestion", "builtin"],
                             concurrency=1,
                             wait=True,
                             fetch_job_polling_interval=0.5,
@@ -921,18 +923,27 @@ class TestPhase2ExitGateGoldenDocuments:
                             )
 
                         # Ensure all queued background jobs finished
+                        t_wait_jobs = time.monotonic()
                         while True:
                             async with unscoped_session() as s:
                                 pending: int = (
                                     await s.execute(
                                         text(
-                                            "SELECT count(*) FROM procrastinate_jobs "
-                                            "WHERE status IN ('todo', 'doing')"
+                                            "SELECT count(*) FROM procrastinate.procrastinate_jobs "
+                                            "WHERE queue_name = 'ingestion' "
+                                            "  AND status IN ('todo', 'doing')"
                                         )
                                     )
                                 ).scalar_one()
                                 if pending == 0:
                                     break
+                                now = time.monotonic()
+                                if now - t_wait_jobs >= 5.0:
+                                    print(
+                                        f"--> [Wait Ingestion Jobs] {pending} pending job(s)...",
+                                        flush=True,
+                                    )
+                                    t_wait_jobs = now
                             await asyncio.sleep(0.5)
 
                         # Total counts after Run 1 across all tenants
@@ -995,8 +1006,9 @@ class TestPhase2ExitGateGoldenDocuments:
                             pending_2: int = (
                                 await s.execute(
                                     text(
-                                        "SELECT count(*) FROM procrastinate_jobs "
-                                        "WHERE status IN ('todo', 'doing')"
+                                        "SELECT count(*) FROM procrastinate.procrastinate_jobs "
+                                        "WHERE queue_name = 'ingestion' "
+                                        "  AND status IN ('todo', 'doing')"
                                     )
                                 )
                             ).scalar_one()
@@ -1100,8 +1112,8 @@ class TestPhase2ExitGateGoldenDocuments:
                             failed_proc_jobs: int = (
                                 await s.execute(
                                     text(
-                                        "SELECT count(*) FROM procrastinate_jobs "
-                                        "WHERE status = 'failed'"
+                                        "SELECT count(*) FROM procrastinate.procrastinate_jobs "
+                                        "WHERE queue_name = 'ingestion' AND status = 'failed'"
                                     )
                                 )
                             ).scalar_one()

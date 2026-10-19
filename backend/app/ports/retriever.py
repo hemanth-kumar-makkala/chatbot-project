@@ -31,3 +31,12 @@ class Retriever(ABC):
     ) -> list[str]:
         """Search tenant document titles and section headings for clarify grounding (ADR-0002)."""
         ...
+
+    @abstractmethod
+    async def get_evidence_text(
+        self,
+        tenant_ctx: TenantContext,
+        evidence_ids: list[str],
+    ) -> dict[str, str]:
+        """Fetch chunk texts and context prefixes for given evidence IDs within tenant scope."""
+        ...

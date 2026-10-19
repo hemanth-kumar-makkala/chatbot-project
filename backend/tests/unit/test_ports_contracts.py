@@ -207,6 +207,7 @@ class TestRetrieverContract:
     def test_retriever_methods_are_async(self) -> None:
         assert inspect.iscoroutinefunction(Retriever.search)
         assert inspect.iscoroutinefunction(Retriever.search_titles)
+        assert inspect.iscoroutinefunction(Retriever.get_evidence_text)
 
     def test_tenant_context_requires_user_role_enum(self) -> None:
         ctx = TenantContext(

@@ -147,17 +147,35 @@ async def seed_chunk(
     language: str = "en",
     ts_config: str = "english",
     is_active: bool = False,
+    context_prefix: str | None = None,
+    embedding: list[float] | None = None,
+    evidence_type: str = "text",
+    page_reading_id: UUID | None = None,
 ) -> UUID:
     """Helper to insert a chunk row."""
     chunk_id = chunk_id or uuid4()
+    if evidence_type == "visual" and page_reading_id is None:
+        page_reading_id = await seed_reading(
+            session,
+            tenant_id,
+            page_id,
+            source="vision_ingest",
+            body=body,
+        )
+    emb_str = f"[{','.join(str(x) for x in embedding)}]" if embedding is not None else None
     await session.execute(
         text(
             """
             INSERT INTO chunks (
                 id, tenant_id, page_id, document_version_id,
-                text, language, ts_config, is_active
+                text, context_prefix, language, ts_config, is_active,
+                embedding, evidence_type, page_reading_id
             )
-            VALUES (:id, :tid, :pid, :vid, :txt, :lang, :cfg, :act);
+            VALUES (
+                :id, :tid, :pid, :vid,
+                :txt, :pfx, :lang, :cfg, :act,
+                CAST(:emb AS vector), :etype, :prid
+            );
             """
         ),
         {
@@ -166,9 +184,13 @@ async def seed_chunk(
             "pid": page_id,
             "vid": ver_id,
             "txt": body,
+            "pfx": context_prefix,
             "lang": language,
             "cfg": ts_config,
             "act": is_active,
+            "emb": emb_str,
+            "etype": evidence_type,
+            "prid": page_reading_id,
         },
     )
     return chunk_id

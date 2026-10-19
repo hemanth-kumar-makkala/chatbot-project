@@ -200,6 +200,7 @@ class RetrievalFilters(BaseModel):
 
     document_ids: list[str] | None = None
     evidence_types: list[EvidenceType] | None = None
+    limit: int = 10
 
 
 class StorageKey(BaseModel):

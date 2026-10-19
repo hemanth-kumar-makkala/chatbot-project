@@ -21,7 +21,7 @@ UI-019,2,Review,Accept a flagged page,"In drawer, Accept",Page no longer flagged
 UI-020,2,Review,Exclude a flagged page,"In drawer, Exclude",Page excluded from search; status updates,Not run,,,
 UI-021,2,Review,Retry a flagged page,"In drawer, Retry",Page re-processed; message if already running,Not run,,,
 UI-022,2,Review,Keyboard only,"Use Tab, Enter, Escape through upload, table and drawer",Every action reachable; Escape closes dialogs,Not run,,,
-UI-023,2,Layout,Narrow window,Resize browser to about 768 px wide,Nothing overlaps or breaks,Not run,,,
+UI-023,2,Layout,Narrow window,Resize browser to about 768 px wide,"Nothing overlaps or breaks; chat sidebar toggles and overlays as drawer on <= 768px",Pass,10/19/2026,,Verified responsive sidebar drawer in globals.css and chat.test.tsx
 UI-024,3,Chat,Send question and receive answer,"Type question, press Enter or click Send","Answer displayed with markdown and citation chips",Pass,10/15/2026,Srinath,UI-2 verified by ui2.test.tsx
 UI-025,3,Chat,Conversation history sidebar,"Open chat, view left sidebar","Past conversations listed chronologically; clicking one restores message thread",Pass,10/15/2026,Srinath,UI-1 demo fixture
 UI-026,3,Chat,Assistant switcher,"Click assistant menu in TopBar, select another assistant","Navigates to new assistant chat and resets conversation context",Pass,10/19/2026,,UI-3 verified by ui3.test.tsx

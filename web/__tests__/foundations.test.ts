@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { apiFetch, getCsrfToken, extractErrorCode, getDocuments, normalizeDocumentItem } from "@/lib/api";
+import { apiFetch, getCsrfToken, extractErrorCode, getDocuments, normalizeDocumentItem, getSafeRedirectUrl } from "@/lib/api";
 import { getReviewReasonLabel, REVIEW_REASON_LABELS } from "@/lib/reviewReasons";
 import { getStatusChipConfig, isFinalStatus } from "@/lib/statusChips";
 
@@ -319,5 +319,35 @@ describe("Document response normalization", () => {
       flagged_pages_count: 0,
     };
     expect(normalizeDocumentItem(flat)).toEqual(flat);
+  });
+});
+
+describe("getSafeRedirectUrl security hardening (STATUS.md UI Backlog)", () => {
+  it("defaults to /assistants when target is null, empty, or root", () => {
+    expect(getSafeRedirectUrl(null)).toBe("/assistants");
+    expect(getSafeRedirectUrl("")).toBe("/assistants");
+    expect(getSafeRedirectUrl("/")).toBe("/assistants");
+  });
+
+  it("permits valid relative paths starting with single slash", () => {
+    expect(getSafeRedirectUrl("/assistants/ast-123/chat")).toBe("/assistants/ast-123/chat");
+    expect(getSafeRedirectUrl("/assistants/ast-123/knowledge")).toBe("/assistants/ast-123/knowledge");
+  });
+
+  it("rejects protocol-relative URLs starting with //", () => {
+    expect(getSafeRedirectUrl("//evil.com")).toBe("/assistants");
+    expect(getSafeRedirectUrl("//evil.com/phish")).toBe("/assistants");
+  });
+
+  it("rejects Windows backslash bypass URLs starting with /\\ or \\", () => {
+    expect(getSafeRedirectUrl("/\\evil.com")).toBe("/assistants");
+    expect(getSafeRedirectUrl("\\evil.com")).toBe("/assistants");
+  });
+
+  it("rejects absolute scheme URLs (http, https, javascript, data)", () => {
+    expect(getSafeRedirectUrl("https://evil.com")).toBe("/assistants");
+    expect(getSafeRedirectUrl("http://evil.com")).toBe("/assistants");
+    expect(getSafeRedirectUrl("javascript:alert(1)")).toBe("/assistants");
+    expect(getSafeRedirectUrl("data:text/html,...")).toBe("/assistants");
   });
 });

@@ -2,15 +2,13 @@
 
 import { useState, type FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { login } from "@/lib/api";
+import { login, getSafeRedirectUrl } from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectParam = searchParams.get("redirect");
-  const defaultTarget = "/assistants";
-  const redirectUrl = redirectParam && redirectParam !== "/" ? redirectParam : defaultTarget;
+  const redirectUrl = getSafeRedirectUrl(searchParams.get("redirect"));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

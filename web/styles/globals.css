@@ -69,4 +69,15 @@ button {
     padding-left: var(--spacing-4);
     padding-right: var(--spacing-4);
   }
+
+  /* Responsive chat sidebar drawer for tablet/mobile (UI-023) */
+  .chat-sidebar {
+    position: absolute !important;
+    top: 64px;
+    bottom: 0;
+    left: 0;
+    width: 280px !important;
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+  }
 }

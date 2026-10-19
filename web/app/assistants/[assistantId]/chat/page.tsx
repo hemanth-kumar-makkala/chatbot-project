@@ -54,6 +54,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
   const [activeSourceDoc, setActiveSourceDoc] = useState("prior_auth_guide.pdf");
   const [activeSourcePage, setActiveSourcePage] = useState<number>(1);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // UI-4 Session upload & extraction state
   const [attachedDoc, setAttachedDoc] = useState<GoldenFaxDocument | null>(null);
@@ -873,17 +874,21 @@ export default function ChatPage({ params }: ChatPageProps) {
     >
       <TopBar assistantId={assistantId} userEmail={user?.email || null} />
 
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         {/* Left Sidebar: Conversations List */}
-        <aside
-          style={{
-            width: "300px",
-            borderRight: "1px solid var(--color-border)",
-            backgroundColor: "var(--color-bg-card)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        {sidebarOpen && (
+          <aside
+            data-testid="chat-sidebar"
+            className="chat-sidebar"
+            style={{
+              width: "280px",
+              minWidth: "280px",
+              borderRight: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-bg-card)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
           <div
             style={{
               padding: "var(--spacing-3) var(--spacing-4)",
@@ -984,6 +989,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             })}
           </div>
         </aside>
+        )}
 
         {/* Middle Main: Chat Interface */}
         <main
@@ -1006,7 +1012,29 @@ export default function ChatPage({ params }: ChatPageProps) {
               alignItems: "center",
             }}
           >
-            <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-3)" }}>
+              <button
+                type="button"
+                data-testid="sidebar-toggle-button"
+                aria-label={sidebarOpen ? "Hide conversations sidebar" : "Show conversations sidebar"}
+                onClick={() => setSidebarOpen((prev) => !prev)}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "4px 8px",
+                  cursor: "pointer",
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--color-navy)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontWeight: 500,
+                }}
+              >
+                <span>☰</span>
+                <span>{sidebarOpen ? "Hide" : "Conversations"}</span>
+              </button>
               <span
                 style={{
                   fontSize: "var(--font-size-sm)",

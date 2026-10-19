@@ -550,3 +550,28 @@ export async function askQuestion(
     }),
   });
 }
+
+/**
+ * Safely resolves a login redirect URL (STATUS.md UI Backlog & Open-Redirect hardening).
+ * Accepts strictly relative paths starting with a single '/' and not '//' or '/\'.
+ * Rejects external protocols, protocol-relative URLs, backslashes, and scheme bypass attempts.
+ */
+export function getSafeRedirectUrl(target: string | null | undefined): string {
+  const defaultTarget = "/assistants";
+  if (!target || typeof target !== "string") {
+    return defaultTarget;
+  }
+  const trimmed = target.trim();
+  if (trimmed === "" || trimmed === "/") {
+    return defaultTarget;
+  }
+  // Must start with single slash, not protocol-relative (//) and not backslash (/\ or \)
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.startsWith("/\\") || trimmed.startsWith("\\")) {
+    return defaultTarget;
+  }
+  // Must not contain scheme delimiter or backslash
+  if (trimmed.includes("://") || trimmed.includes(":") || trimmed.includes("\\")) {
+    return defaultTarget;
+  }
+  return trimmed;
+}

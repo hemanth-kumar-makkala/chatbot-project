@@ -22,6 +22,8 @@ from app.wiring import (
     create_embedding_provider,
     create_image_processor,
     create_model_provider,
+    create_reranker,
+    create_retriever,
 )
 
 
@@ -152,6 +154,7 @@ class TestDocumentParserWiringGuard:
         self, profile: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Non-mock profiles raise ConfigurationError when DOCLING_ARTIFACTS_PATH is missing."""
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         monkeypatch.delenv("DOCLING_ARTIFACTS_PATH", raising=False)
         with pytest.raises(ConfigurationError) as exc_info:
             create_document_parser(profile)
@@ -165,6 +168,7 @@ class TestDocumentParserWiringGuard:
         self, profile: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Non-mock profiles raise ConfigurationError when artifacts folder does not exist."""
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         non_existent = tmp_path / "missing_models_folder"
         monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", str(non_existent))
         with pytest.raises(ConfigurationError) as exc_info:
@@ -265,3 +269,47 @@ class TestHfHubOfflineWiringGuard:
         assert embedder is not None
         parser = create_document_parser("mock")
         assert parser is not None
+
+
+class TestRetrieverWiringGuard:
+    """Verifies that retriever instantiation respects runtime profile allowlist."""
+
+    def test_create_retriever_mock_profile(self) -> None:
+        """Mock profile wires MockRetriever."""
+        from app.adapters.retrieval.mock import MockRetriever
+
+        retriever = create_retriever("mock")
+        assert isinstance(retriever, MockRetriever)
+
+    def test_create_retriever_real_profiles(self) -> None:
+        """Real profiles return PostgresRetriever when embedding provider is injected."""
+        from app.adapters.embedding.mock import MockEmbeddingProvider
+        from app.adapters.retrieval.postgres_retriever import PostgresRetriever
+
+        mock_embedder = MockEmbeddingProvider()
+        for profile in ("desktop-gpu", "home-gpu", "office-cpu", "dev-free-api", "cloud"):
+            retriever = create_retriever(profile, embedding_provider=mock_embedder)
+            assert isinstance(retriever, PostgresRetriever)
+
+    def test_create_retriever_unknown_profile(self) -> None:
+        """Unknown profile raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_retriever("unknown-profile")
+        assert exc_info.value.error_code == "UNAUTHORIZED_RETRIEVER_PROFILE"
+
+
+class TestRerankerWiringGuard:
+    """Verifies that reranker instantiation respects runtime profile allowlist."""
+
+    def test_create_reranker_mock_profile(self) -> None:
+        """Mock profile wires MockReranker."""
+        from app.adapters.reranking.mock import MockReranker
+
+        reranker = create_reranker("mock")
+        assert isinstance(reranker, MockReranker)
+
+    def test_create_reranker_unknown_profile(self) -> None:
+        """Unknown profile raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_reranker("unknown-profile")
+        assert exc_info.value.error_code == "UNAUTHORIZED_RERANKER_PROFILE"

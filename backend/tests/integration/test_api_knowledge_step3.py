@@ -96,7 +96,9 @@ async def throwaway_step3_environment() -> AsyncIterator[dict[str, Any]]:
 
         app_url = f"postgresql+psycopg://{app_user}:{app_pass}@{host}:{port}/{throwaway_db.db_name}"
         old_db_url = os.environ.get("DATABASE_URL")
+        old_profile = os.environ.get("APP_PROFILE")
         os.environ["DATABASE_URL"] = app_url
+        os.environ["APP_PROFILE"] = "mock"
         reset_session_engines()
 
         try:
@@ -106,6 +108,10 @@ async def throwaway_step3_environment() -> AsyncIterator[dict[str, Any]]:
                 os.environ["DATABASE_URL"] = old_db_url
             else:
                 os.environ.pop("DATABASE_URL", None)
+            if old_profile is not None:
+                os.environ["APP_PROFILE"] = old_profile
+            else:
+                os.environ.pop("APP_PROFILE", None)
             reset_session_engines()
 
 

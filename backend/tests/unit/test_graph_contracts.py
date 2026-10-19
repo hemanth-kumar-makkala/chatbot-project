@@ -434,7 +434,7 @@ class TestUntrustedInputProtection:
 
         prod_ports = create_production_ports(
             model_provider=MockModelProvider(),
-            retriever=MockRetriever(),
+            retriever=MockRetriever(canned_evidence_ids=[]),
         )
 
         # 1. Assert production wiring leaves all forcing switches unset

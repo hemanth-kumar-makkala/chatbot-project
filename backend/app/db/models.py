@@ -197,7 +197,7 @@ class RunStep(Base):
     error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     public_error_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    model_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     prompt_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     evidence_ids: Mapped[list[UUID] | None] = mapped_column(
@@ -444,7 +444,7 @@ class PageReading(Base):
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     model_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    model_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

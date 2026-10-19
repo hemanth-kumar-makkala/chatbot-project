@@ -17,26 +17,41 @@ class MockRetriever(Retriever):
         self,
         canned_evidence_ids: list[EvidenceId] | None = None,
         canned_titles: list[str] | None = None,
+        canned_evidence_text: dict[str, str] | None = None,
     ) -> None:
-        self._canned_evidence_ids = canned_evidence_ids or [
-            EvidenceId(
-                chunk_id="chunk-syn-001",
-                page_id="page-syn-001",
-                document_version_id="ver-syn-001",
-                evidence_type=EvidenceType.TEXT,
-            ),
-            EvidenceId(
-                chunk_id="chunk-syn-002",
-                page_id="page-syn-001",
-                document_version_id="ver-syn-001",
-                evidence_type=EvidenceType.TEXT,
-            ),
-        ]
-        self._canned_titles = canned_titles or [
-            "General Practice Guidelines",
-            "Billing and Insurance Schedule",
-            "Patient Referral Protocols",
-        ]
+        if canned_evidence_ids is not None:
+            self._canned_evidence_ids = canned_evidence_ids
+        else:
+            self._canned_evidence_ids = [
+                EvidenceId(
+                    chunk_id="chunk-syn-001",
+                    page_id="page-syn-001",
+                    document_version_id="ver-syn-001",
+                    evidence_type=EvidenceType.TEXT,
+                ),
+                EvidenceId(
+                    chunk_id="chunk-syn-002",
+                    page_id="page-syn-001",
+                    document_version_id="ver-syn-001",
+                    evidence_type=EvidenceType.TEXT,
+                ),
+            ]
+        self._canned_titles = (
+            canned_titles
+            if canned_titles is not None
+            else [
+                "General Practice Guidelines",
+                "Billing and Insurance Schedule",
+                "Patient Referral Protocols",
+            ]
+        )
+        if canned_evidence_text is not None:
+            self._canned_evidence_text = canned_evidence_text
+        else:
+            self._canned_evidence_text = {
+                "chunk-syn-001": "General practice guidelines and protocol summary.",
+                "chunk-syn-002": "Billing schedule rates and prior authorization fax numbers.",
+            }
 
     async def search(
         self,
@@ -57,3 +72,15 @@ class MockRetriever(Retriever):
         """Return deterministic grounded titles up to the specified limit."""
         _ = (tenant_ctx, query)
         return self._canned_titles[:limit]
+
+    async def get_evidence_text(
+        self,
+        tenant_ctx: TenantContext,
+        evidence_ids: list[str],
+    ) -> dict[str, str]:
+        """Return deterministic grounded evidence texts for requested IDs."""
+        _ = tenant_ctx
+        return {
+            eid: self._canned_evidence_text.get(eid, f"Mock synthetic text for {eid}")
+            for eid in evidence_ids
+        }
