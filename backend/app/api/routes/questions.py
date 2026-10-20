@@ -116,6 +116,8 @@ class QuestionResponse(BaseModel):
     message_id: str
     status: str
     answer: str
+    answer_mode: str | None = None
+    evidence_state: str | None = None
     citations: list[str] = []
     evidence_type: str = "text"
     sources: list[SourceCitation] = []
@@ -333,7 +335,7 @@ async def ask_question(
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
-            conflict_sources_list = [
+            conflict_sources_list = list(sources_list) if sources_list else [
                 SourceCitation(document_title="Clinic Policy 2023", version="1", page_number=4),
                 SourceCitation(document_title="Clinic Policy 2024", version="2", page_number=2),
             ]
@@ -349,6 +351,8 @@ async def ask_question(
             message_id=str(asst_msg.id),
             status=status_val,
             answer=answer_text,
+            answer_mode=result.get("answer_mode"),
+            evidence_state=result.get("evidence_state"),
             citations=evidence_ids,
             evidence_type=ev_type,
             sources=sources_list,

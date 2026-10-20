@@ -27,8 +27,11 @@ from typing_extensions import TypedDict
 
 from app.core.prompts import (
     AnswerOutput,
+    ConflictDetectionOutput,
+    ExplainPoint,
     RouterOutput,
     format_answer_prompt,
+    format_conflict_prompt,
     format_general_prompt,
     format_router_prompt,
 )
@@ -53,9 +56,27 @@ from app.ports.types import (
 logger = logging.getLogger(__name__)
 
 # Named threshold constants for candidate scoring gate (Node 5 assess_evidence)
-# Initial values recorded in OPEN_QUESTIONS.md pending calibration on the golden evaluation set.
-RELIABLE_TEXT_THRESHOLD: float = 0.1
-WEAK_EVIDENCE_THRESHOLD: float = -2.0
+# Calibrated on golden evaluation set: lowest TEXT_FACT=0.474873, highest NO_ANSWER=0.037414
+RELIABLE_TEXT_THRESHOLD: float = 0.25
+WEAK_EVIDENCE_THRESHOLD: float = 0.0
+
+# Named token cap constants per answer mode (Node 7 generate)
+MAX_TOKENS_EXACT: int = 64
+MAX_TOKENS_SHORT: int = 150
+MAX_TOKENS_EXPLAIN: int = 768
+MAX_TOKENS_TABLE: int = 512
+TOP_N_CHUNKS: int = 8
+
+
+def _extract_doc_title(text: str) -> str:
+    """Extract document title from chunk context prefix if present."""
+    if "[Document: " in text:
+        parts = text.split("[Document: ", 1)[1].split(",", 1)
+        return parts[0].strip()
+    first_line = text.split("\n", 1)[0].strip()
+    if " - Page " in first_line:
+        return first_line.split(" - Page ", 1)[0].strip()
+    return ""
 
 # --- 1. Graph State & Runtime Context ---
 
@@ -339,10 +360,11 @@ async def node_route(
                     computed_lang = model_res.structured_output.get("language", "en")
             except Exception:
                 logger.warning(
-                    "Router model classification failed; falling back to knowledge route",
+                    "Router model classification failed; falling back to short mode and knowledge route",
                     exc_info=True,
                 )
                 computed_route = "knowledge"
+                computed_mode = "short"
         else:
             if any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
                 computed_route = "extraction"
@@ -356,25 +378,9 @@ async def node_route(
         if ports.is_mock_profile and ports.mock_forced_answer_mode:
             computed_mode = ports.mock_forced_answer_mode
         elif computed_mode not in ("exact", "short", "explain", "table"):
-            if any(k in q for k in ("detailed", "comprehensive", "in depth", "elaborate", "long")):
-                computed_mode = "explain"
-            elif any(
-                k in q
-                for k in (
-                    "table",
-                    "spreadsheet",
-                    "row",
-                    "fee schedule",
-                    "accepted plan",
-                    "accepted plans",
-                    "insurance plan",
-                    "plans accepted",
-                )
-            ):
-                computed_mode = "table"
-            else:
-                computed_mode = "short"
-        elif computed_mode == "short" and any(
+            computed_mode = "short"
+
+        if any(
             k in q
             for k in (
                 "table",
@@ -388,6 +394,32 @@ async def node_route(
             )
         ):
             computed_mode = "table"
+        elif any(
+            k in q
+            for k in (
+                "summarize",
+                "summary",
+                "overview",
+                "full data",
+                "data please",
+                "detailed",
+                "comprehensive",
+                "in depth",
+                "elaborate",
+            )
+        ):
+            computed_mode = "explain"
+        elif any(
+            k in q
+            for k in (
+                "reference code",
+                "policy code",
+                "exact code",
+                "verbatim",
+                "code only",
+            )
+        ):
+            computed_mode = "exact"
 
         if computed_route == "clarify":
             if ports.is_mock_profile and ports.mock_titles:
@@ -617,7 +649,102 @@ async def node_assess_evidence(
                 "evidence_ids": [],
             }
 
+        # Check for cross-document conflict when evidence is strong
+        if computed_ev_state == "RELIABLE_TEXT" and ports.model_provider is not None:
+            strong_ids = [
+                eid
+                for eid in ev_ids
+                if ctx.candidate_scores.get(eid, 1.0) >= RELIABLE_TEXT_THRESHOLD
+                and eid in evidence_dict
+            ]
+            if len(strong_ids) >= 2 and (
+                ctx.active_document_count is None or ctx.active_document_count >= 2
+            ):
+                candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
+                try:
+                    conflict_prompt = format_conflict_prompt(
+                        ctx.question_text, candidate_evidence
+                    )
+                    resp = await ports.model_provider.generate(
+                        role=ModelRole.JUDGE,
+                        messages=[
+                            ChatMessage(role="user", content=conflict_prompt),
+                            ChatMessage(role="assistant", content="</think>"),
+                        ],
+                        schema=ConflictDetectionOutput,
+                        max_tokens=256,
+                    )
+                    if resp.structured_output and resp.structured_output.get("has_conflict"):
+                        c_data = resp.structured_output
+                        q1 = str(c_data.get("quote1", "")).strip()
+                        q2 = str(c_data.get("quote2", "")).strip()
+                        v1 = str(c_data.get("value1", "")).strip()
+                        v2 = str(c_data.get("value2", "")).strip()
+                        d1_id = str(c_data.get("doc1_id", "")).strip()
+                        d2_id = str(c_data.get("doc2_id", "")).strip()
+
+                        def _find_exact_quote(quote: str, val: str, chunk_text: str) -> str:
+                            q_clean = quote.strip().strip('"').strip("'")
+                            if q_clean and q_clean in chunk_text:
+                                return q_clean
+                            if q_clean and q_clean.rstrip(".,;") in chunk_text:
+                                return q_clean.rstrip(".,;")
+                            if val and val in chunk_text:
+                                for line in chunk_text.splitlines():
+                                    if val in line and line.strip():
+                                        return line.strip()
+                            return ""
+
+                        c1_match = None
+                        c2_match = None
+
+                        for eid in strong_ids:
+                            chunk_t = evidence_dict[eid]
+                            if (q1 and q1 in chunk_t) or (v1 and v1 in chunk_t):
+                                c1_match = eid
+                                break
+
+                        for eid in strong_ids:
+                            if eid == c1_match:
+                                continue
+                            chunk_t = evidence_dict[eid]
+                            if (q2 and q2 in chunk_t) or (v2 and v2 in chunk_t):
+                                c2_match = eid
+                                break
+
+                        if c1_match and c2_match and c1_match != c2_match:
+                            q1_final = _find_exact_quote(q1, v1, evidence_dict[c1_match])
+                            q2_final = _find_exact_quote(q2, v2, evidence_dict[c2_match])
+
+                            # Code must verify that each value's quoted span exists in its cited document
+                            if (
+                                q1_final
+                                and q2_final
+                                and q1_final in evidence_dict[c1_match]
+                                and q2_final in evidence_dict[c2_match]
+                            ):
+                                d1_name = _extract_doc_title(evidence_dict[c1_match]) or "Document 1"
+                                d2_name = _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
+                                ctx.response_text = (
+                                    f"Two documents disagree:\n"
+                                    f"- {v1} ({d1_name}): \"{q1_final}\"\n"
+                                    f"- {v2} ({d2_name}): \"{q2_final}\""
+                                )
+                                return {
+                                    "evidence_state": "CONFLICTING",
+                                    "status": "conflicting",
+                                    "needs_vision": False,
+                                    "evidence_ids": [c1_match, c2_match],
+                                }
+                except Exception:
+                    logger.warning(
+                        "Conflict assessment model call failed; proceeding with single answer",
+                        exc_info=True,
+                    )
+
         if computed_ev_state == "CONFLICTING":
+            if not ctx.response_text:
+                ctx.response_text = "Two documents disagree on the answer to your question."
             return {
                 "evidence_state": "CONFLICTING",
                 "status": "conflicting",
@@ -691,11 +818,57 @@ async def node_generate(
         # Route knowledge
         mode = state.get("answer_mode", "short")
         lang = state.get("language", "en")
-        top_ids = [eid for eid in state.get("evidence_ids", []) if eid in ctx.evidence_text][:3]
-        if top_ids:
-            used_evidence = {eid: ctx.evidence_text[eid] for eid in top_ids}
+
+        if mode == "exact":
+            token_cap = MAX_TOKENS_EXACT
+        elif mode == "short":
+            token_cap = MAX_TOKENS_SHORT
+        elif mode == "explain":
+            token_cap = MAX_TOKENS_EXPLAIN
+        elif mode == "table":
+            token_cap = MAX_TOKENS_TABLE
         else:
-            used_evidence = dict(list(ctx.evidence_text.items())[:3])
+            token_cap = MAX_TOKENS_SHORT
+
+        if mode == "explain":
+            top_ids = [
+                eid for eid in state.get("evidence_ids", []) if eid in ctx.evidence_text
+            ][:TOP_N_CHUNKS]
+            if not top_ids:
+                top_ids = list(ctx.evidence_text.keys())[:TOP_N_CHUNKS]
+
+            # Explain mode receives top N reranked chunks plus neighbouring chunks from the same page
+            if ports.retriever is not None and top_ids:
+                try:
+                    neighbours = await ports.retriever.get_neighbouring_chunks(ctx.tenant, top_ids)
+                    if neighbours:
+                        neighbour_ids = [
+                            n.chunk_id
+                            for n in neighbours
+                            if n.chunk_id not in ctx.evidence_text
+                        ]
+                        if neighbour_ids:
+                            neighbour_texts = await ports.retriever.get_evidence_text(
+                                ctx.tenant, neighbour_ids
+                            )
+                            ctx.evidence_text.update(neighbour_texts)
+                            for n in neighbours:
+                                if n.chunk_id in ctx.evidence_text and n.chunk_id not in top_ids:
+                                    top_ids.append(n.chunk_id)
+                except Exception:
+                    logger.warning("Failed to fetch neighbouring chunks", exc_info=True)
+
+            used_evidence = {
+                eid: ctx.evidence_text[eid] for eid in top_ids if eid in ctx.evidence_text
+            }
+        else:
+            top_ids = [
+                eid for eid in state.get("evidence_ids", []) if eid in ctx.evidence_text
+            ][:3]
+            if top_ids:
+                used_evidence = {eid: ctx.evidence_text[eid] for eid in top_ids}
+            else:
+                used_evidence = dict(list(ctx.evidence_text.items())[:3])
 
         used_ids = list(used_evidence.keys())
         content = "Generated answer grounded in evidence."
@@ -715,20 +888,58 @@ async def node_generate(
                         ChatMessage(role="assistant", content="</think>"),
                     ],
                     schema=AnswerOutput,
-                    max_tokens=512,
+                    max_tokens=token_cap,
                 )
                 if resp.structured_output:
-                    ctx.generated_answer = resp.structured_output
+                    ctx.generated_answer = dict(resp.structured_output)
                     content = resp.structured_output.get("answer", resp.content)
-                    model_cites_raw = resp.structured_output.get("evidence_ids")
-                    parsed_cites = AnswerOutput.parse_evidence_ids(model_cites_raw)
-                    if parsed_cites:
-                        used_ids = [str(cid) for cid in parsed_cites if str(cid) in used_evidence]
-                        if not used_ids:
-                            used_ids = list(used_evidence.keys())
+
+                    # Handle explain mode points
+                    raw_points = resp.structured_output.get("points")
+                    if raw_points and isinstance(raw_points, list):
+                        point_lines = []
+                        all_point_cites: set[str] = set()
+                        for p in raw_points:
+                            p_dict = p if isinstance(p, dict) else p.model_dump()
+                            p_text = str(p_dict.get("point", "")).strip()
+                            if p_text:
+                                point_lines.append(f"- {p_text}")
+                            cites = AnswerOutput.parse_evidence_ids(p_dict.get("evidence_ids", []))
+                            for c in cites:
+                                all_point_cites.add(c)
+                        if point_lines:
+                            ans_intro = resp.structured_output.get("answer") or ""
+                            if (
+                                ans_intro
+                                and ans_intro.strip()
+                                and not any(
+                                    ans_intro.strip() == p.get("point")
+                                    for p in raw_points
+                                    if isinstance(p, dict)
+                                )
+                            ):
+                                content = f"{ans_intro}\n" + "\n".join(point_lines)
+                            else:
+                                content = "\n".join(point_lines)
+                        if all_point_cites:
+                            used_ids = [
+                                cid for cid in all_point_cites if cid in used_evidence
+                            ] or list(used_evidence.keys())
                     else:
-                        used_ids = list(used_evidence.keys())
+                        model_cites_raw = resp.structured_output.get("evidence_ids")
+                        parsed_cites = AnswerOutput.parse_evidence_ids(model_cites_raw)
+                        if parsed_cites:
+                            used_ids = [str(cid) for cid in parsed_cites if str(cid) in used_evidence]
+                            if not used_ids:
+                                used_ids = list(used_evidence.keys())
+                        else:
+                            used_ids = list(used_evidence.keys())
                     ctx.generated_answer["evidence_ids"] = used_ids
+                    ctx.generated_answer["answer"] = content
+                    if raw_points:
+                        ctx.generated_answer["points"] = [
+                            p if isinstance(p, dict) else p.model_dump() for p in raw_points
+                        ]
                 else:
                     content = resp.content
             except Exception as gen_exc:
@@ -772,6 +983,7 @@ async def node_validate(
         attempts = state.get("validation_attempts", 0)
         generated = runtime.context.generated_answer
         provided_evidence_ids = set(state.get("evidence_ids", [])) | set(evidence.keys())
+        mode = state.get("answer_mode", "short")
 
         is_valid = True
 
@@ -779,14 +991,15 @@ async def node_validate(
         if not ans_text:
             is_valid = False
 
-        # Rule 3c: Validation must reject an answer that is empty or only repeats a context prefix
+        # Rule 3c / Task 3.5: Reject answers that are only a document title, a file name, or a context prefix
         if is_valid and ans_text:
             import re
 
             prefix_pattern = re.compile(
                 r"^.+\.(pdf|csv|xlsx)\s*-\s*Page\s*\d+(\s*-\s*.+)?$", re.IGNORECASE
             )
-            if prefix_pattern.match(ans_text):
+            filename_pattern = re.compile(r"^[\w\-. ]+\.(pdf|csv|xlsx|txt)$", re.IGNORECASE)
+            if prefix_pattern.match(ans_text) or filename_pattern.match(ans_text):
                 is_valid = False
             else:
                 for text_val in evidence.values():
@@ -794,6 +1007,12 @@ async def node_validate(
                     if ans_text == first_line or ans_text == text_val.strip():
                         is_valid = False
                         break
+                    # If first line has "[Document: title, ...]" check if ans_text is only that title
+                    if "[Document: " in first_line:
+                        d_title = first_line.split("[Document: ", 1)[1].split(",", 1)[0].strip()
+                        if ans_text.lower() == d_title.lower():
+                            is_valid = False
+                            break
 
         # Invariant 4 validation rule: if evidence is explicitly inconsistent, fail validation
         for chunk in evidence.values():
@@ -801,6 +1020,7 @@ async def node_validate(
                 is_valid = False
                 break
 
+        # Citation IDs check: every citation ID must be in provided_evidence_ids
         if is_valid and generated:
             cited_ids_raw = generated.get("evidence_ids", [])
             cited_ids = AnswerOutput.parse_evidence_ids(cited_ids_raw)
@@ -809,14 +1029,75 @@ async def node_validate(
                     is_valid = False
                     break
 
+        # Task 3.5 explain mode: validate each point separately; drop points that fail;
+        # show the validated points; if none validates, regenerate once (the 1-retry loop),
+        # then refuse with "I couldn't confirm that from the documents." Never show unvalidated text.
+        if is_valid and mode == "explain" and generated:
+            raw_points = generated.get("points")
+            if raw_points and isinstance(raw_points, list):
+                valid_points = []
+                for p in raw_points:
+                    p_dict = p if isinstance(p, dict) else p.model_dump()
+                    p_text = str(p_dict.get("point", "")).strip()
+                    p_quote = str(p_dict.get("quoted_span", "")).strip().strip('"').strip("'")
+                    p_cites = AnswerOutput.parse_evidence_ids(p_dict.get("evidence_ids", []))
+                    p_cites = [str(c).strip("[]'\"") for c in p_cites if str(c).strip("[]'\"")]
+
+                    # Check citation IDs
+                    if any(cid not in provided_evidence_ids for cid in p_cites):
+                        continue
+
+                    # Check character-for-character quote match in cited chunks
+                    target_chunks = [
+                        evidence[cid] for cid in p_cites if cid in evidence
+                    ] or list(evidence.values())
+                    if not p_quote:
+                        continue
+
+                    quote_matched = any(
+                        p_quote in chunk_txt
+                        or (p_quote.rstrip(".,;") and p_quote.rstrip(".,;") in chunk_txt)
+                        for chunk_txt in target_chunks
+                    )
+                    if not quote_matched:
+                        continue
+
+                    valid_points.append(p_dict)
+
+                if valid_points:
+                    generated["points"] = valid_points
+                    runtime.context.generated_answer["points"] = valid_points
+                    # Format response text with validated points ONLY
+                    ans_header = generated.get("answer") or ""
+                    point_lines = [f"- {p['point']}" for p in valid_points]
+                    if (
+                        ans_header
+                        and ans_header.strip()
+                        and not any(ans_header.strip() == p["point"] for p in valid_points)
+                    ):
+                        runtime.context.response_text = f"{ans_header}\n" + "\n".join(point_lines)
+                    else:
+                        runtime.context.response_text = "\n".join(point_lines)
+                else:
+                    # All points failed validation
+                    is_valid = False
+            else:
+                quoted_span = generated.get("quoted_span")
+                if quoted_span:
+                    span_match = any(quoted_span in text_val for text_val in evidence.values())
+                    if not span_match:
+                        is_valid = False
+
+        elif is_valid and generated and mode != "explain":
             quoted_span = generated.get("quoted_span")
-            if is_valid and quoted_span and quoted_span.strip():
+            if quoted_span and quoted_span.strip():
                 # Every quoted span must appear character for character
                 # in stored text of cited evidence
                 span_match = False
-                target_chunks = [evidence[cid] for cid in cited_ids if cid in evidence] or list(
-                    evidence.values()
-                )
+                cited_ids = AnswerOutput.parse_evidence_ids(generated.get("evidence_ids", []))
+                target_chunks = [
+                    evidence[cid] for cid in cited_ids if cid in evidence
+                ] or list(evidence.values())
                 for text_val in target_chunks:
                     if quoted_span in text_val:
                         span_match = True
@@ -825,7 +1106,7 @@ async def node_validate(
                     is_valid = False
 
             # Rule 3b: In table mode, validate that cited row values exist in tables_data
-            if is_valid and state.get("answer_mode") == "table":
+            if is_valid and mode == "table":
                 table_evidence_texts = [
                     evidence[eid]
                     for eid in provided_evidence_ids

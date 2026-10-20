@@ -524,3 +524,51 @@ class PostgresRetriever(Retriever):
                     break
 
             return {"titles": titles, "headings": headings[:heading_limit]}
+
+    async def get_neighbouring_chunks(
+        self,
+        tenant_ctx: TenantContext,
+        chunk_ids: list[str],
+    ) -> list[EvidenceId]:
+        """Fetch other active chunks from the same page(s) within tenant scope."""
+        if not chunk_ids:
+            return []
+
+        tid = UUID(str(tenant_ctx.tenant_id))
+        chunk_uuids: list[UUID] = []
+        for cid in chunk_ids:
+            try:
+                chunk_uuids.append(UUID(str(cid)))
+            except (ValueError, TypeError):
+                continue
+
+        if not chunk_uuids:
+            return []
+
+        async with self._session_factory(tenant_ctx) as session:
+            stmt = text(
+                """
+                SELECT c.id, c.page_id, c.document_version_id, c.evidence_type
+                FROM chunks c
+                WHERE c.tenant_id = :tenant_id
+                  AND c.is_active = true
+                  AND c.page_id IN (
+                      SELECT c2.page_id FROM chunks c2
+                      WHERE c2.tenant_id = :tenant_id
+                        AND c2.id = ANY(:chunk_ids)
+                  )
+                  AND NOT (c.id = ANY(:chunk_ids));
+                """
+            )
+            res = await session.execute(stmt, {"tenant_id": tid, "chunk_ids": chunk_uuids})
+            rows = res.mappings().all()
+
+            return [
+                EvidenceId(
+                    chunk_id=str(r["id"]),
+                    page_id=str(r["page_id"]),
+                    document_version_id=str(r["document_version_id"]),
+                    evidence_type=EvidenceType(r["evidence_type"]),
+                )
+                for r in rows
+            ]

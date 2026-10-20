@@ -8,7 +8,7 @@ models:
   answer:  { provider: ollama, model: "qwen3-vl:4b" }
   vision:  { provider: ollama, model: "qwen3-vl:4b" }
   extract: { provider: ollama, model: "qwen3-vl:4b" }
-  judge:   { provider: ollama, model: "qwen2.5:3b" }
+  judge:   { provider: ollama, model: "qwen3-vl:4b" }
 embeddings:
   provider: local
   model: "BAAI/bge-m3"

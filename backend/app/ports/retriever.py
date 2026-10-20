@@ -59,3 +59,12 @@ class Retriever(ABC):
     ) -> dict[str, list[str]]:
         """Retrieve active document titles and up to heading_limit distinct headings."""
         ...
+
+    @abstractmethod
+    async def get_neighbouring_chunks(
+        self,
+        tenant_ctx: TenantContext,
+        chunk_ids: list[str],
+    ) -> list[EvidenceId]:
+        """Fetch other active chunks from the same page(s) within tenant scope."""
+        ...

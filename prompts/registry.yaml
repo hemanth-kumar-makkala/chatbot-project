@@ -88,7 +88,64 @@ prompts:
             evidence_type:
               type: "string"
               enum: ["text", "visual", "table"]
+            points:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  point:
+                    type: "string"
+                  quoted_span:
+                    type: "string"
+                  evidence_ids:
+                    type: "array"
+                    items:
+                      type: "string"
+                required: ["point", "quoted_span", "evidence_ids"]
           required: ["mode", "answer", "evidence_ids", "evidence_type"]
+
+  conflict_detect:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "judge"
+        description: "Detect conflicting values for a question across evidence chunks from different documents."
+        template: |
+          You are assessing candidate evidence passages from different documents to determine if they give contradictory or conflicting values for what the question asks.
+          Question: {question}
+
+          Evidence:
+          {evidence_context}
+
+          If two or more documents state differing or conflicting values answering the question:
+          - set has_conflict to true
+          - value1: first answer value
+          - quote1: EXACT verbatim quoted span from the first document supporting value1
+          - doc1_id: chunk or document ID for the first document
+          - value2: conflicting answer value
+          - quote2: EXACT verbatim quoted span from the second document supporting value2
+          - doc2_id: chunk or document ID for the second document
+
+          If there is no conflict, set has_conflict to false and leave other fields empty.
+          Output strictly as JSON matching the schema.
+        response_schema:
+          type: "object"
+          properties:
+            has_conflict:
+              type: "boolean"
+            value1:
+              type: "string"
+            quote1:
+              type: "string"
+            doc1_id:
+              type: "string"
+            value2:
+              type: "string"
+            quote2:
+              type: "string"
+            doc2_id:
+              type: "string"
+          required: ["has_conflict"]
 
   vision_read_page:
     default_version: "1.0.0"
