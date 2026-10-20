@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within, cleanup } from "@testing-library/react";
-import ChatPage from "@/app/assistants/[assistantId]/chat/page";
+import ChatPage from "@/app/assistants/[assistantId]/page";
 import { ExtractionTable } from "@/components/ExtractionTable";
 import * as api from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
@@ -284,7 +284,7 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       },
     ];
 
-    it("renders explicit Staffingly tokenized badge for all 7 states", () => {
+    it("renders explicit default theme tokenized badge for all 7 states", () => {
       const handleOpen = vi.fn();
       render(<ExtractionTable fields={mockFields} onOpenSource={handleOpen} />);
 

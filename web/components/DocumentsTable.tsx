@@ -184,11 +184,11 @@ export function DocumentsTable({
                               style={{
                                 padding: "6px 12px",
                                 borderRadius: "var(--radius-md)",
-                                backgroundColor: "var(--color-lavender)",
-                                color: "var(--color-navy)",
+                                backgroundColor: "var(--color-warning-soft)",
+                                color: "var(--color-warning-text)",
                                 fontWeight: 600,
                                 fontSize: "var(--font-size-xs)",
-                                border: "1px solid rgba(95, 61, 191, 0.3)",
+                                border: "1px solid var(--color-border)",
                               }}
                             >
                               Review

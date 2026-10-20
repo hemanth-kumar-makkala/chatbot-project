@@ -20,12 +20,12 @@
 - Verified initial `npm install`, `npm run typecheck`, `npm test` (with smoke test), and `npm run build`.
 
 ### Step 4: Foundations & Authentication
-- Built `web/styles/tokens.css` with all brand tokens as CSS variables (Staffingly Branding Guide: Primary blue `#0037B2`, Primary gold `#F5AF37`, Gradient `#0037B2` to `#A941C6`, Navy `#293682`, Purple `#5F3DBF`, Lavender `#D8C7FA`, Light blue `#C2DCFF`, Dark gold `#BD7800`, Cream `#FFF8F2`, Light lilac `#F8F2FF`, Barlow font stack).
+- Built default theme tokens (web/styles/themes/default/tokens.css) with all theme tokens as CSS variables (archived theme: docs/ui/staffingly-inc/BRAND_THEME.md; Background #FFFFFF, Surface #F6F8FA, Subtle surface #EEF2F5, Border #DDE3EA, Text primary #17212B, Text secondary #556270, Text on primary #FFFFFF, Primary #0B6E79, Primary hover #095861, Primary soft #E3F2F3, Info #2B5FB4, Success #1D7A4E, Warning #8A5300, Danger #B42318, Neutral #E9EDF1/#3E4A57, system font stack).
 - Built `web/styles/globals.css` with WCAG AA focus rings, reset, and responsive container (1280px max, 768px responsive).
 - Built `web/lib/api.ts`: universal fetch wrapper with `credentials: "include"`, automatic `X-CSRF-Token` injection from cookie on `POST`, `PUT`, `PATCH`, `DELETE`, error masking to typed `{ ok: false, status, code }` that never leaks raw server text, and typed models matching the backend API contract.
 - Built `web/lib/reviewReasons.ts` mapping all 7 review reason codes to human labels with fallback to "Needs review" and code-only console warning.
 - Built `web/lib/statusChips.ts` mapping all document statuses to chips, including `Ready (N pages need review)`.
-- Built `web/components/TopBar.tsx` with Staffingly wordmark, gradient background, assistant indicator, and user menu with logout.
+- Built `web/components/TopBar.tsx` with white background, bottom border, app name in text primary ("Knowledge Assistant"), active tab in primary, client switcher, and user menu with logout. No gradients anywhere.
 - Built `web/app/login/page.tsx` with cookie-based session (never storing tokens in localStorage/sessionStorage) and accessible error display.
 - Built unit tests in `web/__tests__/foundations.test.ts` (19 test cases) verifying CSRF header rules, error sanitization, review reason mapping, status chip mapping, and fallbacks.
 

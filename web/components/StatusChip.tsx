@@ -8,37 +8,37 @@ interface StatusChipProps {
 
 const variantStyles: Record<ChipVariant, { bg: string; color: string; border?: string }> = {
   queued: {
-    bg: "var(--color-status-queued-bg)",
-    color: "var(--color-status-queued-text)",
+    bg: "var(--color-neutral-bg)",
+    color: "var(--color-neutral-text)",
   },
   reading: {
-    bg: "var(--color-status-in-progress-bg)",
-    color: "var(--color-status-in-progress-text)",
+    bg: "var(--color-info-soft)",
+    color: "var(--color-info)",
   },
   scanning_images: {
-    bg: "#EDE7F6",
-    color: "var(--color-purple)",
+    bg: "var(--color-info-soft)",
+    color: "var(--color-info)",
   },
   ready: {
     bg: "var(--color-status-success-bg)",
     color: "var(--color-status-success-text)",
   },
   review: {
-    bg: "var(--color-lavender)",
-    color: "var(--color-navy)",
-    border: "1px solid rgba(95, 61, 191, 0.3)",
+    bg: "var(--color-warning-soft)",
+    color: "var(--color-warning-text)",
+    border: "1px solid var(--color-border)",
   },
   failed: {
     bg: "var(--color-status-error-bg)",
     color: "var(--color-status-error-text)",
   },
   retired: {
-    bg: "var(--color-status-retired-bg)",
-    color: "var(--color-status-retired-text)",
+    bg: "var(--color-neutral-bg)",
+    color: "var(--color-neutral-text)",
   },
   unknown: {
-    bg: "var(--color-border-subtle)",
-    color: "var(--color-text-muted)",
+    bg: "var(--color-neutral-bg)",
+    color: "var(--color-neutral-text)",
   },
 };
 

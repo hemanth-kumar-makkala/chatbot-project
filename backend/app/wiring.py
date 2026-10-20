@@ -569,8 +569,8 @@ def create_reranker(profile: str) -> Reranker:
 
     Profiles:
     - mock: MockReranker
-    - desktop-gpu, home-gpu, office-cpu, dev-free-api, cloud: BgeRerankerAdapter
-    - unknown profile: ConfigurationError
+    - desktop-gpu, home-gpu: BgeRerankerAdapter
+    - all other profiles: ConfigurationError
     """
     from app.ports.errors import ConfigurationError
 
@@ -579,14 +579,14 @@ def create_reranker(profile: str) -> Reranker:
 
         return MockReranker()
 
-    if profile in ("desktop-gpu", "home-gpu", "office-cpu", "dev-free-api", "cloud"):
+    if profile in ("desktop-gpu", "home-gpu"):
+        enforce_hf_hub_offline_guard(profile)
         from app.adapters.reranking.bge_reranker import create_bge_reranker_adapter
 
         return create_bge_reranker_adapter(profile)
 
-    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
     raise ConfigurationError(
-        f"Unknown or unsupported profile '{profile}' for Reranker. "
-        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+        f"Unauthorized or unsupported profile '{profile}' for Reranker. "
+        "Reranker is wired only for desktop-gpu and home-gpu.",
         error_code="UNAUTHORIZED_RERANKER_PROFILE",
     )

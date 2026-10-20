@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within, cleanup } from "@testing-library/react";
 import { Suspense } from "react";
-import ChatPage from "@/app/assistants/[assistantId]/chat/page";
+import ChatPage from "@/app/assistants/[assistantId]/page";
 import { TopBar } from "@/components/TopBar";
 import * as api from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
@@ -308,10 +308,8 @@ describe("UI-3: Phase 3 Chat Fixes, Thumbnails, Status Lines, Switcher & Source 
     await waitFor(() => {
       const panel = screen.getByTestId("source-panel");
       expect(panel).toBeInTheDocument();
-      expect(
-        screen.getByText("Source preview needs the document file route (not built yet)")
-      ).toBeInTheDocument();
-      expect(within(panel).getByText("Demo")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-canvas")).toBeInTheDocument();
+      expect(screen.getByTestId("source-panel-doc-title")).toHaveTextContent(/eligibility_checklist/i);
     });
   });
 

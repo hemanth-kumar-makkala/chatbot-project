@@ -178,7 +178,7 @@ export function ReviewDrawer({
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(41, 54, 130, 0.4)",
+        backgroundColor: "var(--color-backdrop)",
         backdropFilter: "blur(2px)",
         zIndex: 1000,
         display: "flex",
@@ -198,7 +198,7 @@ export function ReviewDrawer({
           width: "100%",
           maxWidth: "680px",
           height: "100%",
-          backgroundColor: "var(--color-bg-card)",
+          backgroundColor: "var(--color-bg-page)",
           boxShadow: "var(--shadow-drawer)",
           display: "flex",
           flexDirection: "column",
@@ -248,8 +248,8 @@ export function ReviewDrawer({
               padding: "8px",
               borderRadius: "var(--radius-md)",
               border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-white)",
-              color: "var(--color-navy)",
+              backgroundColor: "var(--color-bg-page)",
+              color: "var(--color-text-primary)",
               cursor: "pointer",
               fontSize: "var(--font-size-sm)",
               fontWeight: 700,
@@ -272,7 +272,7 @@ export function ReviewDrawer({
               color: "var(--color-status-error-text)",
               borderRadius: "var(--radius-md)",
               fontSize: "var(--font-size-sm)",
-              border: "1px solid rgba(183, 28, 28, 0.2)",
+              border: "1px solid var(--color-danger)",
             }}
           >
             {errorMessage}
@@ -355,8 +355,8 @@ export function ReviewDrawer({
                           fontWeight: 600,
                           padding: "2px 8px",
                           borderRadius: "var(--radius-full)",
-                          backgroundColor: "var(--color-lavender)",
-                          color: "var(--color-navy)",
+                          backgroundColor: "var(--color-warning-soft)",
+                          color: "var(--color-warning-text)",
                         }}
                       >
                         {reasonLabel}
@@ -367,7 +367,7 @@ export function ReviewDrawer({
                     <div
                       style={{
                         padding: "var(--spacing-4)",
-                        backgroundColor: "#F3F5F9",
+                        backgroundColor: "var(--color-bg-subtle)",
                         textAlign: "center",
                         borderBottom: "1px solid var(--color-border-subtle)",
                       }}
@@ -408,8 +408,8 @@ export function ReviewDrawer({
                           data-testid={`reading-text-${page.page_number}`}
                           style={{
                             fontSize: "var(--font-size-sm)",
-                            color: "var(--color-navy)",
-                            backgroundColor: "var(--color-cream)",
+                            color: "var(--color-text-primary)",
+                            backgroundColor: "var(--color-bg-surface)",
                             padding: "var(--spacing-3)",
                             borderRadius: "var(--radius-md)",
                             fontFamily: "monospace",
@@ -460,7 +460,7 @@ export function ReviewDrawer({
                         style={{
                           padding: "6px 14px",
                           borderRadius: "var(--radius-md)",
-                          border: "1px solid rgba(183, 28, 28, 0.3)",
+                          border: "1px solid var(--color-danger)",
                           backgroundColor: "var(--color-status-error-bg)",
                           color: "var(--color-status-error-text)",
                           fontSize: "var(--font-size-xs)",
@@ -520,8 +520,8 @@ export function ReviewDrawer({
             style={{
               padding: "10px 20px",
               borderRadius: "var(--radius-md)",
-              backgroundColor: "var(--color-primary-gold)",
-              color: "var(--color-navy)",
+              backgroundColor: "var(--color-primary)",
+              color: "var(--color-text-on-primary)",
               fontWeight: 700,
               fontSize: "var(--font-size-sm)",
               border: "none",

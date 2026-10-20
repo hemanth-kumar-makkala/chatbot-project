@@ -20,12 +20,14 @@ from app.api.config import ApiSettings
 from app.api.deps import (
     get_api_settings,
     get_client_admin_tenant_context_for_assistant,
+    get_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.db.models import AuditEvent, Document, Page
+from app.db.models import AuditEvent, Document, DocumentVersion, Page
 from app.db.session import tenant_session
 from app.ports.errors import (
     AuthorizationError,
+    ConfigurationError,
     DocumentNotFoundError,
     DocumentRetiredError,
     FileValidationError,
@@ -210,6 +212,11 @@ async def upload_document(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=exc.message,
         ) from None
+    except ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Configuration error: {exc.message}",
+        ) from None
 
     # 4. Enqueue background split job with IDs only (if not duplicate)
     if not result.is_duplicate:
@@ -332,6 +339,148 @@ async def get_page_image(
             user_id=UUID(tenant.user_id),
             event_type="knowledge_compliance",
             action="page_image_viewed",
+            resource_id=f"{version_id}:{page_number}",
+        )
+        session.add(audit)
+        await session.flush()
+
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'",
+        },
+    )
+
+
+@router.get("/documents/{version_id}/file")
+async def get_document_file(
+    assistant_id: str,
+    version_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_for_assistant)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> Response:
+    """Stream document version file stored in storage.
+
+    Allowed for client_admin and staff of the tenant.
+    Tenant-scoped: returns 404 if document version does not belong to tenant.
+    """
+    del assistant_id
+    tid = UUID(tenant.tenant_id)
+    profile = getattr(settings, "profile", "mock")
+    storage_dir = getattr(settings, "storage_dir", "storage")
+
+    async with tenant_session(tenant) as session:
+        doc_stmt = (
+            select(DocumentVersion, Document)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                DocumentVersion.id == version_id,
+                DocumentVersion.tenant_id == tid,
+                Document.tenant_id == tid,
+            )
+        )
+        res = (await session.execute(doc_stmt)).first()
+        if res is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document version not found",
+            )
+        doc_ver, doc = res
+
+        storage = create_storage_backend(profile=profile, base_dir=storage_dir)
+        ext = doc_ver.file_extension or "pdf"
+        key = StorageKey(tenant_id=tid, path=f"documents/{version_id}/original.{ext}")
+        try:
+            file_bytes = await storage.get(key)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document file not found in storage",
+            ) from None
+
+        media_type = "application/pdf"
+        if ext == "csv":
+            media_type = "text/csv"
+        elif ext == "xlsx":
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif ext in ("png", "jpeg", "jpg", "tiff"):
+            media_type = f"image/{ext}"
+
+        audit = AuditEvent(
+            tenant_id=tid,
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="document_file_viewed",
+            resource_id=str(version_id),
+        )
+        session.add(audit)
+        await session.flush()
+
+    return Response(
+        content=file_bytes,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f'inline; filename="{doc.title}"',
+        },
+    )
+
+
+@router.get("/documents/{version_id}/pages/{page_number}/thumbnail")
+async def get_page_thumbnail(
+    assistant_id: str,
+    version_id: UUID,
+    page_number: int,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_for_assistant)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> Response:
+    """Staff-allowed proxy for answer thumbnails without public static path.
+
+    Headers: Content-Type: image/png, Cache-Control: no-store,
+             X-Content-Type-Options: nosniff, Content-Security-Policy: default-src 'none'.
+    Logs compliance audit event (action="page_thumbnail_viewed").
+    """
+    del assistant_id
+    tid = UUID(tenant.tenant_id)
+    profile = getattr(settings, "profile", "mock")
+    storage_dir = getattr(settings, "storage_dir", "storage")
+
+    async with tenant_session(tenant) as session:
+        page_stmt = select(Page).where(
+            Page.tenant_id == tid,
+            Page.document_version_id == version_id,
+            Page.page_number == page_number,
+        )
+        page = (await session.execute(page_stmt)).scalars().first()
+        if page is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Page not found",
+            )
+
+        storage = create_storage_backend(profile=profile, base_dir=storage_dir)
+        path = page.image_key
+        if path.startswith(f"{tenant.tenant_id}/"):
+            path = path[len(f"{tenant.tenant_id}/") :]
+        key = StorageKey(tenant_id=tid, path=path)
+
+        try:
+            image_bytes = await storage.get(key)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Page thumbnail not found in storage",
+            ) from None
+
+        audit = AuditEvent(
+            tenant_id=tid,
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="page_thumbnail_viewed",
             resource_id=f"{version_id}:{page_number}",
         )
         session.add(audit)

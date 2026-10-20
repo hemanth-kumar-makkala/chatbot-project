@@ -5,22 +5,39 @@
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase2_gate.json`: 15 golden documents ingested twice with zero duplicates across pages, readings, tables, chunks, and embeddings)
 - **Phase 3**: RAG Engine & Core Logic (Active Phase)
-  - **Task 3.1: Contextual Chunking & Hybrid Search (Node 3 `retrieve`)** — **COMPLETED & VERIFIED**
-    - **Hybrid Search Adapter (`PostgresRetriever`)**: Implemented dense pgvector cosine distance + sparse PostgreSQL tsvector search (`plainto_tsquery`) fused with Reciprocal Rank Fusion (RRF, $k=60$).
-    - **Invariant 1 (`retriever_user` Read-Only Role)**: Verified via integration tests that `retriever_tenant_session` operates under `retriever_user` and `SET LOCAL app.current_tenant_id = :tenant_id`. SELECT succeeds; INSERT/UPDATE/DELETE immediately fail with SQLSTATE `42501` (permission denied).
-    - **Context Prefix & Stored Chunk Separation**: Implemented `get_evidence_text` returning `{context_prefix}\n\n{text}` strictly scoped within the authenticated tenant boundary.
-    - **Node 3 & Node 2 Graph Integration**: Connected `node_retrieve` and `node_route` in `backend/app/core/graph.py` to `ports.retriever.search`, `search_titles`, and `get_evidence_text`.
-    - **Wiring & Profile Guards**: Wired `MockRetriever` on `mock` profile and `PostgresRetriever` across all real profiles (`desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, `cloud`).
-    - **ADR-0012**: Authored architectural decision record for hybrid retrieval, RRF, and read-only role scoping.
-    - **Verification**: `backend/tests/integration/test_hybrid_retrieval.py` (10 tests), `backend/tests/unit/test_wiring_profile_guards.py` (39 tests), `backend/tests/unit/test_ports_contracts.py` (32 tests), and `backend/tests/unit/test_architecture_boundaries.py` (24 tests) passing cleanly. All 10 pre-commit hooks passing.
-  - **Task 3.2: Cross-Encoder Reranking (Node 4 `rerank`)** — **COMPLETED & VERIFIED**
-    - **Cross-Encoder Adapter (`BgeRerankerAdapter`)**: Implemented `Reranker` wrapping `BAAI/bge-reranker-v2-m3` running on CPU via `asyncio.to_thread` with batching, input pair construction, score validation, and descending rank assignment.
-    - **Fail-Safe Fallback**: If the reranker model crashes, times out, or fails to initialize, Node 4 catches the error, logs operational telemetry, and preserves the unranked RRF retrieval candidate order. The downstream evidence gate (Node 5) remains fully protected (Invariant 9).
-    - **Mock Adapter (`MockReranker`)**: Implemented deterministic in-memory reranker supporting term overlap scoring and explicit score maps for fast $0 test execution.
-    - **Wiring & Profile Guards**: Wired `MockReranker` on `mock` and `BgeRerankerAdapter` across all real profiles (`desktop-gpu`, `home-gpu`, `office-cpu`, `dev-free-api`, `cloud`).
-    - **ADR-0013**: Authored architectural decision record for cross-encoder reranking on CPU and fail-safe degradation.
-    - **Verification**: `backend/tests/unit/test_reranker_node.py` (19 tests), `backend/tests/unit/test_wiring_profile_guards.py` (41 tests), `backend/tests/unit/test_retrieval_fallbacks.py` (4 tests), and full backend/web suites passing cleanly. All 10 pre-commit hooks passing.
-    - **Next Step**: Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`).
+  - **Task UI-Shell: Workspace & Multi-Assistant App Shell Rebuild (ADR-0014)** — **COMPLETED & VERIFIED**
+    - **ADR-0014 Adopted**: Replaced "no admin dashboards; the Knowledge page is the only admin screen" with a workspace Assistants page (`/assistants`), Workspace Settings (`/settings`), and per-assistant pages (Home, Data sources, Instructions, Guardrails, Actions placeholder, Conversations, Settings).
+    - **Monochrome Theme Active**: Archived teal theme to `web/styles/themes/teal/tokens.css`. Active theme `web/styles/themes/default/tokens.css` is black & white (#111111, #FAFAFA, #FFFFFF, #E5E5E5, status tints). Verified via `theme.test.ts` (19/19 tests pass; contrast table verified).
+    - **Live/Demo Isolation & Connection Badges**: In live mode (`NEXT_PUBLIC_DATA_SOURCE=live`), zero demo data/assistants are rendered or requested. Unbuilt screens display "Not connected yet" grey badge with explicit missing backend route. Replaced old Live/Demo chips with Connected (green) / Not connected yet (grey) badge.
+    - **App Shell & Screens**: Responsive sidebar (<768px collapses to drawer with toggle button and backdrop overlay). Order: Home (`/assistants/[id]`), Data sources (`/assistants/[id]/data-sources`), Instructions (`/assistants/[id]/instructions` with immutable evidence note), Guardrails (`/assistants/[id]/guardrails` with 5 locked rules), Actions (`/assistants/[id]/actions` placeholder), Conversations (`/assistants/[id]/conversations`), Settings (`/assistants/[id]/settings`). Assistants grid at `/assistants` with seeded Clinic A card in live mode; Workspace Settings at `/settings`.
+    - **Clean Suite**: `web/__tests__/shell.test.tsx` (15/15 tests pass). Full test suite passes (12 suites, 138 tests). Typecheck passes (`tsc --noEmit`). Pre-commit passes all 10 hooks.
+    - **Current Task**: App Shell Rebuild (COMPLETED & VERIFIED).
+    - **Next Task**: Connect screens, starting with assistants list/create, conversations, and real answers.
+  - **Task UI-Theme: Visual Theme Replacement, Theme Archival & Brand Removal** — **COMPLETED & VERIFIED**
+    - **Archived Theme**: `web/styles/themes/staffingly-inc/tokens.css` created with original tokens and header comment. `docs/ui/staffingly-inc/BRAND_THEME.md` created with usage mappings. Verified via test that nothing in the app imports this theme.
+    - **Default Theme**: `web/styles/themes/default/tokens.css` implemented as single active theme. High contrast WCAG AA verified (all 16 text/bg pairs >= 4.5:1, UI borders/focus >= 3:1).
+    - **No Raw Colors**: Scanned and replaced all 50 hard-coded hex, rgb, rgba, and hsl values across `web/app` and `web/components` with CSS variables.
+  - **Task 3.1-3.5: Chat End-to-End Real Model Connection & Evidence Gate** — **COMPLETED & VERIFIED**
+    - **Pinned Reranker Revision**: Wired `BAAI/bge-reranker-v2-m3` on CPU with pinned revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` on `desktop-gpu` and `home-gpu` profiles; other real profiles raise ConfigurationError at startup.
+    - **Keyword Search Index**: Validated stored tsvector column `chunks.tsv` and GIN index per ADR-0008.
+    - **Request Validation**: Validated `conversation_id` as UUID in `AskQuestionRequest`; bad values return HTTP 422 with fixed code `MALFORMED_REQUEST_PAYLOAD`.
+    - **Evidence Assessment Gate (Node 5 `assess_evidence`)**: Evaluates reranked candidates against named thresholds (`RELIABLE_TEXT_THRESHOLD = 0.0`, `WEAK_EVIDENCE_THRESHOLD = -2.0`). Gates `NO_EVIDENCE`, `WEAK`, `RELIABLE_TEXT`, and `VISUAL_REQUIRED`. For `NO_EVIDENCE` and `WEAK`, model calls are bypassed; returns refusal with up to 3 topics from `Retriever.search_titles`.
+    - **Answer Generation on Ollama `qwen3-vl:4b` (Node 7 `generate`)**: Implemented `OllamaModelProvider.generate` with structured JSON output, `temperature: 0.0`, `seed: 42`, and clean primitive schema `AnswerOutput`.
+    - **Exact Quote & Citation Validation (Node 8 `validate`)**: Enforces verbatim character-for-character quote match in cited evidence text and validates all cited chunk IDs against retrieved candidate IDs. Retries once on failure, then refuses.
+    - **User-Facing Presentation (Node 2 / 7 / 9)**: Empty assistants return "This assistant has no documents yet. Add files in Data sources to get started." Greetings route to general with polite responses without client facts. Grounded answers resolve real source citations (document title, version, page) from Postgres.
+    - **Staff PDF Streaming & Thumbnails**: Added `GET /v1/assistants/{id}/knowledge/documents/{version_id}/file` and `GET .../pages/{p}/thumbnail` with tenant-scoped staff and client_admin access for the web source panel.
+  - **Task 3.5.3: Live Problems Fixes, Storage Unification & Part G Benchmark** — **COMPLETED & VERIFIED**
+    - **Process Safety Rules**: Enforced foreground execution, prohibited touching product owner servers or leaving processes running at end of turn.
+    - **Storage Path Unification**: `backend/scripts/run_server.py` requires `LOCAL_STORAGE_PATH` with no defaults, raising `ConfigurationError` if missing or invalid.
+    - **Upload 500 Fix (Problem 3a)**: Reproduced missing storage path error on desktop-gpu wiring; validated path during `ApiSettings` init and handled `ConfigurationError` gracefully with HTTP 500 error payload. Added regression tests.
+    - **Table Path & CSV Retrieval (Problem 3b)**: Added `search_tables` to `Retriever` and implemented tenant-scoped lookup in `PostgresRetriever`. Routed tabular queries to answer mode `table`, cited document/sheet/row, and validated cited row values in `tables_data`. Enhanced CSV parser to ignore `#` comment headers.
+    - **Inventory Reply & Prefix Rejection (Problem 3c)**: Added `get_inventory` returning active document titles and up to 5 headings from DB without model call. Validation node rejects empty answers or echoed context prefixes.
+    - **Exact Part E Refusal Strings (Problem 3d)**: Enforced verbatim refusal strings for (1) no documents, (2) weak/no evidence with up to 3 topics, and (3) validation failed twice.
+    - **Query Rewriting Recorded (Problem 3e)**: Logged conversation-aware query rewriting in `docs/OPEN_QUESTIONS.md` (item 3.6).
+    - **Ollama Thinking Parameter Bypass (Problem 3f)**: Tested `think: false` foreground call on `qwen3-vl:4b`; confirmed model continues to emit thinking text. Documented in `ADR-0015`, preserved `</think>` assistant prefill, and added unit tests.
+    - **Next.js Dev Proxy Timeout (Problem 3g)**: Raised proxy timeout to 120s in `web/next.config.mjs` using `experimental.proxyTimeout`.
+    - **Part G End-to-End Benchmark**: Executed against isolated throwaway database with real models (`desktop-gpu` wiring) across 9 benchmark queries: 5 TEXT_FACT questions, 1 TABLE_LOOKUP, 1 NO_ANSWER, inventory query, and greeting.
+    - **Next Task**: Conversations routes and status-line streaming (Task 3.6).
 
 - **Phase 2 Exit Gate Verification & Ingestion Schema Resolution** — **COMPLETED & VERIFIED**
   - **Exit Gate Test**: `TestPhase2ExitGateGoldenDocuments::test_golden_documents_ingested_twice_zero_duplicates` in `backend/tests/integration/test_pipeline_idempotency.py`.

@@ -7,7 +7,13 @@ grounded document titles for clarify queries (ADR-0002).
 from __future__ import annotations
 
 from app.ports.retriever import Retriever
-from app.ports.types import EvidenceId, EvidenceType, RetrievalFilters, TenantContext
+from app.ports.types import (
+    EvidenceId,
+    EvidenceType,
+    RetrievalFilters,
+    TableCandidate,
+    TenantContext,
+)
 
 
 class MockRetriever(Retriever):
@@ -83,4 +89,53 @@ class MockRetriever(Retriever):
         return {
             eid: self._canned_evidence_text.get(eid, f"Mock synthetic text for {eid}")
             for eid in evidence_ids
+        }
+
+    async def search_tables(
+        self,
+        tenant_ctx: TenantContext,
+        query: str,
+        limit: int = 15,
+    ) -> list[TableCandidate]:
+        """Return canned table candidate rows for mock profile."""
+        _ = (tenant_ctx, query)
+        return [
+            TableCandidate(
+                id="mock-table-row-1",
+                document_title="accepted_plans.csv",
+                document_version_id="ver-syn-table",
+                sheet_name="Sheet1",
+                row_index=1,
+                cells={
+                    "Plan Name": "Aetna Choice POS II",
+                    "Status": "In-Network",
+                    "Copay": "$25",
+                },
+            ),
+            TableCandidate(
+                id="mock-table-row-2",
+                document_title="accepted_plans.csv",
+                document_version_id="ver-syn-table",
+                sheet_name="Sheet1",
+                row_index=2,
+                cells={
+                    "Plan Name": "Blue Cross Blue Shield PPO",
+                    "Status": "In-Network",
+                    "Copay": "$20",
+                },
+            ),
+        ][:limit]
+
+    async def get_inventory(
+        self,
+        tenant_ctx: TenantContext,
+        heading_limit: int = 5,
+    ) -> dict[str, list[str]]:
+        """Return canned document titles and headings for mock profile."""
+        _ = tenant_ctx
+        return {
+            "titles": list(self._canned_titles),
+            "headings": ["General Practice Guidelines", "Billing Schedule", "Accepted Plans"][
+                :heading_limit
+            ],
         }

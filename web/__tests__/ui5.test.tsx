@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within, cleanup } from "@testing-library/react";
-import ChatPage from "@/app/assistants/[assistantId]/chat/page";
+import ChatPage from "@/app/assistants/[assistantId]/page";
 import * as api from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 

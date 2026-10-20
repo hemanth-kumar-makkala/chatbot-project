@@ -2010,3 +2010,204 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Full backend and web test suites (104 web tests, 114 core backend tests) passing cleanly.
   - Pre-commit: All 10 hooks passed cleanly on changed files.
 - **Next Task**: Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`) per `docs/phases/PHASE-3.md`.
+
+## [2026-10-20] - Task UI-Theme: Visual Theme Replacement, Theme Archival & Brand Removal
+
+- **Task ID**: Task UI-Theme
+- **Target Specification**: UI Visual Theme Replacement, Theme Archival & Brand Removal.
+- **What Was Built**:
+  - **1. Theme Archival (`web/styles/themes/staffingly-inc/tokens.css`, `docs/ui/staffingly-inc/BRAND_THEME.md`)**:
+    - Created `web/styles/themes/staffingly-inc/tokens.css` containing the original brand tokens with the mandatory header comment: `"/* Archived brand theme. Not imported anywhere. Kept for later use. */"`.
+    - Created `docs/ui/staffingly-inc/BRAND_THEME.md` documenting the archived tokens, their prior UI usage locations, and explicitly noting the theme is archived and not in use.
+    - Added automated test proving that nothing in the application imports the archived theme.
+  - **2. Default Theme Implementation (`web/styles/themes/default/tokens.css`, `web/styles/globals.css`)**:
+    - Created `web/styles/themes/default/tokens.css` as the single active theme in the web application.
+    - Mobile-first, high contrast tokens: Background `#FFFFFF`, Surface `#F6F8FA`, Subtle Surface `#EEF2F5`, Border `#DDE3EA`, Text Primary `#17212B`, Text Secondary `#556270`, Text on Primary `#FFFFFF`, Primary `#0B6E79` (hover `#095861`, soft `#E3F2F3`), Info `#2B5FB4` (soft `#E8EFFA`), Success `#1D7A4E` (soft `#E5F4EC`), Warning `#8A5300` (soft `#FFF3DC`), Danger `#B42318` (soft `#FDECEA`), Neutral `#E9EDF1` / `#3E4A57`, Focus Ring `#0B6E79` (2px).
+    - Font stack configured to pure system fonts (`system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`) with zero external fonts or CDNs.
+    - Updated `web/styles/globals.css` to import `./themes/default/tokens.css` and use `--color-text-primary` and `--color-primary`.
+  - **3. Hard-Coded Color Elimination Across All Components**:
+    - Replaced all 50 occurrences of raw hex, rgb, rgba, and hsl values across `web/app` and `web/components` with semantic CSS variables.
+    - Tokenized modal/drawer overlays with `--color-backdrop` (`rgba(23, 33, 43, 0.45)`).
+    - TopBar updated to clean white background, bottom border, app name in text primary, active tab in primary, and zero gradients.
+  - **4. Single-Source Application Name & Brand Removal**:
+    - Added `APP_NAME = "Knowledge Assistant"` in `web/lib/appName.ts` (re-exported in `web/lib/constants.ts`).
+    - Updated `web/app/layout.tsx`, `web/app/login/page.tsx`, and `web/components/TopBar.tsx` to consume `APP_NAME`.
+    - Removed visible company name from UI everywhere.
+  - **5. Documentation & Specification Alignment**:
+    - Updated `docs/ui/KNOWLEDGE_PAGE_SPEC.md`, `docs/ui/UI_INVENTORY.md`, `docs/ui/CONNECTION_MAP.md`, and `docs/ui/BUILD_NOTES.md` referencing default theme tokens (`web/styles/themes/default/tokens.css`) and linking to `docs/ui/staffingly-inc/BRAND_THEME.md`.
+  - **6. Automated Tests (`web/__tests__/theme.test.ts`)**:
+    - Implemented 16 automated WCAG contrast tests: all text-on-background pairs exceed 4.5:1 (normal text) and 3:1 (large text / focus ring / borders).
+    - Implemented AST/filesystem scanner asserting zero raw colors in `web/app` and `web/components`.
+    - Implemented check asserting zero imports of the archived theme.
+    - Implemented check asserting zero occurrences of the company name in `web/app`, `web/components`, and `web/lib`.
+    - Updated `web/__tests__/ui4.test.tsx` badge test description.
+- **Verification**:
+  - `web/__tests__/theme.test.ts`: 19 passed in 0.03s.
+  - Full web test suite (`npm test`): 123 tests across 11 test suites passing cleanly.
+  - TypeScript type check (`npm run typecheck`): 0 errors.
+  - Pre-commit: All 10 hooks passed cleanly across all repository files.
+- **Next Task**: Finish open Task 3.1/3.2 items and proceed to Task 3.3 (Evidence Assessment Gate).
+
+## [2026-10-20] - Task UI-Shell: Workspace & Multi-Assistant App Shell Rebuild (ADR-0014)
+
+- **Task ID**: Task UI-Shell
+- **Target Specification**: Workspace + Assistants Layout (ADR-0014), inspired by Chatbase structural layout, monochrome theme, strict live/demo data isolation, and "Not connected yet" route disclaimers.
+- **What Was Built**:
+  - **1. Architectural Decision Record (`docs/decisions/ADR-0014-workspace-and-assistant-management-screens.md`)**:
+    - Replaced the legacy rule "no admin dashboards; the Knowledge page is the only admin screen" with a workspace-level Assistants grid (`/assistants`), Workspace Settings (`/settings`), and per-assistant pages (Home, Data sources, Instructions, Guardrails, Actions placeholder, Conversations, Settings).
+    - Preserved core HIPAA/evidence invariants: Invariant 4 (answers strictly from retrieved evidence; Instructions shape only tone/scope and cannot disable grounding), Invariant 1 (read-only retriever role; model never gets SQL access), Invariant 5 (strict tenant isolation), and Invariant 6 (unreadable fields are never guessed).
+    - Actions remains an unbuilt placeholder because arbitrary tool calls touching PHI require dedicated security and BAA review.
+    - Supersedes lines 78-80, 84-85, 93-99, 100 in `Client Knowledge Assistant Architecture and Build Plan.md`.
+  - **2. Application Shell Specification (`docs/ui/APP_SHELL_SPEC.md`)**:
+    - Documented all workspace and per-assistant routes, sidebar navigation order, and explicit backend connection requirements.
+  - **3. Monochrome Theme (`web/styles/themes/teal/tokens.css`, `web/styles/themes/default/tokens.css`)**:
+    - Archived previous teal theme to `web/styles/themes/teal/tokens.css`.
+    - Updated active default theme to high-contrast black & white (#111111, #FAFAFA, #F2F2F2, #E5E5E5, #FFFFFF) with status tints retained solely for functional meaning.
+    - Verified WCAG AA contrast compliance across all color tokens in `web/__tests__/theme.test.ts`.
+  - **4. Live/Demo Isolation & Connection Badges (`web/lib/connections.ts`, `web/components/ConnectionBadge.tsx`)**:
+    - In live mode (`NEXT_PUBLIC_DATA_SOURCE=live`), zero demo assistants or golden-set conversations/answers are rendered or queried.
+    - Any feature without a built backend endpoint displays a "Not connected yet" grey badge alongside an explicit sentence citing the missing route.
+    - Connected features display a green "Connected" badge.
+  - **5. App Shell Navigation & Screens**:
+    - `web/components/AppShell.tsx`: Responsive shell with sidebar navigation in strict order: Home (`/assistants/[id]`), Data sources (`/assistants/[id]/data-sources`), Instructions (`/assistants/[id]/instructions`), Guardrails (`/assistants/[id]/guardrails`), Actions (`/assistants/[id]/actions`), Conversations (`/assistants/[id]/conversations`), Settings (`/assistants/[id]/settings`). Collapses to mobile drawer (<768px) with accessible hamburger button and overlay backdrop. Assistant switcher mounted in sidebar.
+    - `web/app/assistants/page.tsx`: Workspace-level assistants grid. Live mode renders seeded Clinic A assistant (`DEV_DEFAULT_ASSISTANT_ID`). "New assistant" modal and card delete menus display "Not connected yet" with route disclaimers.
+    - `web/app/settings/page.tsx`: Workspace settings with General tab (read-only tenant name) and Members tab ("Not connected yet" route disclaimer).
+    - `web/app/assistants/[assistantId]/page.tsx`: Assistant Home (Chat). Connected to `POST /v1/questions`. "New chat" button immediately resets conversation state. Renders citation chips, visual thumbnail, feedback, and attachments.
+    - `web/app/assistants/[assistantId]/data-sources/page.tsx`: Restyled knowledge page. Source cards for "Add files" (PDF, XLSX, CSV - connected), "Text snippet" (coming later), and "Q&A" (coming later). Search filter, documents table, retire dialog, and flagged page review drawer.
+    - `web/app/assistants/[assistantId]/instructions/page.tsx`: Textarea for tone/scope with immutable notice: "Instructions shape tone and scope. Answers still come only from your documents." Save button displays route disclaimer.
+    - `web/app/assistants/[assistantId]/guardrails/page.tsx`: 5 locked built-in safety rules (always on with padlock badges). Text inputs for configurable blocked topics and custom refusal message. Save button displays route disclaimer.
+    - `web/app/assistants/[assistantId]/actions/page.tsx`: Security placeholder card: "Coming soon. Actions that call other systems need a separate security review."
+    - `web/app/assistants/[assistantId]/conversations/page.tsx`: Conversations history list, search, refresh, and transcript viewer. "New chat" button navigates to Home with cleared state. Live mode displays route disclaimer.
+    - `web/app/assistants/[assistantId]/settings/page.tsx`: General settings (name, assistant ID with copy button, description) and Danger zone (Delete all conversations, Delete assistant) with confirm dialogs and route disclaimers.
+    - `web/app/assistants/[assistantId]/chat/page.tsx` & `knowledge/page.tsx`: Maintained client redirects to Home and Data sources without deleting files.
+  - **6. Automated Tests First (`web/__tests__/shell.test.tsx`)**:
+    - Created comprehensive test suite verifying sidebar items and order, responsive drawer toggle, assistants grid, "New assistant" dialog, "Not connected yet" disclaimers, zero demo data in live mode, "New chat" empty state, legacy redirects, and locked guardrails.
+    - Initial test run failed as expected (`tmp/agent-logs/shell_failing_run.log`).
+    - After wiring props and testids, test suite passed cleanly (15/15 tests passing, `tmp/agent-logs/shell_passing_run.log`).
+  - **7. Documentation Updates**:
+    - Updated `docs/ui/UI_INVENTORY.md`, `docs/ui/CONNECTION_MAP.md`, `docs/qa/UI_TEST_CHECKLIST.csv` (added UI-051 through UI-060), and `docs/STATUS.md`.
+- **Verification**:
+  - `web/__tests__/shell.test.tsx`: 15 passed in 1.48s.
+  - Full web test suite (`npm test`): 138 tests across 12 test suites passing cleanly (`tmp/agent-logs/web_tests_passing_run.log`).
+  - TypeScript typecheck (`npm --prefix web run typecheck`): 0 errors (`tmp/agent-logs/typecheck_run.log`).
+  - Pre-commit: All 10 hooks passed cleanly across all repository files (`tmp/agent-logs/pre_commit_run.log`).
+- **Next Task**: Connect screens to backend routes, starting with assistants list/create (`GET /v1/assistants`, `POST /v1/assistants`), conversations (`GET /v1/assistants/{id}/conversations`), and real answers.
+
+---
+
+### [2026-10-20] TASK 3.1-3.5: Chat End-to-End Real Model Connection, Evidence Gate & Source Panel
+
+- **Task ID**: TASK 3.1-3.5
+- **What Was Built**:
+  - **Part A: Open 3.1/3.2 Items & Reranker Wiring**:
+    - Pinned revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` configured for `BAAI/bge-reranker-v2-m3` in `backend/config/profiles/desktop-gpu.yaml` and `home-gpu.yaml`.
+    - Enforced `local_files_only` and `HF_HUB_OFFLINE="1"` requirement; missing or unloadable model raises `ConfigurationError` at startup on real profiles. RRF-order fallback preserved strictly for runtime inference failures.
+    - Verified stored `chunks.tsv` GIN index per ADR-0008.
+    - Validated `conversation_id` as UUID in `AskQuestionRequest`; invalid values return HTTP 422 with fixed code `MALFORMED_REQUEST_PAYLOAD`.
+  - **Part B: Evidence Assessment Gate (Task 3.3, Node 5 `assess_evidence`)**:
+    - Evaluates reranked candidate scores against named thresholds (`RELIABLE_TEXT_THRESHOLD = 0.0`, `WEAK_EVIDENCE_THRESHOLD = -2.0`).
+    - Gating states: `NO_EVIDENCE`, `WEAK`, `RELIABLE_TEXT`, and `VISUAL_REQUIRED`.
+    - Bypasses model generation entirely on `NO_EVIDENCE` and `WEAK`; returns refusal with up to 3 topics fetched from `Retriever.search_titles`.
+  - **Part C: Answer Generation on Ollama `qwen3-vl:4b` (Task 3.4, Node 7 `generate`)**:
+    - Implemented `OllamaModelProvider.generate` communicating via `/api/chat` with structured JSON schema output, `think: False`, `temperature: 0.0`, and `seed: 42`.
+    - Formats prompt with only question and retrieved evidence passages with IDs.
+    - Modeled clean primitive schema `AnswerOutput` (`mode`, `answer`, `evidence_ids: str`, `quoted_span`, `evidence_type: str`) to avoid GBNF grammar deadlocks in Ollama / llama.cpp.
+  - **Part D: Exact Quote & Citation Validation (Task 3.5, Node 8 `validate`)**:
+    - Enforces verbatim character-for-character substring match of `quoted_span` inside stored text of cited evidence chunk.
+    - Validates all `cited_ids` against retrieved candidate IDs. Retries generation once on validation failure; refuses if second attempt fails.
+  - **Part E: User-Facing Behavior**:
+    - Empty assistant (0 active documents): returns "This assistant has no documents yet. Add files in Data sources to get started." without model call.
+    - Weak/no evidence refusal: returns "I couldn't find that in this assistant's documents. I do have information on:\n- Topic..." without model call.
+    - Greeting route: Node 2 router classifies greetings to route "general" and generates a concise polite reply without stating client facts.
+    - Real source chips: resolves document title, version, and page number directly from Postgres `chunks` joined to `pages`, `document_versions`, and `documents`.
+  - **Part F: Staff PDF File Streaming & Thumbnails**:
+    - Implemented `GET /v1/assistants/{id}/knowledge/documents/{version_id}/file` streaming stored PDF to `SourcePanel.tsx` with tenant-scoped staff/client_admin access.
+    - Implemented `GET /v1/assistants/{id}/knowledge/documents/{version_id}/pages/{p}/thumbnail` allowing staff access for visual answer chips.
+    - Connected in `web/components/SourcePanel.tsx` and `web/app/assistants/[assistantId]/page.tsx`.
+- **Tests Added & Verified**:
+  - `backend/tests/unit/test_reranker_model_offline.py`: offline model loading and pinned revision verification.
+  - `backend/tests/integration/test_staff_source_routes.py`: tenant isolation and role permissions for file streaming and thumbnail routes (cross-tenant 404).
+  - `backend/tests/unit/test_ollama_generate.py`: structured JSON output and error handling for Ollama provider.
+  - `backend/tests/unit/test_evidence_gate_and_validation.py`: evidence gate thresholds, empty assistant refusal, exact quote validation, and citation bounds.
+  - Full backend test suite: 354 passed, 4 deselected in 16.49s.
+  - Full web test suite: 138 passed across 12 test suites in 4.84s. `tsc --noEmit` clean.
+- **Decisions Made**:
+  - Replaced array type in `AnswerOutput` with comma-separated string `evidence_ids: str = ""` to avoid llama.cpp GBNF grammar parser deadlock on Ollama 0.40.6.
+  - Configured 120s timeout in `OllamaModelProvider` and prepended concise system prompt to eliminate prolonged chain-of-thought looping in local GPU inference.
+- **Open Questions Recorded**:
+  - Item 2.7: Calibration of evidence gate thresholds (`RELIABLE_TEXT_THRESHOLD = 0.0`, `WEAK_EVIDENCE_THRESHOLD = -2.0`) on golden benchmark.
+  - Item 2.8: Next gate item: Semantic cross-document contradiction detection (`CONFLICTING`).
+- **Next Task**: Conversations routes and status-line streaming (Task 3.6).
+
+---
+
+### [2026-10-20] TASK 3.5.1: Ollama Qwen3-VL Structured Schema Coercion & Graph Resilience
+
+- **Task ID**: TASK 3.5.1
+- **What Was Built**:
+  - Fixed Pydantic validation failure in `RouterOutput` when Qwen3-VL outputs `"answer_mode": "default"` or unexpected casing by adding `@field_validator` coercions for `route`, `answer_mode`, and `language`.
+  - Fixed `AnswerOutput` validation failure when `quoted_span` is `null` / omitted by adding `str | None = None` and `@field_validator` coercions across `quoted_span`, `answer`, `mode`, and `evidence_ids`.
+  - Updated `OllamaModelProvider` payload formatting to `"format": "json"` to bypass GBNF grammar parser stalls and added resilient default schema population fallback.
+  - Protected `node_generate` in `app.core.graph` with a try-except fallback ensuring model generation issues cleanly produce grounded refusals rather than unhandled HTTP 500 errors.
+  - Verified end-to-end execution of `graph.ainvoke` with live BGE-M3 embeddings, BGE-Reranker, and local Ollama (`qwen3-vl:4b`) querying real PostgreSQL documents, producing `status: answered`.
+- **Tests Added & Verified**:
+  - `pre-commit run --files ...` passed cleanly on all 10 hooks.
+  - End-to-end Python test executing `graph.ainvoke` with `desktop-gpu` profile against PostgreSQL tenant database completed with `status: answered`.
+- **Decisions Made**:
+  - Use field coercion validators on Pydantic router/answer models to prevent rigid literal errors from local LLM outputs.
+- **Next Task**: Conversations routes and status-line streaming (Task 3.6).
+
+---
+
+### [2026-10-20] TASK 3.5.2: Live Browser Chat E2E Resolution, Thinking Mode Bypass & Offline Guard Wiring
+
+- **Task ID**: TASK 3.5.2
+- **Root Cause Identified**:
+  - `qwen3-vl:4b` in Ollama defaulted to internal chain-of-thought generation (`<think>...</think>`), spending ~2,500 tokens / 50 seconds in thinking mode on RTX 3050.
+  - Next.js development server rewrite proxy (`/v1/:path*`) enforces a default 30.00-second socket timeout (`proxyTimeout: 30000`), terminating incoming chat requests at exactly 30.02s with HTTP 500 "Internal Server Error".
+  - The previous server process on port 8000 lacked `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` when spawned without `.env` offline guards, causing initial `create_retriever` to fail with `ConfigurationError`.
+  - `POST /v1/questions` lacked a top-level try/except around `graph.ainvoke`, allowing any unhandled graph exception to bubble into ASGI 500 rather than returning a formatted compliant error response.
+- **What Was Built**:
+  - **Thinking Bypass & Latency Optimization** (`backend/app/core/graph.py`):
+    - Appended assistant prefill `ChatMessage(role="assistant", content="</think>")` to `node_route` and `node_generate` messages, prompting Qwen3-VL to immediately terminate reasoning tokens and emit structured JSON.
+    - Set `max_tokens=150` for router and `max_tokens=512` for answer generation, reducing latency from ~65s to **~4.10s** end-to-end.
+  - **Ollama Provider Contract Compliance** (`backend/app/adapters/models/ollama.py`):
+    - Re-aligned `generate` method with unit test contracts: passed `messages` verbatim without unprompted system injections, raised `MalformedOutput` on unparseable structured schemas.
+  - **API Route Exception Shield** (`backend/app/api/routes/questions.py`):
+    - Wrapped `graph.ainvoke` in try/except block that logs the exception and returns a graceful `safe_failure` payload with correlation reference (`ERR-XXXXXX`).
+  - **Server Runner Script** (`backend/scripts/run_server.py`):
+    - Created standalone script ensuring `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `OLLAMA_BASE_URL`, and workspace `.env` loading.
+- **Verification**:
+  - `uv run pytest tests/unit/test_ollama_generate.py`: all 3 unit tests pass.
+  - `uv run pytest tests/unit/test_ollama_provider.py`: all 17 unit tests pass.
+  - `uv run pytest tests/integration/test_api_knowledge_step3.py`: all 26 tests pass.
+  - `uv run pre-commit run --files ...`: all 10 hooks pass (ruff, ruff-format, mypy, boundary-invariants).
+  - Live Browser Subagent verification: logged into UI (`admin@clinic-a.local`), submitted question "What insurance plans are accepted?", received 200 OK answer in ~4s with interactive source citation chips (`faint_fax_2page.pdf`, `clean_fax.pdf`), opened source preview drawer. Zero error banners.
+- **Next Task**: Conversations routes and status-line streaming (Task 3.6).
+
+---
+
+### [2026-10-20] TASK 3.5.3: Live Problems Fixes, Storage Unification & Part G Benchmark
+
+- **Task ID**: TASK 3.5.3
+- **What Was Built**:
+  - **New Permanent Safety Rules**: Added process ownership and safety rules to `AGENTS.md` (never stop/restart/start product owner servers, foreground only, no background execution, never leave servers running, zero .env viewing).
+  - **Storage Path Unification**: `backend/scripts/run_server.py` now reads `LOCAL_STORAGE_PATH` with no defaults, raising `ConfigurationError` if missing or non-existent. API and worker always share identical storage.
+  - **Problem 3a (Upload 500 Fix)**: Reproduced `ConfigurationError` on `desktop-gpu` wiring caused by unvalidated missing local storage folder. Added validation check in `ApiSettings` startup and caught `ConfigurationError` in `backend/app/api/routes/knowledge.py` returning standard `INTERNAL_SERVER_ERROR`. Added integration tests in `backend/tests/integration/test_api_knowledge_endpoints.py`.
+  - **Problem 3b (Table Retrieval Path)**: Added `search_tables` to `Retriever` port and implemented tenant-scoped lookup in `PostgresRetriever`. Graph routes tabular queries to mode `"table"`, searches `tables_data`, formats row citations (`[Document: ..., Sheet: ..., Row: ...]`), and validates cited row values in `tables_data`. Enhanced CSV table extractor to ignore `#` comment headers (`accepted_plans.csv`).
+  - **Problem 3c (Knowledge-Base Inventory & Echoed Prefix Rejection)**: Added `get_inventory` returning active document titles and up to 5 headings directly from database without model call for inventory queries ("What data do you have?"). Updated `node_validate` in `graph.py` to reject empty answers or echoed context prefixes.
+  - **Problem 3d (Exact Part E Refusal Strings)**: Aligned all refusal messages verbatim across:
+    1. No documents: `"This assistant has no documents yet. Add files in Data sources to get started."`
+    2. No or weak evidence: `"I couldn't find that in this assistant's documents."` + `"I do have information on:\n- ..."` (up to 3 topics)
+    3. Validation failed twice: `"I couldn't confirm that from the documents."`
+  - **Problem 3e (Follow-up Query Rewriting)**: Recorded conversation-aware query rewriting in `docs/OPEN_QUESTIONS.md` (item 3.6).
+  - **Problem 3f (Ollama Think Parameter Testing)**: Foreground call to Ollama `/api/chat` with `qwen3-vl:4b` using `think: False` confirmed model still emits `<think>` tokens. Kept assistant prefill `</think>`, authored `docs/decisions/ADR-0015-qwen3-vl-thinking-bypass.md`, and added unit test.
+  - **Problem 3g (Next.js Dev Proxy Timeout)**: Set `experimental.proxyTimeout: 120_000` (120 seconds) in `web/next.config.mjs`.
+  - **Part G End-to-End Benchmark Execution**: Ingested golden documents (`prior_auth_guide.pdf`, `payer_contact_table.pdf`, `skewed_fax.pdf`, `accepted_plans.csv`) into isolated throwaway database and executed 9 benchmark queries with real `desktop-gpu` models (5 TEXT_FACT, 1 TABLE_LOOKUP, 1 NO_ANSWER, inventory query, greeting). All queries answered accurately with proper citations and evidence states.
+- **Verification**:
+  - `uv run pytest tests/unit/test_table_retrieval.py`: 4 passed.
+  - `uv run pytest tests/unit/test_inventory_and_prefix_rejection.py`: 5 passed.
+  - `uv run pytest tests/unit/test_ollama_generate.py`: 4 passed.
+  - `uv run pytest tests/unit/test_evidence_gate_and_validation.py`: 9 passed.
+  - `uv run pre-commit run --files ...`: all 10 hooks passed cleanly.
+- **Next Task**: Conversations routes and status-line streaming (Task 3.6).

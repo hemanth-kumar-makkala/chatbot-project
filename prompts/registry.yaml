@@ -21,13 +21,40 @@ prompts:
           properties:
             route:
               type: "string"
-              enum: ["knowledge", "general"]
+              enum: ["knowledge", "general", "clarify"]
             answer_mode:
               type: "string"
               enum: ["exact", "short", "explain", "table"]
             language:
               type: "string"
           required: ["route", "answer_mode", "language"]
+
+  general_reply:
+    default_version: "1.0.0"
+    versions:
+      "1.0.0":
+        role: "answer"
+        description: "Generate polite short greeting or general query reply without asserting any client facts."
+        template: |
+          You are a helpful client knowledge assistant.
+          Respond politely and concisely to the greeting or general query.
+          You must NEVER state or assume any client facts, policies, or clinic data.
+          Question: {question}
+          Output strictly as JSON matching the schema.
+        response_schema:
+          type: "object"
+          properties:
+            mode:
+              type: "string"
+            answer:
+              type: "string"
+            evidence_ids:
+              type: "array"
+              items:
+                type: "string"
+            evidence_type:
+              type: "string"
+          required: ["mode", "answer", "evidence_ids", "evidence_type"]
 
   answer_synthesis:
     default_version: "1.0.0"

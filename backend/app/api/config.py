@@ -79,3 +79,12 @@ class ApiSettings(BaseModel):
 
         if not self.storage_dir or not self.storage_dir.strip():
             raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: storage_dir") from None
+
+        from pathlib import Path
+
+        if self.profile in ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"):
+            resolved = Path(self.storage_dir.strip())
+            if not resolved.is_dir():
+                raise ConfigurationError(
+                    f"LOCAL_STORAGE_PATH directory does not exist: {self.storage_dir}"
+                )

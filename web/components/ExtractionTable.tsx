@@ -16,90 +16,91 @@ const KNOWN_STATES: Record<
     label: "FILLED_HIGH",
     bg: "var(--color-status-success-bg)",
     text: "var(--color-status-success-text)",
-    border: "#C8E6C9",
+    border: "var(--color-border)",
   },
   FILLED_MEDIUM: {
     label: "FILLED_MEDIUM",
-    bg: "#FFF8E1",
-    text: "var(--color-dark-gold)",
-    border: "#FFE082",
+    bg: "var(--color-warning-soft)",
+    text: "var(--color-warning-text)",
+    border: "var(--color-border)",
   },
   CONFLICTING: {
     label: "CONFLICTING",
-    bg: "#FFF3E0",
-    text: "#E65100",
-    border: "#FFCC80",
+    bg: "var(--color-warning-soft)",
+    text: "var(--color-warning-text)",
+    border: "var(--color-border)",
   },
   UNREADABLE: {
     label: "UNREADABLE",
     bg: "var(--color-status-error-bg)",
     text: "var(--color-status-error-text)",
-    border: "#FFCDD2",
+    border: "var(--color-border)",
   },
   INVALID: {
     label: "INVALID",
-    bg: "#FFEBEE",
-    text: "#C62828",
-    border: "#EF9A9A",
+    bg: "var(--color-status-error-bg)",
+    text: "var(--color-status-error-text)",
+    border: "var(--color-border)",
   },
   NOT_PRESENT: {
     label: "NOT_PRESENT",
-    bg: "var(--color-status-queued-bg)",
-    text: "#546E7A",
-    border: "#CFD8DC",
+    bg: "var(--color-neutral-bg)",
+    text: "var(--color-neutral-text)",
+    border: "var(--color-border)",
   },
   NOT_APPLICABLE: {
     label: "NOT_APPLICABLE",
-    bg: "var(--color-status-retired-bg)",
-    text: "#616161",
-    border: "#E0E0E0",
+    bg: "var(--color-neutral-bg)",
+    text: "var(--color-neutral-text)",
+    border: "var(--color-border)",
   },
 };
 
 export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) {
   return (
     <div
-      data-testid="extraction-field-table"
       style={{
-        border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-md)",
+        border: "1px solid var(--color-border)",
         overflow: "hidden",
-        backgroundColor: "var(--color-bg-card)",
+        marginTop: "var(--spacing-3)",
+        backgroundColor: "var(--color-bg-page)",
       }}
     >
       <div
         style={{
-          padding: "var(--spacing-2) var(--spacing-3)",
+          padding: "10px 14px",
           backgroundColor: "var(--color-bg-subtle)",
           borderBottom: "1px solid var(--color-border)",
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
         <span
           style={{
             fontSize: "var(--font-size-xs)",
             fontWeight: 700,
-            color: "var(--color-navy)",
             textTransform: "uppercase",
             letterSpacing: "0.5px",
+            color: "var(--color-text-primary)",
           }}
         >
-          Extracted Field Adjudication ({fields.length} fields)
+          Extracted Document Fields (Side-by-Side Review)
         </span>
         <span
           style={{
             fontSize: "11px",
-            color: "var(--color-text-muted)",
+            color: "var(--color-text-secondary)",
           }}
         >
-          Click row to inspect source page
+          {fields.length} fields extracted
         </span>
       </div>
 
       <div style={{ overflowX: "auto" }}>
         <table
+          data-testid="extraction-field-table"
           style={{
             width: "100%",
             borderCollapse: "collapse",
@@ -112,21 +113,20 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
               style={{
                 backgroundColor: "var(--color-bg-subtle)",
                 borderBottom: "1px solid var(--color-border)",
-                color: "var(--color-text-muted)",
+                color: "var(--color-text-secondary)",
+                fontWeight: 600,
               }}
             >
-              <th style={{ padding: "8px 12px", fontWeight: 600 }}>Field Name</th>
-              <th style={{ padding: "8px 12px", fontWeight: 600 }}>Extracted Value</th>
-              <th style={{ padding: "8px 12px", fontWeight: 600 }}>Status Badge</th>
-              <th style={{ padding: "8px 12px", fontWeight: 600, textAlign: "right" }}>
-                Source
-              </th>
+              <th style={{ padding: "8px 12px" }}>Field</th>
+              <th style={{ padding: "8px 12px" }}>Extracted Value</th>
+              <th style={{ padding: "8px 12px", width: "130px" }}>State</th>
+              <th style={{ padding: "8px 12px", width: "80px", textAlign: "right" }}>Cited Page</th>
             </tr>
           </thead>
           <tbody>
             {fields.map((field, idx) => {
-              const stateKey = String(field.state || "").toUpperCase();
-              const isKnown = Boolean(KNOWN_STATES[stateKey]);
+              const stateKey = (field.state || "").toUpperCase();
+              const isKnown = Object.prototype.hasOwnProperty.call(KNOWN_STATES, stateKey);
 
               if (!isKnown) {
                 // Unknown field state from data: logs the code only (spec & task rule)
@@ -137,9 +137,9 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                 ? KNOWN_STATES[stateKey]
                 : {
                     label: "UNKNOWN",
-                    bg: "var(--color-status-queued-bg)",
-                    text: "#757575",
-                    border: "#BDBDBD",
+                    bg: "var(--color-neutral-bg)",
+                    text: "var(--color-neutral-text)",
+                    border: "var(--color-border)",
                   };
 
               const isUnreadable = stateKey === "UNREADABLE";
@@ -147,11 +147,11 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
               const isHighlighted = isUnreadable || isConflicting;
 
               const rowBg = isUnreadable
-                ? "#FFF5F5"
+                ? "var(--color-danger-soft)"
                 : isConflicting
-                ? "#FFF9F0"
+                ? "var(--color-warning-soft)"
                 : idx % 2 === 0
-                ? "var(--color-white)"
+                ? "var(--color-bg-page)"
                 : "var(--color-bg-subtle)";
 
               const rowTestId = `extraction-row-${field.name
@@ -168,16 +168,16 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                   title={`Click to inspect ${field.document_title} at page ${field.page_number}`}
                   style={{
                     backgroundColor: rowBg,
-                    borderBottom: "1px solid var(--color-border-subtle)",
+                    borderBottom: "1px solid var(--color-border)",
                     cursor: "pointer",
                     transition: "background-color 0.15s ease",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = isHighlighted
                       ? isUnreadable
-                        ? "#FFEAEA"
-                        : "#FFF0E0"
-                      : "#F0F4FA";
+                        ? "var(--color-danger-soft)"
+                        : "var(--color-warning-soft)"
+                      : "var(--color-bg-subtle)";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = rowBg;
@@ -188,7 +188,7 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                     style={{
                       padding: "8px 12px",
                       fontWeight: 600,
-                      color: "var(--color-navy)",
+                      color: "var(--color-text-primary)",
                       verticalAlign: "middle",
                     }}
                   >
@@ -201,7 +201,7 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                     style={{
                       padding: "8px 12px",
                       verticalAlign: "middle",
-                      color: "var(--color-text-main)",
+                      color: "var(--color-text-primary)",
                     }}
                   >
                     {isUnreadable ? (
@@ -227,7 +227,7 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                           display: "inline-flex",
                           gap: "8px",
                           alignItems: "center",
-                          backgroundColor: "#FFE0B2",
+                          backgroundColor: "var(--color-warning-soft)",
                           padding: "2px 6px",
                           borderRadius: "4px",
                           fontSize: "11px",
@@ -249,7 +249,7 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                             style={{
                               display: "block",
                               fontSize: "10px",
-                              color: "#C62828",
+                              color: "var(--color-danger)",
                               marginTop: "2px",
                             }}
                           >
@@ -258,9 +258,9 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                         )}
                       </div>
                     ) : stateKey === "NOT_PRESENT" ? (
-                      <span style={{ color: "var(--color-text-muted)" }}>—</span>
+                      <span style={{ color: "var(--color-text-secondary)" }}>—</span>
                     ) : stateKey === "NOT_APPLICABLE" ? (
-                      <span style={{ color: "var(--color-text-muted)" }}>N/A</span>
+                      <span style={{ color: "var(--color-text-secondary)" }}>N/A</span>
                     ) : (
                       <span>{field.value || "—"}</span>
                     )}
@@ -298,7 +298,7 @@ export function ExtractionTable({ fields, onOpenSource }: ExtractionTableProps) 
                     <span
                       style={{
                         fontSize: "11px",
-                        color: "var(--color-primary-blue)",
+                        color: "var(--color-primary)",
                         fontWeight: 600,
                       }}
                     >

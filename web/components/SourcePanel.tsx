@@ -25,6 +25,8 @@ interface SourcePanelProps {
   documentTitle: string;
   initialPage?: number;
   isLiveAssistant?: boolean;
+  assistantId?: string;
+  versionId?: string;
 }
 
 function getDocStem(docTitle: string): string {
@@ -50,6 +52,8 @@ export function SourcePanel({
   documentTitle,
   initialPage = 1,
   isLiveAssistant = false,
+  assistantId,
+  versionId,
 }: SourcePanelProps) {
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -65,19 +69,30 @@ export function SourcePanel({
     setCurrentPage(initialPage || 1);
   }, [documentTitle, initialPage]);
 
-  // Load PDF Document when panel opens or documentTitle changes
+  // Load PDF Document when panel opens or documentTitle/version changes
   useEffect(() => {
-    if (!isOpen || isLiveAssistant) return;
+    if (!isOpen) return;
 
     let isMounted = true;
-    const stem = getDocStem(documentTitle);
-    const pdfUrl = `/demo/docs/${stem}.pdf`;
+    let pdfUrl: string | null = null;
+
+    if (isLiveAssistant) {
+      if (assistantId && versionId) {
+        pdfUrl = `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(versionId)}/file`;
+      } else {
+        const stem = getDocStem(documentTitle);
+        pdfUrl = `/demo/docs/${stem}.pdf`;
+      }
+    } else {
+      const stem = getDocStem(documentTitle);
+      pdfUrl = `/demo/docs/${stem}.pdf`;
+    }
 
     async function loadPdf() {
       setLoading(true);
       setError(null);
       try {
-        const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
+        const loadingTask = pdfjsLib.getDocument({ url: pdfUrl! });
         const doc = await loadingTask.promise;
         if (!isMounted) return;
         pdfDocRef.current = doc;
@@ -102,11 +117,11 @@ export function SourcePanel({
         }
       }
     };
-  }, [isOpen, documentTitle, isLiveAssistant]);
+  }, [isOpen, documentTitle, isLiveAssistant, assistantId, versionId]);
 
   // Render current page when page, scale, or doc changes
   useEffect(() => {
-    if (!isOpen || isLiveAssistant || !pdfDocRef.current) return;
+    if (!isOpen || !pdfDocRef.current) return;
 
     let isMounted = true;
 
@@ -237,129 +252,127 @@ export function SourcePanel({
       </div>
 
       {/* Page Navigation & Zoom Toolbar */}
-      {!isLiveAssistant && (
-        <div
-          style={{
-            padding: "var(--spacing-3) var(--spacing-4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderBottom: "1px solid var(--color-border-subtle)",
-            backgroundColor: "var(--color-white)",
-            flexWrap: "wrap",
-            gap: "var(--spacing-2)",
-          }}
-        >
-          {/* Navigation Controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
-            <button
-              type="button"
-              data-testid="source-panel-prev-page"
-              aria-label="Previous Page"
-              disabled={currentPage <= 1 || loading}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              style={{
-                padding: "4px 10px",
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 500,
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-border)",
-                backgroundColor: currentPage <= 1 ? "var(--color-bg-subtle)" : "var(--color-white)",
-                color: currentPage <= 1 ? "var(--color-text-muted)" : "var(--color-navy)",
-                cursor: currentPage <= 1 ? "not-allowed" : "pointer",
-              }}
-            >
-              Previous Page
-            </button>
+      <div
+        style={{
+          padding: "var(--spacing-3) var(--spacing-4)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid var(--color-border-subtle)",
+          backgroundColor: "var(--color-white)",
+          flexWrap: "wrap",
+          gap: "var(--spacing-2)",
+        }}
+      >
+        {/* Navigation Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+          <button
+            type="button"
+            data-testid="source-panel-prev-page"
+            aria-label="Previous Page"
+            disabled={currentPage <= 1 || loading}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            style={{
+              padding: "4px 10px",
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 500,
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--color-border)",
+              backgroundColor: currentPage <= 1 ? "var(--color-bg-subtle)" : "var(--color-white)",
+              color: currentPage <= 1 ? "var(--color-text-muted)" : "var(--color-navy)",
+              cursor: currentPage <= 1 ? "not-allowed" : "pointer",
+            }}
+          >
+            Previous Page
+          </button>
 
-            <span
-              data-testid="source-panel-page-indicator"
-              style={{
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 600,
-                color: "var(--color-navy)",
-                padding: "0 var(--spacing-1)",
-              }}
-            >
-              Page {currentPage} of {totalPages || 1}
-            </span>
+          <span
+            data-testid="source-panel-page-indicator"
+            style={{
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 600,
+              color: "var(--color-navy)",
+              padding: "0 var(--spacing-1)",
+            }}
+          >
+            Page {currentPage} of {totalPages || 1}
+          </span>
 
-            <button
-              type="button"
-              data-testid="source-panel-next-page"
-              aria-label="Next Page"
-              disabled={(totalPages > 0 && currentPage >= totalPages) || loading}
-              onClick={() => setCurrentPage((p) => (totalPages ? Math.min(totalPages, p + 1) : p + 1))}
-              style={{
-                padding: "4px 10px",
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 500,
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-border)",
-                backgroundColor: totalPages > 0 && currentPage >= totalPages ? "var(--color-bg-subtle)" : "var(--color-white)",
-                color: totalPages > 0 && currentPage >= totalPages ? "var(--color-text-muted)" : "var(--color-navy)",
-                cursor: totalPages > 0 && currentPage >= totalPages ? "not-allowed" : "pointer",
-              }}
-            >
-              Next Page
-            </button>
-          </div>
-
-          {/* Zoom Controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-1)" }}>
-            <button
-              type="button"
-              data-testid="source-panel-zoom-out"
-              aria-label="Zoom Out"
-              disabled={scale <= 0.5 || loading}
-              onClick={() => setScale((s) => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
-              style={{
-                padding: "4px 8px",
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 600,
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-border)",
-                backgroundColor: scale <= 0.5 ? "var(--color-bg-subtle)" : "var(--color-white)",
-                color: "var(--color-navy)",
-                cursor: scale <= 0.5 ? "not-allowed" : "pointer",
-              }}
-            >
-              −
-            </button>
-            <span
-              data-testid="source-panel-zoom-level"
-              style={{
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 600,
-                color: "var(--color-text-muted)",
-                minWidth: "42px",
-                textAlign: "center",
-              }}
-            >
-              {Math.round(scale * 100)}%
-            </span>
-            <button
-              type="button"
-              data-testid="source-panel-zoom-in"
-              aria-label="Zoom In"
-              disabled={scale >= 3.0 || loading}
-              onClick={() => setScale((s) => Math.min(3.0, Number((s + 0.25).toFixed(2))))}
-              style={{
-                padding: "4px 8px",
-                fontSize: "var(--font-size-xs)",
-                fontWeight: 600,
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-border)",
-                backgroundColor: scale >= 3.0 ? "var(--color-bg-subtle)" : "var(--color-white)",
-                color: "var(--color-navy)",
-                cursor: scale >= 3.0 ? "not-allowed" : "pointer",
-              }}
-            >
-              +
-            </button>
-          </div>
+          <button
+            type="button"
+            data-testid="source-panel-next-page"
+            aria-label="Next Page"
+            disabled={(totalPages > 0 && currentPage >= totalPages) || loading}
+            onClick={() => setCurrentPage((p) => (totalPages ? Math.min(totalPages, p + 1) : p + 1))}
+            style={{
+              padding: "4px 10px",
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 500,
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--color-border)",
+              backgroundColor: totalPages > 0 && currentPage >= totalPages ? "var(--color-bg-subtle)" : "var(--color-white)",
+              color: totalPages > 0 && currentPage >= totalPages ? "var(--color-text-muted)" : "var(--color-navy)",
+              cursor: totalPages > 0 && currentPage >= totalPages ? "not-allowed" : "pointer",
+            }}
+          >
+            Next Page
+          </button>
         </div>
-      )}
+
+        {/* Zoom Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-1)" }}>
+          <button
+            type="button"
+            data-testid="source-panel-zoom-out"
+            aria-label="Zoom Out"
+            disabled={scale <= 0.5 || loading}
+            onClick={() => setScale((s) => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
+            style={{
+              padding: "4px 8px",
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 600,
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--color-border)",
+              backgroundColor: scale <= 0.5 ? "var(--color-bg-subtle)" : "var(--color-white)",
+              color: "var(--color-navy)",
+              cursor: scale <= 0.5 ? "not-allowed" : "pointer",
+            }}
+          >
+            −
+          </button>
+          <span
+            data-testid="source-panel-zoom-level"
+            style={{
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 600,
+              color: "var(--color-text-muted)",
+              minWidth: "42px",
+              textAlign: "center",
+            }}
+          >
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            type="button"
+            data-testid="source-panel-zoom-in"
+            aria-label="Zoom In"
+            disabled={scale >= 3.0 || loading}
+            onClick={() => setScale((s) => Math.min(3.0, Number((s + 0.25).toFixed(2))))}
+            style={{
+              padding: "4px 8px",
+              fontSize: "var(--font-size-xs)",
+              fontWeight: 600,
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--color-border)",
+              backgroundColor: scale >= 3.0 ? "var(--color-bg-subtle)" : "var(--color-white)",
+              color: "var(--color-navy)",
+              cursor: scale >= 3.0 ? "not-allowed" : "pointer",
+            }}
+          >
+            +
+          </button>
+        </div>
+      </div>
 
       {/* Panel Body */}
       <div
@@ -367,39 +380,14 @@ export function SourcePanel({
           flex: 1,
           overflow: "auto",
           padding: "var(--spacing-4)",
-          backgroundColor: isLiveAssistant ? "var(--color-white)" : "var(--color-bg-subtle)",
+          backgroundColor: "var(--color-bg-subtle)",
           display: "flex",
           flexDirection: "column",
-          alignItems: isLiveAssistant ? "center" : "stretch",
-          justifyContent: isLiveAssistant ? "center" : "flex-start",
+          alignItems: "center",
+          justifyContent: "flex-start",
         }}
       >
-        {isLiveAssistant ? (
-          <div
-            style={{
-              padding: "var(--spacing-6)",
-              textAlign: "center",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "var(--spacing-3)",
-            }}
-          >
-            <DataSourceChip mode="demo" />
-            <p
-              data-testid="live-source-panel-message"
-              style={{
-                fontSize: "var(--font-size-sm)",
-                color: "var(--color-text-muted)",
-                lineHeight: 1.5,
-                maxWidth: "320px",
-              }}
-            >
-              Source preview needs the document file route (not built yet)
-            </p>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
             {error && (
               <div
                 style={{
@@ -436,7 +424,6 @@ export function SourcePanel({
               />
             </div>
           </div>
-        )}
       </div>
     </aside>
   );

@@ -19,7 +19,7 @@ from app.ports.reranker import Reranker
 from app.ports.types import RerankCandidate, RerankResult
 
 ALLOWED_DEVICES: frozenset[str] = frozenset({"cpu", "cuda"})
-REQUIRED_CONFIG_KEYS: tuple[str, ...] = ("model", "device")
+REQUIRED_CONFIG_KEYS: tuple[str, ...] = ("model", "revision", "device")
 DEFAULT_MAX_LENGTH: int = 1024
 DEFAULT_BATCH_SIZE: int = 32
 
@@ -42,6 +42,7 @@ class BgeRerankerConfig:
     """Validated configuration for BGE cross-encoder reranker."""
 
     model: str
+    revision: str
     device: str = "cpu"
     max_length: int = DEFAULT_MAX_LENGTH
     batch_size: int = DEFAULT_BATCH_SIZE
@@ -66,6 +67,13 @@ def validate_bge_reranker_config(raw_config: dict[str, Any]) -> BgeRerankerConfi
     if not isinstance(model_val, str) or not model_val.strip():
         raise ConfigurationError(
             message="Invalid model identifier in reranker profile configuration",
+            error_code="CONFIGURATION_ERROR",
+        )
+
+    revision_val = raw_config["revision"]
+    if not isinstance(revision_val, str) or not revision_val.strip():
+        raise ConfigurationError(
+            message="Invalid revision hash in reranker profile configuration",
             error_code="CONFIGURATION_ERROR",
         )
 
@@ -101,18 +109,19 @@ def validate_bge_reranker_config(raw_config: dict[str, Any]) -> BgeRerankerConfi
 
     return BgeRerankerConfig(
         model=model_val.strip(),
+        revision=revision_val.strip(),
         device=device_val,
         max_length=max_length_val,
         batch_size=batch_size_val,
     )
 
 
-_LOADED_RERANKERS: dict[tuple[str, str, int], CrossEncoderModelProtocol] = {}
+_LOADED_RERANKERS: dict[tuple[str, str, str, int], CrossEncoderModelProtocol] = {}
 
 
 def load_bge_reranker_model(config: BgeRerankerConfig) -> CrossEncoderModelProtocol:
-    """Load BGE CrossEncoder model once per process."""
-    cache_key = (config.model, config.device, config.max_length)
+    """Load BGE CrossEncoder model once per process strictly offline."""
+    cache_key = (config.model, config.revision, config.device, config.max_length)
     if cache_key in _LOADED_RERANKERS:
         return _LOADED_RERANKERS[cache_key]
 
@@ -127,6 +136,8 @@ def load_bge_reranker_model(config: BgeRerankerConfig) -> CrossEncoderModelProto
     try:
         loaded = CrossEncoder(
             config.model,
+            revision=config.revision,
+            local_files_only=True,
             max_length=config.max_length,
             device=config.device,
         )
@@ -238,6 +249,18 @@ def create_bge_reranker_adapter(
             message="Profile configuration missing reranker section",
             error_code="CONFIGURATION_ERROR",
         )
+
+    if profile in {"desktop-gpu", "home-gpu"}:
+        import os
+
+        if "HF_HUB_OFFLINE" not in os.environ or os.environ["HF_HUB_OFFLINE"] != "1":
+            raise ConfigurationError(
+                message=(
+                    "HF_HUB_OFFLINE must be set to '1' for real profiles. "
+                    "Offline mode is mandatory."
+                ),
+                error_code="HF_HUB_OFFLINE_REQUIRED",
+            )
 
     config = validate_bge_reranker_config(parsed["reranker"])
     model = load_bge_reranker_model(config)

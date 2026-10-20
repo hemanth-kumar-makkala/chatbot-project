@@ -9,8 +9,8 @@ interface DataSourceChipProps {
 }
 
 export function DataSourceChip({ mode, label }: DataSourceChipProps) {
-  const isLive = mode === "live";
-  const displayLabel = label || (isLive ? "Live" : "Demo");
+  const isConnected = mode === "live";
+  const displayLabel = label || (isConnected ? "Connected" : "Not connected yet");
 
   return (
     <span
@@ -18,14 +18,18 @@ export function DataSourceChip({ mode, label }: DataSourceChipProps) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "5px",
+        gap: "6px",
         fontSize: "var(--font-size-xs)",
         fontWeight: 600,
         padding: "2px 8px",
-        borderRadius: "var(--radius-sm)",
-        backgroundColor: isLive ? "var(--color-status-success-bg)" : "var(--color-lavender)",
-        color: isLive ? "var(--color-status-success-text)" : "var(--color-navy)",
-        border: isLive ? "1px solid #C8E6C9" : "1px solid #C4B0F7",
+        borderRadius: "var(--radius-full)",
+        backgroundColor: isConnected
+          ? "var(--color-status-success-bg)"
+          : "var(--color-bg-subtle)",
+        color: isConnected
+          ? "var(--color-status-success-text)"
+          : "var(--color-text-secondary)",
+        border: isConnected ? "none" : "1px solid var(--color-border)",
         letterSpacing: "0.2px",
         userSelect: "none",
         lineHeight: 1.4,
@@ -37,7 +41,9 @@ export function DataSourceChip({ mode, label }: DataSourceChipProps) {
           width: "6px",
           height: "6px",
           borderRadius: "50%",
-          backgroundColor: isLive ? "var(--color-status-success-text)" : "var(--color-purple)",
+          backgroundColor: isConnected
+            ? "var(--color-status-success-text)"
+            : "var(--color-text-secondary)",
         }}
       />
       {displayLabel}

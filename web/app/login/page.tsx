@@ -3,7 +3,7 @@
 import { useState, type FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { login, getSafeRedirectUrl } from "@/lib/api";
-import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
+import { APP_NAME } from "@/lib/appName";
 
 function LoginForm() {
   const router = useRouter();
@@ -49,7 +49,7 @@ function LoginForm() {
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        background: "var(--gradient-brand)",
+        backgroundColor: "var(--color-bg-surface)",
         padding: "var(--spacing-4)",
       }}
     >
@@ -57,32 +57,32 @@ function LoginForm() {
         style={{
           width: "100%",
           maxWidth: "420px",
-          backgroundColor: "var(--color-bg-card)",
+          backgroundColor: "var(--color-bg-page)",
           borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-lg)",
+          boxShadow: "var(--shadow-md)",
           padding: "var(--spacing-8)",
-          border: "1px solid var(--color-border-subtle)",
+          border: "1px solid var(--color-border)",
         }}
       >
         <div style={{ textAlign: "center", marginBottom: "var(--spacing-6)" }}>
           <h1
             style={{
-              fontSize: "var(--font-size-3xl)",
+              fontSize: "var(--font-size-2xl)",
               fontWeight: 700,
-              color: "var(--color-navy)",
+              color: "var(--color-text-primary)",
               marginBottom: "var(--spacing-1)",
               letterSpacing: "-0.5px",
             }}
           >
-            Staffingly
+            {APP_NAME}
           </h1>
           <p
             style={{
               fontSize: "var(--font-size-sm)",
-              color: "var(--color-text-muted)",
+              color: "var(--color-text-secondary)",
             }}
           >
-            Client Knowledge Assistant Portal
+            Client Portal Sign In
           </p>
         </div>
 
@@ -96,7 +96,7 @@ function LoginForm() {
               borderRadius: "var(--radius-md)",
               marginBottom: "var(--spacing-4)",
               fontSize: "var(--font-size-sm)",
-              border: "1px solid rgba(183, 28, 28, 0.2)",
+              border: "1px solid var(--color-danger)",
             }}
           >
             {errorMessage}
@@ -111,7 +111,7 @@ function LoginForm() {
                 display: "block",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
-                color: "var(--color-navy)",
+                color: "var(--color-text-primary)",
                 marginBottom: "var(--spacing-1)",
               }}
             >
@@ -131,8 +131,8 @@ function LoginForm() {
                 borderRadius: "var(--radius-md)",
                 border: "1px solid var(--color-border)",
                 fontSize: "var(--font-size-base)",
-                backgroundColor: "var(--color-bg-card)",
-                color: "var(--color-navy)",
+                backgroundColor: "var(--color-bg-page)",
+                color: "var(--color-text-primary)",
               }}
               placeholder="admin@example.com"
             />
@@ -145,7 +145,7 @@ function LoginForm() {
                 display: "block",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
-                color: "var(--color-navy)",
+                color: "var(--color-text-primary)",
                 marginBottom: "var(--spacing-1)",
               }}
             >
@@ -165,8 +165,8 @@ function LoginForm() {
                 borderRadius: "var(--radius-md)",
                 border: "1px solid var(--color-border)",
                 fontSize: "var(--font-size-base)",
-                backgroundColor: "var(--color-bg-card)",
-                color: "var(--color-navy)",
+                backgroundColor: "var(--color-bg-page)",
+                color: "var(--color-text-primary)",
               }}
               placeholder="••••••••"
             />
@@ -179,8 +179,8 @@ function LoginForm() {
             style={{
               width: "100%",
               padding: "12px",
-              backgroundColor: "var(--color-primary-gold)",
-              color: "var(--color-navy)",
+              backgroundColor: "var(--color-primary)",
+              color: "var(--color-text-on-primary)",
               fontWeight: 700,
               fontSize: "var(--font-size-base)",
               borderRadius: "var(--radius-md)",
@@ -208,8 +208,8 @@ export default function LoginPage() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "var(--gradient-brand)",
-            color: "var(--color-white)",
+            backgroundColor: "var(--color-bg-surface)",
+            color: "var(--color-text-primary)",
           }}
         >
           Loading...

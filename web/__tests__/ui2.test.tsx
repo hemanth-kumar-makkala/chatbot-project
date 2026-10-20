@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Suspense } from "react";
-import ChatPage from "@/app/assistants/[assistantId]/chat/page";
+import ChatPage from "@/app/assistants/[assistantId]/page";
 import * as api from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
@@ -446,8 +446,8 @@ describe("UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios", () =>
   it("shows suggested questions for every answer type in empty chat for demo assistant", async () => {
     await renderChatPage(demoAssistantId);
 
-    // Click "+ New Conversation" to ensure empty state
-    fireEvent.click(screen.getByRole("button", { name: /\+ New Conversation/i }));
+    // Click "+ New chat" to ensure empty state
+    fireEvent.click(screen.getByRole("button", { name: /\+ New (chat|Conversation)/i }));
 
     // Should render suggested question buttons/chips for quick demonstration
     expect(screen.getByTestId("demo-suggested-questions")).toBeInTheDocument();

@@ -130,9 +130,9 @@ export function UploadArea({ assistantId, onUploadSuccess }: UploadAreaProps) {
           }
         }}
         style={{
-          border: `2px dashed ${isDragging ? "var(--color-purple)" : "var(--color-primary-blue)"}`,
+          border: `2px dashed ${isDragging ? "var(--color-primary-hover)" : "var(--color-primary)"}`,
           borderRadius: "var(--radius-lg)",
-          backgroundColor: isDragging ? "var(--color-light-lilac)" : "var(--color-bg-card)",
+          backgroundColor: isDragging ? "var(--color-primary-soft)" : "var(--color-bg-page)",
           padding: "var(--spacing-8) var(--spacing-6)",
           textAlign: "center",
           cursor: uploading ? "wait" : "pointer",
@@ -152,7 +152,7 @@ export function UploadArea({ assistantId, onUploadSuccess }: UploadAreaProps) {
         />
 
         <div style={{ marginBottom: "var(--spacing-2)" }}>
-          <span style={{ fontSize: "2rem", color: "var(--color-primary-blue)" }} aria-hidden="true">
+          <span style={{ fontSize: "2rem", color: "var(--color-primary)" }} aria-hidden="true">
             📄
           </span>
         </div>
@@ -161,7 +161,7 @@ export function UploadArea({ assistantId, onUploadSuccess }: UploadAreaProps) {
           style={{
             fontSize: "var(--font-size-base)",
             fontWeight: 600,
-            color: "var(--color-navy)",
+            color: "var(--color-text-primary)",
             marginBottom: "var(--spacing-1)",
           }}
         >
@@ -192,21 +192,15 @@ export function UploadArea({ assistantId, onUploadSuccess }: UploadAreaProps) {
               message.type === "success"
                 ? "var(--color-status-success-bg)"
                 : message.type === "duplicate"
-                ? "var(--color-light-blue)"
+                ? "var(--color-info-soft)"
                 : "var(--color-status-error-bg)",
             color:
               message.type === "success"
                 ? "var(--color-status-success-text)"
                 : message.type === "duplicate"
-                ? "var(--color-navy)"
+                ? "var(--color-info)"
                 : "var(--color-status-error-text)",
-            border: `1px solid ${
-              message.type === "success"
-                ? "rgba(27, 94, 32, 0.2)"
-                : message.type === "duplicate"
-                ? "rgba(0, 55, 178, 0.2)"
-                : "rgba(183, 28, 28, 0.2)"
-            }`,
+            border: "1px solid var(--color-border)",
           }}
         >
           {message.text}

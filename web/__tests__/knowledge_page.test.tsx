@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { Suspense } from "react";
-import KnowledgePage from "@/app/assistants/[assistantId]/knowledge/page";
+import KnowledgePage from "@/app/assistants/[assistantId]/data-sources/page";
 import * as api from "@/lib/api";
 
 // Mock API methods

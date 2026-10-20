@@ -52,6 +52,17 @@ class EvidenceId(BaseModel):
     evidence_type: EvidenceType
 
 
+class TableCandidate(BaseModel):
+    """Candidate row retrieved from tables_data."""
+
+    id: str
+    document_title: str
+    document_version_id: str
+    sheet_name: str
+    row_index: int
+    cells: dict[str, Any]
+
+
 class ModelRole(StrEnum):
     """Functional roles mapped to model providers in runtime profiles."""
 

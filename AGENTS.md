@@ -10,6 +10,11 @@ Mandatory: All commands must execute in the foreground according to `.agents/rul
 Before reporting any task done: run uv run pre-commit run --files <changed files>. Never run git add, commit, or push. Hemanth does that.
 After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.md`.
 
+## Process Ownership & Safety Rules
+- Never stop, restart or start the product owner's API, worker or web servers. Never use Stop-Process on processes you did not start.
+- Never leave a server or any process running at the end of a turn. Use test clients (httpx against the app object, or pytest) instead of live servers.
+- Foreground only, no git, never open .env, no installs, no deletes, never run alembic upgrade/downgrade. If the tool backgrounds a command, say so.
+
 ## Foreground execution only
 1. Run every command in the foreground and wait for it to finish before doing anything else.
 2. Do not use the schedule tool or background tasks to wait on commands. Do not start a second command while one is running.

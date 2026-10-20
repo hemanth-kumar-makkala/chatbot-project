@@ -37,6 +37,15 @@ export type FeatureKey =
   | "chat_ask"
   | "chat_citations"
   | "assistant_picker"
+  | "assistants_list"
+  | "assistant_create"
+  | "assistant_delete"
+  | "workspace_members"
+  | "instructions"
+  | "guardrails"
+  | "actions"
+  | "conversations"
+  | "assistant_settings"
   | "conversation_history"
   | "streaming_status"
   | "visual_thumbnail"
@@ -79,6 +88,15 @@ export const FEATURE_CONNECTIONS: Record<FeatureKey, "live" | "demo"> = {
 
   // Demo features today (unbuilt or simulated backend paths)
   assistant_picker: "demo",
+  assistants_list: "demo",
+  assistant_create: "demo",
+  assistant_delete: "demo",
+  workspace_members: "demo",
+  instructions: "demo",
+  guardrails: "demo",
+  actions: "demo",
+  conversations: "demo",
+  assistant_settings: "demo",
   conversation_history: "demo",
   streaming_status: "demo",
   visual_thumbnail: "demo",

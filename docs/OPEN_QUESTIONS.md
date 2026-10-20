@@ -115,6 +115,17 @@ The following items from the spec's "Open decisions" remain open and require sta
   - *Option B*: 2,000 characters (~400 tokens), accommodating longer pasted clinical case summaries or referral paragraphs.
   - *Option C*: Bound strictly to tokenizer context limit (e.g. 512 tokens for BGE-M3 query encoder).
 
+### 2.7 Calibration of Evidence Gate Thresholds (Task 3.3, Node 5)
+- **Status**: **OPEN / RECORDED IN TASK 3.3**
+- **Context**: In Node 5 (`node_assess_evidence`), candidate rerank scores from `BAAI/bge-reranker-v2-m3` are evaluated against named constants:
+  - `RELIABLE_TEXT_THRESHOLD = 0.0` (scores >= 0.0 indicate strong text evidence suitable for answer generation).
+  - `WEAK_EVIDENCE_THRESHOLD = -2.0` (scores below 0.0 down to -2.0 indicate weak evidence; below -2.0 or no candidates indicates no evidence).
+- **Decision Needed**: Starting values are in place in `backend/app/core/graph.py`. Final calibrated threshold values will be tuned and finalized on the golden set benchmark once the full golden set evaluation run completes.
+
+### 2.8 Gate Item: CONFLICTING Evidence Detection (Task 3.3, Node 5)
+- **Status**: **OPEN / PLANNED FOR NEXT GATE ITERATION**
+- **Context**: Node 5 currently categorizes candidates into `NO_EVIDENCE`, `WEAK`, `RELIABLE_TEXT`, and `VISUAL_REQUIRED`. Automatic semantic cross-document contradiction detection (`CONFLICTING`) is not faked and is recorded as the next gate enhancement prior to golden conflict benchmarks.
+
 ---
 
 ## 3. Phase-Deferred Architecture Decisions
@@ -142,3 +153,8 @@ The following items from the spec's "Open decisions" remain open and require sta
 ### 3.5 Multilingual Support
 - **Status**: **DEFERRED**
 - Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
+
+### 3.6 Conversation-Aware Query Rewriting for Follow-Up Questions (Task 3.6 Decision)
+- **Status**: **SCHEDULED WITH CONVERSATIONS TASK (TASK 3.6)**
+- **Context**: Follow-up questions (e.g. "what is inside that doc then", "tell me more about it", "who signed it") lack self-contained lexical and semantic context when evaluated in isolation against vector and keyword indexes.
+- **Decision Driver**: Conversation-aware query rewriting will utilize the immediate prior turn context from `messages` to resolve references, pronouns, and document titles before query retrieval in Node 3. Scheduled to be designed and evaluated alongside the Conversations routes and multi-turn state task (Task 3.6).

@@ -17,6 +17,7 @@ from app.ports.types import (
     EvidenceId,
     EvidenceType,
     RetrievalFilters,
+    TableCandidate,
     TenantContext,
 )
 
@@ -278,3 +279,248 @@ class PostgresRetriever(Retriever):
                     results[cid_str] = body
 
             return results
+
+    async def search_tables(
+        self,
+        tenant_ctx: TenantContext,
+        query: str,
+        limit: int = 15,
+    ) -> list[TableCandidate]:
+        """Retrieve matching rows from tables_data for active documents within tenant scope."""
+        import re
+
+        tid = UUID(str(tenant_ctx.tenant_id))
+        clean_query = query.strip()
+        stop_words = {
+            "what",
+            "which",
+            "where",
+            "when",
+            "who",
+            "whom",
+            "whose",
+            "why",
+            "how",
+            "are",
+            "is",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "about",
+            "into",
+            "through",
+            "during",
+            "before",
+            "after",
+            "above",
+            "below",
+            "up",
+            "down",
+            "out",
+            "off",
+            "over",
+            "under",
+            "again",
+            "further",
+            "then",
+            "once",
+            "here",
+            "there",
+            "all",
+            "any",
+            "both",
+            "each",
+            "few",
+            "more",
+            "most",
+            "other",
+            "some",
+            "such",
+            "no",
+            "nor",
+            "not",
+            "only",
+            "own",
+            "same",
+            "so",
+            "than",
+            "too",
+            "very",
+            "can",
+            "will",
+            "just",
+            "don",
+            "should",
+            "now",
+            "tell",
+            "give",
+            "show",
+            "list",
+        }
+        tokens = [
+            w.lower()
+            for w in re.findall(r"\b[A-Za-z0-9_-]{3,}\b", clean_query)
+            if w.lower() not in stop_words
+        ]
+
+        async with self._session_factory(tenant_ctx) as session:
+            title_conditions = []
+            row_conditions = []
+            sql_params: dict[str, Any] = {"tenant_id": tid, "limit": limit}
+
+            for idx, token in enumerate(tokens[:5]):
+                param_name = f"t_{idx}"
+                sql_params[param_name] = f"%{token}%"
+                title_conditions.append(f"d.title ILIKE :{param_name}")
+                row_conditions.append(f"td.row_data::text ILIKE :{param_name}")
+
+            where_clauses = []
+            if title_conditions or row_conditions:
+                combined_or = " OR ".join(title_conditions + row_conditions)
+                where_clauses.append(f"AND ({combined_or})")
+
+            filter_sql = " ".join(where_clauses)
+            stmt = text(
+                f"""
+                SELECT
+                    td.id,
+                    td.document_version_id,
+                    td.sheet_name,
+                    td.row_index,
+                    td.row_data,
+                    d.title AS document_title
+                FROM tables_data td
+                JOIN document_versions dv ON td.document_version_id = dv.id
+                JOIN documents d ON dv.document_id = d.id
+                WHERE td.tenant_id = :tenant_id
+                  AND d.active_version_id = dv.id
+                  AND d.is_retired = false
+                  {filter_sql}
+                ORDER BY td.row_index ASC
+                LIMIT :limit;
+                """
+            )
+            res = await session.execute(stmt, sql_params)
+            rows = res.mappings().all()
+
+            if not rows and any(
+                k in clean_query.lower()
+                for k in ("table", "sheet", "plan", "insurance", "accepted", "fee", "code", "list")
+            ):
+                fallback_stmt = text(
+                    """
+                    SELECT
+                        td.id,
+                        td.document_version_id,
+                        td.sheet_name,
+                        td.row_index,
+                        td.row_data,
+                        d.title AS document_title
+                    FROM tables_data td
+                    JOIN document_versions dv ON td.document_version_id = dv.id
+                    JOIN documents d ON dv.document_id = d.id
+                    WHERE td.tenant_id = :tenant_id
+                      AND d.active_version_id = dv.id
+                      AND d.is_retired = false
+                    ORDER BY td.row_index ASC
+                    LIMIT :limit;
+                    """
+                )
+                res_fb = await session.execute(fallback_stmt, {"tenant_id": tid, "limit": limit})
+                rows = res_fb.mappings().all()
+
+            from app.ports.types import TableCandidate
+
+            candidates: list[TableCandidate] = []
+            for r in rows:
+                raw_data = r["row_data"]
+                cells = raw_data.get("cells", raw_data) if isinstance(raw_data, dict) else {}
+                candidates.append(
+                    TableCandidate(
+                        id=str(r["id"]),
+                        document_title=str(r["document_title"]),
+                        document_version_id=str(r["document_version_id"]),
+                        sheet_name=str(r["sheet_name"]),
+                        row_index=int(r["row_index"]),
+                        cells=cells,
+                    )
+                )
+            return candidates
+
+    async def get_inventory(
+        self,
+        tenant_ctx: TenantContext,
+        heading_limit: int = 5,
+    ) -> dict[str, list[str]]:
+        """Retrieve active document titles and up to heading_limit distinct headings."""
+        tid = UUID(str(tenant_ctx.tenant_id))
+        async with self._session_factory(tenant_ctx) as session:
+            doc_stmt = text(
+                """
+                SELECT d.title
+                FROM documents d
+                JOIN document_versions dv ON d.active_version_id = dv.id
+                WHERE d.tenant_id = :tenant_id
+                  AND d.is_retired = false
+                ORDER BY d.created_at DESC;
+                """
+            )
+            doc_res = await session.execute(doc_stmt, {"tenant_id": tid})
+            titles = [str(r[0]) for r in doc_res.fetchall()]
+
+            head_stmt = text(
+                """
+                SELECT DISTINCT c.context_prefix
+                FROM chunks c
+                JOIN document_versions dv ON c.document_version_id = dv.id
+                JOIN documents d ON dv.document_id = d.id
+                WHERE c.tenant_id = :tenant_id
+                  AND c.is_active = true
+                  AND d.is_retired = false
+                  AND c.context_prefix IS NOT NULL
+                LIMIT 20;
+                """
+            )
+            head_res = await session.execute(head_stmt, {"tenant_id": tid})
+            raw_prefixes = [str(r[0]) for r in head_res.fetchall()]
+
+            headings: list[str] = []
+            for pfx in raw_prefixes:
+                parts = [p.strip() for p in pfx.split(" - ") if p.strip()]
+                if len(parts) >= 3:
+                    heading = parts[2]
+                elif len(parts) == 2 and not parts[1].lower().startswith("page"):
+                    heading = parts[1]
+                elif len(parts) >= 1:
+                    heading = parts[-1]
+                else:
+                    heading = pfx
+                if heading and heading not in headings and not heading.lower().startswith("page"):
+                    headings.append(heading)
+                if len(headings) >= heading_limit:
+                    break
+
+            return {"titles": titles, "headings": headings[:heading_limit]}

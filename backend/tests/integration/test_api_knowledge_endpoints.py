@@ -39,6 +39,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import tenant_session, unscoped_session
+from app.ports.errors import ConfigurationError
 from app.ports.types import TenantContext, UserRole
 from tests.fixtures.database_seeding import (
     seed_document,
@@ -690,3 +691,57 @@ class TestKnowledgeUploadAndStatusList:
             client.cookies.update(padmin_cookies)
             padmin_resp = await client.get(f"/v1/assistants/{asst_id}/knowledge/documents")
             assert padmin_resp.status_code == 404
+
+    async def test_upload_desktop_gpu_wiring_succeeds(self, tmp_path: Path) -> None:
+        """Upload succeeds on desktop-gpu profile with valid storage directory."""
+        desktop_settings = ApiSettings(
+            cors_origins=["http://localhost:3000"],
+            cookie_secure=False,
+            cookie_samesite="lax",
+            idle_timeout_minutes=30,
+            absolute_timeout_hours=24,
+            allow_bearer_auth=False,
+            max_upload_bytes=5 * 1024 * 1024,
+            profile="desktop-gpu",
+            storage_dir=str(tmp_path),
+        )
+        desktop_app = create_app(settings=desktop_settings)
+        tenant_id = uuid4()
+        async with unscoped_session() as session:
+            session.add(Tenant(id=tenant_id, name="Desktop GPU Upload Tenant"))
+            await session.flush()
+
+        asst_id = await _seed_assistant(tenant_id, "Desktop GPU Assistant")
+        _, email, pwd = await _create_test_user_with_membership(
+            tenant_id=tenant_id, role="client_admin"
+        )
+
+        transport = ASGITransport(app=desktop_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            cookies, csrf_token = await _login_and_get_cookies(client, email, pwd)
+            client.cookies.update(cookies)
+
+            pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<\n>>\nendobj\ntrailer\n<<\n>>\n%%EOF\n"
+            resp = await client.post(
+                f"/v1/assistants/{asst_id}/knowledge/upload",
+                headers={
+                    "X-CSRF-Token": csrf_token,
+                    "X-Filename": "gpu_upload_test.pdf",
+                    "Content-Type": "application/pdf",
+                },
+                content=pdf_bytes,
+            )
+            assert resp.status_code == 202
+            data = resp.json()
+            assert "document_id" in data
+            assert data["status"] == "queued"
+
+    async def test_desktop_gpu_settings_rejects_missing_storage_dir(self, tmp_path: Path) -> None:
+        """ApiSettings on desktop-gpu raises ConfigurationError when storage_dir does not exist."""
+        non_existent = tmp_path / "does_not_exist_folder"
+        with pytest.raises(ConfigurationError) as exc_info:
+            ApiSettings(
+                profile="desktop-gpu",
+                storage_dir=str(non_existent),
+            )
+        assert "directory does not exist" in str(exc_info.value)

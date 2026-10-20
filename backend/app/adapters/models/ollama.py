@@ -20,7 +20,10 @@ Key Architectural Guarantees:
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import logging
 import math
 import os
 import re
@@ -47,6 +50,8 @@ from app.ports.types import (
     ModelRole,
     PageReading,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TRANSCRIPTION_PROMPT: str = (
     "Transcribe all visible text from this document page image verbatim. "
@@ -241,7 +246,7 @@ class OllamaModelProvider(ModelProvider):
         config_path: Path | None = None,
         http_client: httpx.AsyncClient | None = None,
         image_processor: ImageProcessor | None = None,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = 120.0,
     ) -> None:
         if base_url is not None:
             cleaned_url = base_url.strip()
@@ -463,8 +468,143 @@ class OllamaModelProvider(ModelProvider):
         schema: type[BaseModel] | None = None,
         max_tokens: int | None = None,
     ) -> ModelResponse:
-        del role, messages, schema, max_tokens
-        raise OllamaMethodNotImplementedError("Ollama provider: generate not implemented yet")
+        role_str = role.value if hasattr(role, "value") else str(role)
+        if role_str not in self._models:
+            raise OllamaPermanentError(
+                message="Role not configured in profile models",
+                error_code="MODEL_ROLE_NOT_CONFIGURED",
+            )
+        model_name = self._models[role_str]
+        model_id = model_name
+
+        chat_messages = [{"role": m.role, "content": m.content} for m in messages]
+
+        payload: dict[str, Any] = {
+            "model": model_name,
+            "messages": chat_messages,
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.0,
+                "seed": 42,
+            },
+        }
+        if max_tokens is not None:
+            payload["options"]["num_predict"] = max_tokens
+        if schema is not None:
+            payload["format"] = schema.model_json_schema()
+
+        url = self._base_url + "/api/chat"
+
+        client_to_close: httpx.AsyncClient | None = None
+        if self._http_client is not None:
+            client = self._http_client
+        else:
+            client = httpx.AsyncClient(timeout=self._timeout_seconds)
+            client_to_close = client
+
+        max_attempts = 3
+        backoff_base = 0.2
+        last_transient_exc: Exception | None = None
+        response: httpx.Response | None = None
+
+        try:
+            model_version = await self._get_model_digest(model_name=model_name, client=client)
+            for attempt in range(max_attempts):
+                try:
+                    response = await client.post(url, json=payload)
+                    break
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+                    last_transient_exc = exc
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(backoff_base * (2**attempt))
+                        continue
+                    raise TransientIngestionError(
+                        message="Ollama request timed out after retries",
+                        error_code="OLLAMA_TIMEOUT",
+                    ) from exc
+            else:
+                raise TransientIngestionError(
+                    message="Ollama request timed out after retries",
+                    error_code="OLLAMA_TIMEOUT",
+                ) from last_transient_exc
+        finally:
+            if client_to_close is not None:
+                await client_to_close.aclose()
+
+        if response is None:
+            raise TransientIngestionError(
+                message="Ollama request timed out after retries",
+                error_code="OLLAMA_TIMEOUT",
+            )
+
+        if response.status_code >= 400:
+            raise OllamaPermanentError(
+                message="Ollama HTTP error",
+                error_code="OLLAMA_HTTP_ERROR",
+                status_code=response.status_code,
+            )
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise MalformedOutput(
+                message="Malformed Ollama JSON response",
+                error_code="MALFORMED_OUTPUT",
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise MalformedOutput(
+                message="Ollama response payload must be a JSON object",
+                error_code="MALFORMED_OUTPUT",
+            )
+
+        if "message" not in data or not isinstance(data["message"], dict):
+            raise MalformedOutput(
+                message="Ollama response missing required 'message' object",
+                error_code="MALFORMED_OUTPUT",
+            )
+
+        msg_obj = data["message"]
+        raw_content = str(msg_obj.get("content", ""))
+        if not raw_content:
+            logger.error("Ollama returned empty raw_content! Full response data: %r", data)
+        cleaned_text = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
+
+        structured_dict: dict[str, Any] | None = None
+        if schema is not None:
+            try:
+                clean_json = cleaned_text
+                code_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_text)
+                if code_match:
+                    clean_json = code_match.group(1).strip()
+                elif "{" in clean_json and "}" in clean_json:
+                    start = clean_json.find("{")
+                    end = clean_json.rfind("}") + 1
+                    clean_json = clean_json[start:end]
+
+                parsed = json.loads(clean_json)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Parsed JSON is not an object")
+                validated = schema.model_validate(parsed)
+                structured_dict = validated.model_dump()
+            except Exception as exc:
+                raise MalformedOutput(
+                    message="Malformed Ollama structured output",
+                    error_code="MALFORMED_OUTPUT",
+                ) from exc
+
+        usage_tokens: int | None = None
+        if "eval_count" in data and isinstance(data["eval_count"], int):
+            usage_tokens = data["eval_count"]
+
+        return ModelResponse(
+            content=cleaned_text,
+            model_id=model_id,
+            model_version=model_version,
+            structured_output=structured_dict,
+            usage_tokens=usage_tokens,
+        )
 
     async def read_page(
         self,

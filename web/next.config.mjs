@@ -9,6 +9,9 @@ if (!apiOrigin) {
 const cleanedOrigin = apiOrigin.replace(/\/+$/, "");
 
 const nextConfig = {
+  experimental: {
+    proxyTimeout: 120_000,
+  },
   async redirects() {
     return [
       {

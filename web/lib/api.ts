@@ -479,6 +479,7 @@ export interface SourceCitation {
   version: string;
   page_number: number;
   evidence_type: string;
+  version_id?: string | null;
   sheet_name?: string | null;
   row_number?: number | null;
   language?: string | null;
@@ -520,6 +521,7 @@ export interface QuestionResponse {
   clarify_topics?: string[] | null;
   status_lines?: string[] | null;
   public_error_ref?: string | null;
+  error_code?: string | null;
   sources?: SourceCitation[];
   conflict_sources?: SourceCitation[];
   extracted_fields?: ExtractedField[] | null;

@@ -157,9 +157,11 @@ class BuiltinTableExtractor(TableExtractor):
         total_cells = 0
 
         for raw_row in reader:
-            # Skip empty rows before headers
+            # Skip empty rows or comment rows before headers
             if headers is None:
                 if not any(cell.strip() for cell in raw_row):
+                    continue
+                if raw_row and raw_row[0].strip().startswith("#"):
                     continue
                 if len(raw_row) > MAX_COLUMNS:
                     raise FileValidationError(

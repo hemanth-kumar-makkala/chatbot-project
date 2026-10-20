@@ -509,16 +509,8 @@ class TestOllamaModelProviderUnit:
 
     @pytest.mark.asyncio
     async def test_unimplemented_methods_raise_typed_error(self) -> None:
-        """Methods not needed for page processing yet raise typed error with fixed message."""
+        """Methods not implemented yet raise typed error with fixed message."""
         provider = OllamaModelProvider(profile="desktop-gpu", base_url="http://mock-ollama:11434")
-
-        with pytest.raises(OllamaMethodNotImplementedError) as exc1:
-            await provider.generate(
-                role=ModelRole.ANSWER,
-                messages=[ChatMessage(role="user", content="hello")],
-            )
-        assert exc1.value.message == "Ollama provider: generate not implemented yet"
-        assert exc1.value.error_code == "METHOD_NOT_IMPLEMENTED"
 
         with pytest.raises(OllamaMethodNotImplementedError) as exc2:
             await provider.read_page(

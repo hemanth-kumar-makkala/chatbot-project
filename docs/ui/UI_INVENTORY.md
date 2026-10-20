@@ -6,14 +6,29 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
 
 ## 1. Architectural Guardrails & Role Principles
 
-1. **No Admin Dashboards Rule**:
-   - Architecture Spec (spec section "End result: how people will use it") and `docs/ui/KNOWLEDGE_PAGE_SPEC.md` (section "Purpose"): **"No admin dashboards. The Knowledge page and its review list are the only admin screens."**
-   - The application does not contain generic administrative overview pages, metric graphs, analytics charts, or platform administration dashboards.
+1. **Workspace and Assistant Screens (ADR-0014)**:
+   - Replaces the legacy restriction *"no admin dashboards; the Knowledge page is the only admin screen"* with a clean workspace-level and assistant-level structure:
+     - **Workspace Level**:
+       - `UI-SCR-01`: Login (`/login`)
+       - `UI-SCR-02`: Workspace Assistants Grid (`/assistants`)
+       - `UI-SCR-03`: Workspace Settings (`/settings`)
+     - **Assistant Level** (`/assistants/[id]/...`):
+       - `UI-SCR-04`: Assistant Home / Chat (`/assistants/[id]`)
+       - `UI-SCR-05`: Data Sources (`/assistants/[id]/data-sources`)
+       - `UI-SCR-06`: Instructions (`/assistants/[id]/instructions`)
+       - `UI-SCR-07`: Guardrails (`/assistants/[id]/guardrails`)
+       - `UI-SCR-08`: Actions Placeholder (`/assistants/[id]/actions`)
+       - `UI-SCR-09`: Conversations (`/assistants/[id]/conversations`)
+       - `UI-SCR-10`: Assistant Settings (`/assistants/[id]/settings`)
+   - Still strictly no analytics dashboards, charts, leads, or widgets.
+   - Guardrails are immutable (Invariant 4 answers only from documents; Invariant 1 model never has database access; unreadable fields never guessed; session documents never added to knowledge base).
 2. **Role Capabilities (spec section "End result: how people will use it")**:
    - **Platform Admin (Staffingly)**: Create clients and assistants, manage users, view traces and audit logs (Note: see Section 4 on administrative boundaries).
-   - **Client Admin**: Upload, replace (upload newer versions), and retire knowledge files for their client, observe processing progress, review flagged pages, accept/exclude/retry pages, and promote versions.
-   - **Staff**: Select assigned client assistants, chat with grounded citations, view cited pages in an embedded PDF viewer, upload session PHI documents for structured field extraction, and provide message feedback.
+   - **Client Admin**: Manage assistant knowledge files, instructions, guardrails, review flagged pages, and manage settings.
+   - **Staff**: Chat with assigned assistants, view cited pages in embedded PDF viewer, review past conversations, upload session PHI documents for extraction, and provide feedback.
 3. **Security & Privacy Invariants**:
+   - Invariant 1: Model has no database access.
+   - Invariant 4: Answers strictly grounded in documents or refuse. Instructions cannot override evidence rules.
    - Invariant 5: Visual readings are cited as visual evidence and displayed with page thumbnails.
    - Invariant 6: Unreadable extraction fields receive explicit state (`UNREADABLE`), remaining blank and flagged, never guessed.
    - Invariant 7: PHI uploaded in chat sessions stays strictly in `session_documents` and never enters the shared knowledge index.
@@ -34,7 +49,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/ui/BUILD_NOTES.md`: Section 1 "Step 4: Foundations & Authentication"
   - `docs/decisions/ADR-0007-session-auth-and-csrf.md`: Section 3
 - **What the User Sees and Does**:
-  - Sees Staffingly brand gradient background (`#0037B2` to `#A941C6`), centered authentication card, wordmark, email and password inputs, sign-in button, and accessible error banners.
+  - Sees default theme tokens (web/styles/themes/default/tokens.css) background (archived theme: docs/ui/staffingly-inc/BRAND_THEME.md), centered authentication card, app name ("Knowledge Assistant"), email and password inputs, sign-in button, and accessible error banners.
   - Submits valid credentials: sets HttpOnly `session_token` cookie and `csrf_token` cookie; automatically redirects to target assistant page or default `/assistants/[assistantId]/knowledge`.
   - Submits invalid credentials: sees masked invalid credentials error.
   - Rate limited (5 failed attempts within 60s): sees rate limit warning message (HTTP 429).
@@ -49,7 +64,7 @@ Source of truth: `Client Knowledge Assistant Architecture and Build Plan.md`, `d
   - `docs/ui/BUILD_NOTES.md`: Section 1 "Step 4: Foundations & Authentication"
   - `Client Knowledge Assistant Architecture and Build Plan.md`: "End result: how people will use it"
 - **What the User Sees and Does**:
-  - Fixed top bar with Staffingly gradient, white "Staffingly" wordmark, client/assistant indicator.
+  - Fixed top bar with white background, bottom border, app name in text primary ("Knowledge Assistant"), active tab in primary, client/assistant indicator (default theme tokens (web/styles/themes/default/tokens.css); archived theme: docs/ui/staffingly-inc/BRAND_THEME.md).
   - Navigation tab links toggling between **Knowledge** (`/assistants/[assistantId]/knowledge`) and **Chat** (`/assistants/[assistantId]/chat`).
   - User profile menu displaying logged-in email and Logout button.
   - Clicking Logout calls `POST /v1/auth/logout` with CSRF token, revokes session, clears cookies, and redirects to `/login`.

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import * as nextNavigation from "next/navigation";
 import { logout } from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 import { DEMO_ASSISTANTS } from "@/lib/demo/fixtures";
+import { APP_NAME } from "@/lib/appName";
 
 interface TopBarProps {
   assistantName?: string | null;
@@ -14,7 +15,17 @@ interface TopBarProps {
 }
 
 export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
-  const router = useRouter();
+  const router = nextNavigation.useRouter();
+  let pathname = "";
+  try {
+    if (typeof nextNavigation.usePathname === "function") {
+      pathname = nextNavigation.usePathname() || "";
+    } else if (typeof window !== "undefined" && window.location) {
+      pathname = window.location.pathname || "";
+    }
+  } catch {
+    pathname = "";
+  }
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -27,12 +38,15 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
     }
   }
 
+  const isKnowledgeActive = pathname.includes("/knowledge");
+  const isChatActive = pathname.includes("/chat");
+
   return (
     <header
       style={{
-        background: "var(--gradient-brand)",
-        color: "var(--color-white)",
-        boxShadow: "var(--shadow-md)",
+        backgroundColor: "var(--color-bg-page)",
+        borderBottom: "1px solid var(--color-border)",
+        color: "var(--color-text-primary)",
       }}
     >
       <div
@@ -47,23 +61,13 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
         <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-4)" }}>
           <span
             style={{
-              fontSize: "var(--font-size-2xl)",
+              fontSize: "var(--font-size-xl)",
               fontWeight: 700,
               letterSpacing: "-0.5px",
-              color: "var(--color-white)",
+              color: "var(--color-text-primary)",
             }}
           >
-            Staffingly
-          </span>
-          <span
-            style={{
-              fontSize: "var(--font-size-sm)",
-              opacity: 0.85,
-              borderLeft: "1px solid rgba(255, 255, 255, 0.3)",
-              paddingLeft: "var(--spacing-3)",
-            }}
-          >
-            Knowledge Assistant
+            {APP_NAME}
           </span>
           {/* Client Switcher (PART D) */}
           {assistantId && (
@@ -78,9 +82,9 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
                   router.push(`/assistants/${encodeURIComponent(targetId)}/chat`);
                 }}
                 style={{
-                  backgroundColor: "rgba(255, 255, 255, 0.18)",
-                  color: "var(--color-white)",
-                  border: "1px solid rgba(255, 255, 255, 0.35)",
+                  backgroundColor: "var(--color-bg-surface)",
+                  color: "var(--color-text-primary)",
+                  border: "1px solid var(--color-border)",
                   borderRadius: "var(--radius-md)",
                   padding: "4px 8px",
                   fontSize: "var(--font-size-xs)",
@@ -93,7 +97,7 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
                   <option
                     key={asst.id}
                     value={asst.id}
-                    style={{ color: "var(--color-text-main)", backgroundColor: "var(--color-white)" }}
+                    style={{ color: "var(--color-text-primary)", backgroundColor: "var(--color-bg-page)" }}
                   >
                     {asst.name}
                   </option>
@@ -106,12 +110,13 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
               href={`/assistants/${encodeURIComponent(assistantId || DEV_DEFAULT_ASSISTANT_ID)}/knowledge`}
               style={{
                 fontSize: "var(--font-size-sm)",
-                color: "var(--color-white)",
+                color: isKnowledgeActive ? "var(--color-primary)" : "var(--color-text-secondary)",
+                backgroundColor: isKnowledgeActive ? "var(--color-primary-soft)" : "transparent",
+                border: isKnowledgeActive ? "1px solid var(--color-primary-soft)" : "1px solid transparent",
                 padding: "4px 12px",
                 borderRadius: "var(--radius-md)",
-                backgroundColor: "rgba(255, 255, 255, 0.15)",
                 textDecoration: "none",
-                fontWeight: 500,
+                fontWeight: isKnowledgeActive ? 600 : 500,
               }}
             >
               Knowledge
@@ -120,12 +125,13 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
               href={`/assistants/${encodeURIComponent(assistantId || DEV_DEFAULT_ASSISTANT_ID)}/chat`}
               style={{
                 fontSize: "var(--font-size-sm)",
-                color: "var(--color-white)",
+                color: isChatActive ? "var(--color-primary)" : "var(--color-text-secondary)",
+                backgroundColor: isChatActive ? "var(--color-primary-soft)" : "transparent",
+                border: isChatActive ? "1px solid var(--color-primary-soft)" : "1px solid transparent",
                 padding: "4px 12px",
                 borderRadius: "var(--radius-md)",
-                backgroundColor: "rgba(255, 255, 255, 0.15)",
                 textDecoration: "none",
-                fontWeight: 500,
+                fontWeight: isChatActive ? 600 : 500,
               }}
             >
               Chat
@@ -144,9 +150,9 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
               display: "flex",
               alignItems: "center",
               gap: "var(--spacing-2)",
-              color: "var(--color-white)",
-              backgroundColor: "rgba(255, 255, 255, 0.12)",
-              border: "1px solid rgba(255, 255, 255, 0.25)",
+              color: "var(--color-text-primary)",
+              backgroundColor: "var(--color-bg-surface)",
+              border: "1px solid var(--color-border)",
               padding: "6px 14px",
               borderRadius: "var(--radius-md)",
               cursor: "pointer",
@@ -167,7 +173,7 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
                 right: 0,
                 marginTop: "var(--spacing-2)",
                 width: "180px",
-                backgroundColor: "var(--color-white)",
+                backgroundColor: "var(--color-bg-page)",
                 borderRadius: "var(--radius-md)",
                 boxShadow: "var(--shadow-lg)",
                 border: "1px solid var(--color-border)",
@@ -180,7 +186,7 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
                   style={{
                     padding: "var(--spacing-3)",
                     fontSize: "var(--font-size-xs)",
-                    color: "var(--color-text-muted)",
+                    color: "var(--color-text-secondary)",
                     borderBottom: "1px solid var(--color-border-subtle)",
                     wordBreak: "break-all",
                   }}
@@ -199,12 +205,12 @@ export function TopBar({ assistantName, assistantId, userEmail }: TopBarProps) {
                   textAlign: "left",
                   padding: "var(--spacing-3)",
                   fontSize: "var(--font-size-sm)",
-                  color: "var(--color-navy)",
+                  color: "var(--color-text-primary)",
                   cursor: "pointer",
                   display: "block",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "var(--color-light-lilac)";
+                  e.currentTarget.style.backgroundColor = "var(--color-bg-subtle)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.backgroundColor = "transparent";

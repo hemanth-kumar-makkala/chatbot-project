@@ -1,4 +1,4 @@
-@import "./tokens.css";
+@import "./themes/default/tokens.css";
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -9,14 +9,14 @@
 html, body {
   height: 100%;
   font-family: var(--font-family);
-  color: var(--color-text-main);
+  color: var(--color-text-primary);
   background-color: var(--color-bg-page);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--color-primary-blue);
+  color: var(--color-primary);
   text-decoration: none;
 }
 

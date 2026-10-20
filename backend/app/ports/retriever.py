@@ -6,7 +6,7 @@ access to knowledge chunks. Enforces tenant scoping on every query before retrie
 
 from abc import ABC, abstractmethod
 
-from app.ports.types import EvidenceId, RetrievalFilters, TenantContext
+from app.ports.types import EvidenceId, RetrievalFilters, TableCandidate, TenantContext
 
 
 class Retriever(ABC):
@@ -39,4 +39,23 @@ class Retriever(ABC):
         evidence_ids: list[str],
     ) -> dict[str, str]:
         """Fetch chunk texts and context prefixes for given evidence IDs within tenant scope."""
+        ...
+
+    @abstractmethod
+    async def search_tables(
+        self,
+        tenant_ctx: TenantContext,
+        query: str,
+        limit: int = 15,
+    ) -> list[TableCandidate]:
+        """Retrieve matching rows from tables_data for active documents within tenant scope."""
+        ...
+
+    @abstractmethod
+    async def get_inventory(
+        self,
+        tenant_ctx: TenantContext,
+        heading_limit: int = 5,
+    ) -> dict[str, list[str]]:
+        """Retrieve active document titles and up to heading_limit distinct headings."""
         ...

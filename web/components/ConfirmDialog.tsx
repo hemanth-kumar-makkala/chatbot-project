@@ -75,7 +75,7 @@ export function ConfirmDialog({
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(41, 54, 130, 0.45)",
+        backgroundColor: "var(--color-backdrop)",
         backdropFilter: "blur(2px)",
         display: "flex",
         alignItems: "center",
@@ -96,7 +96,7 @@ export function ConfirmDialog({
         style={{
           width: "100%",
           maxWidth: "480px",
-          backgroundColor: "var(--color-bg-card)",
+          backgroundColor: "var(--color-bg-page)",
           borderRadius: "var(--radius-lg)",
           boxShadow: "var(--shadow-lg)",
           padding: "var(--spacing-6)",
@@ -108,7 +108,7 @@ export function ConfirmDialog({
           style={{
             fontSize: "var(--font-size-xl)",
             fontWeight: 700,
-            color: "var(--color-navy)",
+            color: "var(--color-text-primary)",
             marginBottom: "var(--spacing-3)",
           }}
         >
@@ -119,7 +119,7 @@ export function ConfirmDialog({
           id="confirm-dialog-message"
           style={{
             fontSize: "var(--font-size-base)",
-            color: "var(--color-text-muted)",
+            color: "var(--color-text-secondary)",
             marginBottom: "var(--spacing-6)",
             lineHeight: 1.5,
           }}
@@ -144,8 +144,8 @@ export function ConfirmDialog({
               padding: "8px 16px",
               borderRadius: "var(--radius-md)",
               border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-white)",
-              color: "var(--color-navy)",
+              backgroundColor: "var(--color-bg-page)",
+              color: "var(--color-text-primary)",
               fontWeight: 600,
               fontSize: "var(--font-size-sm)",
               cursor: isLoading ? "not-allowed" : "pointer",
@@ -163,8 +163,8 @@ export function ConfirmDialog({
               padding: "8px 16px",
               borderRadius: "var(--radius-md)",
               border: "none",
-              backgroundColor: isDestructive ? "var(--color-status-error-text)" : "var(--color-primary-blue)",
-              color: "var(--color-white)",
+              backgroundColor: isDestructive ? "var(--color-danger)" : "var(--color-primary)",
+              color: "var(--color-text-on-primary)",
               fontWeight: 600,
               fontSize: "var(--font-size-sm)",
               cursor: isLoading ? "not-allowed" : "pointer",

@@ -115,6 +115,12 @@ class MockModelProvider(ModelProvider):
                     structured[field_name] = 0.95
                 elif annotation is bool:
                     structured[field_name] = True
+                elif field_name == "evidence_ids":
+                    structured[field_name] = []
+                elif field_name == "quoted_span":
+                    structured[field_name] = None
+                elif field_name == "route":
+                    structured[field_name] = "knowledge"
                 else:
                     structured[field_name] = f"mock_{field_name}"
 

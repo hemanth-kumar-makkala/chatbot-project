@@ -235,16 +235,19 @@ class TestBgeRerankerConfigValidation:
     def test_validate_valid_config(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
+            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
             "device": "cpu",
         }
         cfg = validate_bge_reranker_config(raw)
         assert cfg.model == "BAAI/bge-reranker-v2-m3"
+        assert cfg.revision == "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
         assert cfg.device == "cpu"
         assert cfg.max_length == 1024
 
     def test_validate_custom_max_length_and_batch_size(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
+            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
             "device": "cpu",
             "max_length": 512,
             "batch_size": 16,
@@ -256,6 +259,7 @@ class TestBgeRerankerConfigValidation:
     def test_validate_unsupported_device_raises(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
+            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
             "device": "tpu",
         }
         with pytest.raises(ConfigurationError) as exc_info:
@@ -273,7 +277,11 @@ class TestBgeRerankerAdapter:
 
     async def test_rerank_empty_candidates_returns_empty(self) -> None:
         mock_model = MagicMock()
-        cfg = BgeRerankerConfig(model="test-reranker", device="cpu")
+        cfg = BgeRerankerConfig(
+            model="test-reranker",
+            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            device="cpu",
+        )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
 
         results = await adapter.rerank(query="some query", candidates=[])
@@ -286,7 +294,11 @@ class TestBgeRerankerAdapter:
         # Return scores such that c3 > c1 > c2
         mock_model.predict.return_value = [0.2, -1.5, 3.8]
 
-        cfg = BgeRerankerConfig(model="test-reranker", device="cpu")
+        cfg = BgeRerankerConfig(
+            model="test-reranker",
+            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            device="cpu",
+        )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
 
         candidates = [
@@ -325,7 +337,11 @@ class TestBgeRerankerAdapter:
         # Model returns only 1 score for 2 candidates
         mock_model.predict.return_value = [0.5]
 
-        cfg = BgeRerankerConfig(model="test-reranker", device="cpu")
+        cfg = BgeRerankerConfig(
+            model="test-reranker",
+            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            device="cpu",
+        )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
 
         candidates = [
@@ -340,7 +356,11 @@ class TestBgeRerankerAdapter:
         mock_model = MagicMock()
         mock_model.predict.return_value = [float("nan"), 1.0]
 
-        cfg = BgeRerankerConfig(model="test-reranker", device="cpu")
+        cfg = BgeRerankerConfig(
+            model="test-reranker",
+            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            device="cpu",
+        )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
 
         candidates = [

@@ -25,6 +25,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from typing_extensions import TypedDict
 
+from app.core.prompts import (
+    AnswerOutput,
+    RouterOutput,
+    format_answer_prompt,
+    format_general_prompt,
+    format_router_prompt,
+)
 from app.ports.errors import (
     MalformedOutput,
 )
@@ -44,6 +51,11 @@ from app.ports.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Named threshold constants for candidate scoring gate (Node 5 assess_evidence)
+# Initial values recorded in OPEN_QUESTIONS.md pending calibration on the golden evaluation set.
+RELIABLE_TEXT_THRESHOLD: float = 0.0
+WEAK_EVIDENCE_THRESHOLD: float = -2.0
 
 # --- 1. Graph State & Runtime Context ---
 
@@ -113,6 +125,10 @@ class GraphRuntimeContext:
     raw_document_bytes: bytes = b""
     response_text: str = ""
     extracted_fields: dict[str, Any] = field(default_factory=dict)
+    candidate_scores: dict[str, float] = field(default_factory=dict)
+    candidate_evidence_types: dict[str, str] = field(default_factory=dict)
+    generated_answer: dict[str, Any] = field(default_factory=dict)
+    active_document_count: int | None = None
 
 
 # --- 2. Telemetry Node Wrapper ---
@@ -224,29 +240,152 @@ async def node_route(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        # Never trust caller-supplied route or answer_mode from state.
-        # Always compute route and answer_mode directly or from mock context.
         ports = runtime.context.ports
         ctx = runtime.context
         q = ctx.question_text.lower()
 
+        computed_route = "knowledge"
+        computed_mode = "short"
+        computed_lang = "en"
+
+        # Knowledge-base inventory check (Rule 3c: no model call)
+        q_clean = q.strip().rstrip("?.! ")
+        inventory_phrases = (
+            "what data do you have",
+            "what documents do you have",
+            "what topics do you have",
+            "what do you have",
+            "what files do you have",
+            "what documents are available",
+            "what information do you have",
+            "list your documents",
+            "list all documents",
+            "list documents",
+            "what is in your knowledge base",
+            "what is in this assistant",
+        )
+        if any(p in q_clean for p in inventory_phrases):
+            if ctx.active_document_count == 0:
+                ctx.response_text = (
+                    "This assistant has no documents yet. Add files in Data sources to get started."
+                )
+                return {
+                    "route": "general",
+                    "status": "refusal",
+                    "response_message_id": str(uuid4()),
+                    "evidence_ids": [],
+                }
+            inv: dict[str, list[str]] = {"titles": [], "headings": []}
+            if ports.retriever is not None:
+                try:
+                    inv = await ports.retriever.get_inventory(ctx.tenant, heading_limit=5)
+                except Exception:
+                    logger.warning("Failed to fetch inventory from retriever", exc_info=True)
+            elif ports.is_mock_profile and ports.mock_titles:
+                inv = {"titles": ports.mock_titles, "headings": ["General Practice Guidelines"]}
+
+            doc_titles = inv.get("titles", [])
+            headings = inv.get("headings", [])
+            if not doc_titles and ctx.active_document_count == 0:
+                ctx.response_text = (
+                    "This assistant has no documents yet. Add files in Data sources to get started."
+                )
+                return {
+                    "route": "general",
+                    "status": "refusal",
+                    "response_message_id": str(uuid4()),
+                    "evidence_ids": [],
+                }
+
+            docs_formatted = "\n".join(f"- {t}" for t in doc_titles) if doc_titles else "- (none)"
+            sections_formatted = (
+                "\n".join(f"- {h}" for h in headings[:5]) if headings else "- (no section headings)"
+            )
+            ctx.response_text = (
+                f"This assistant has information from the following documents:\n"
+                f"{docs_formatted}\n\n"
+                f"Key topics and headings:\n{sections_formatted}"
+            )
+            return {
+                "route": "general",
+                "status": "completed",
+                "response_message_id": str(uuid4()),
+                "evidence_ids": [],
+            }
+
         if ports.is_mock_profile and ports.mock_forced_route:
             computed_route = ports.mock_forced_route
-        elif any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
-            computed_route = "extraction"
-        elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
-            computed_route = "clarify"
-        elif any(k in q for k in ("hello", "who are you", "help", "system status", "general")):
-            computed_route = "general"
+        elif ports.model_provider is not None and not ports.is_mock_profile:
+            try:
+                router_prompt = format_router_prompt(ctx.question_text)
+                model_res = await ports.model_provider.generate(
+                    role=ModelRole.ROUTER,
+                    messages=[
+                        ChatMessage(role="user", content=router_prompt),
+                        ChatMessage(role="assistant", content="</think>"),
+                    ],
+                    schema=RouterOutput,
+                    max_tokens=150,
+                )
+                if model_res.structured_output:
+                    r_val = model_res.structured_output.get("route", "knowledge")
+                    if r_val in ("knowledge", "general", "clarify", "extraction"):
+                        computed_route = r_val
+                    else:
+                        computed_route = "knowledge"
+                    computed_mode = model_res.structured_output.get("answer_mode", "short")
+                    computed_lang = model_res.structured_output.get("language", "en")
+            except Exception:
+                logger.warning(
+                    "Router model classification failed; falling back to knowledge route",
+                    exc_info=True,
+                )
+                computed_route = "knowledge"
         else:
-            computed_route = "knowledge"
+            if any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
+                computed_route = "extraction"
+            elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
+                computed_route = "clarify"
+            elif any(k in q for k in ("hello", "who are you", "help", "system status", "general")):
+                computed_route = "general"
+            else:
+                computed_route = "knowledge"
 
         if ports.is_mock_profile and ports.mock_forced_answer_mode:
             computed_mode = ports.mock_forced_answer_mode
-        elif any(k in q for k in ("detailed", "comprehensive", "in depth", "elaborate", "long")):
-            computed_mode = "long"
-        else:
-            computed_mode = "short"
+        elif computed_mode not in ("exact", "short", "explain", "table"):
+            if any(k in q for k in ("detailed", "comprehensive", "in depth", "elaborate", "long")):
+                computed_mode = "explain"
+            elif any(
+                k in q
+                for k in (
+                    "table",
+                    "spreadsheet",
+                    "row",
+                    "fee schedule",
+                    "accepted plan",
+                    "accepted plans",
+                    "insurance plan",
+                    "plans accepted",
+                )
+            ):
+                computed_mode = "table"
+            else:
+                computed_mode = "short"
+        elif computed_mode == "short" and any(
+            k in q
+            for k in (
+                "table",
+                "spreadsheet",
+                "row",
+                "fee schedule",
+                "accepted plan",
+                "accepted plans",
+                "insurance plan",
+                "plans accepted",
+            )
+        ):
+            computed_mode = "table"
 
         if computed_route == "clarify":
             if ports.is_mock_profile and ports.mock_titles:
@@ -259,11 +398,16 @@ async def node_route(
             return {
                 "route": "clarify",
                 "answer_mode": computed_mode,
+                "language": computed_lang,
                 "status": "clarify",
                 "response_message_id": str(uuid4()),
             }
 
-        return {"route": computed_route, "answer_mode": computed_mode}
+        return {
+            "route": computed_route,
+            "answer_mode": computed_mode,
+            "language": computed_lang,
+        }
 
     return await _execute_with_telemetry("route", 2, state, runtime, _action)
 
@@ -294,12 +438,43 @@ async def node_retrieve(
                 query=ctx.question_text,
             )
             evidence_ids = [e.chunk_id for e in retrieved]
+            for e in retrieved:
+                ev_type_val = (
+                    e.evidence_type.value
+                    if hasattr(e.evidence_type, "value")
+                    else str(e.evidence_type)
+                )
+                ctx.candidate_evidence_types[e.chunk_id] = ev_type_val
             if evidence_ids:
                 texts = await ports.retriever.get_evidence_text(
                     tenant_ctx=ctx.tenant,
                     evidence_ids=evidence_ids,
                 )
                 ctx.evidence_text.update(texts)
+
+            # Retrieve table rows from tables_data (Rule 3b)
+            try:
+                table_candidates = await ports.retriever.search_tables(
+                    tenant_ctx=ctx.tenant,
+                    query=ctx.question_text,
+                    limit=15,
+                )
+                for tc in table_candidates:
+                    if tc.id not in evidence_ids:
+                        evidence_ids.append(tc.id)
+                    ctx.candidate_evidence_types[tc.id] = "table"
+                    ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
+                    row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
+                    prefix = (
+                        f"[Document: {tc.document_title}, "
+                        f"Sheet: {tc.sheet_name}, Row: {tc.row_index}]"
+                    )
+                    ctx.evidence_text[tc.id] = f"{prefix} {row_str}"
+                if table_candidates:
+                    state["answer_mode"] = "table"
+            except Exception:
+                logger.warning("search_tables failed on retriever", exc_info=True)
+
             return {"evidence_ids": evidence_ids}
 
         # Mock fallback when no retriever is injected
@@ -342,6 +517,14 @@ async def node_rerank(
                 candidates=candidates,
             )
             ordered_ids = [res.candidate_id for res in results]
+            ctx.candidate_scores.update({res.candidate_id: res.score for res in results})
+            # Ensure table candidates maintain reliable score (>= 0.0)
+            for eid in evidence_ids:
+                if (
+                    ctx.candidate_evidence_types.get(eid) == "table"
+                    and eid not in ctx.candidate_scores
+                ):
+                    ctx.candidate_scores[eid] = 1.0
             return {"evidence_ids": ordered_ids}
         except Exception:
             # Spec Failure Handling: "Reranker fails -> Merged results unranked, then evidence gate"
@@ -349,6 +532,9 @@ async def node_rerank(
                 "Reranker failed; falling back to unranked retrieval candidates",
                 exc_info=True,
             )
+            for eid in evidence_ids:
+                if ctx.candidate_evidence_types.get(eid) == "table":
+                    ctx.candidate_scores[eid] = 1.0
             return {"evidence_ids": evidence_ids}
 
     return await _execute_with_telemetry("rerank", 4, state, runtime, _action)
@@ -359,16 +545,32 @@ async def node_assess_evidence(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        # Never trust caller-supplied evidence_state from state.
-        # Always compute evidence_state strictly from retrieved evidence and mock context triggers.
-        ev_ids = state.get("evidence_ids", [])
-        evidence_dict = runtime.context.evidence_text
         ports = runtime.context.ports
+        ctx = runtime.context
+        ev_ids = state.get("evidence_ids", [])
+        evidence_dict = ctx.evidence_text
+
+        # Rule E.1: The assistant has no active documents
+        if ctx.active_document_count == 0:
+            ctx.response_text = (
+                "This assistant has no documents yet. Add files in Data sources to get started."
+            )
+            return {"evidence_state": "NO_EVIDENCE", "status": "refusal", "needs_vision": False}
 
         if ports.is_mock_profile and ports.mock_evidence_state:
             computed_ev_state = ports.mock_evidence_state
         elif not ev_ids or not evidence_dict:
             computed_ev_state = "NO_EVIDENCE"
+        elif ctx.candidate_scores:
+            best_score = max(ctx.candidate_scores.values())
+            if best_score < RELIABLE_TEXT_THRESHOLD:
+                computed_ev_state = "WEAK"
+            else:
+                top_id = ev_ids[0]
+                if ctx.candidate_evidence_types.get(top_id) == "visual":
+                    computed_ev_state = "VISUAL_REQUIRED"
+                else:
+                    computed_ev_state = "RELIABLE_TEXT"
         else:
             combined_evidence = " ".join(evidence_dict.values()).lower()
             if "conflict" in combined_evidence or any("conflict" in k for k in evidence_dict):
@@ -384,10 +586,30 @@ async def node_assess_evidence(
             else:
                 computed_ev_state = "RELIABLE_TEXT"
 
-        if computed_ev_state == "NO_EVIDENCE":
-            return {"evidence_state": "NO_EVIDENCE", "status": "refusal", "needs_vision": False}
-        if computed_ev_state == "WEAK":
-            return {"evidence_state": "WEAK", "status": "refusal", "needs_vision": False}
+        if computed_ev_state in ("NO_EVIDENCE", "WEAK"):
+            # Rule E.2: Documents exist but evidence is WEAK or NO_EVIDENCE
+            topics: list[str] = []
+            if ports.retriever is not None:
+                try:
+                    topics = await ports.retriever.search_titles(
+                        ctx.tenant, ctx.question_text, limit=3
+                    )
+                except Exception:
+                    logger.warning("Failed to fetch topics from search_titles", exc_info=True)
+            elif ports.is_mock_profile and ports.mock_titles:
+                topics = ports.mock_titles[:3]
+
+            if topics:
+                formatted_topics = "\n".join(f"- {t}" for t in topics)
+                ctx.response_text = (
+                    "I couldn't find that in this assistant's documents. "
+                    f"I do have information on:\n{formatted_topics}"
+                )
+            else:
+                ctx.response_text = "I couldn't find that in this assistant's documents."
+
+            return {"evidence_state": computed_ev_state, "status": "refusal", "needs_vision": False}
+
         if computed_ev_state == "CONFLICTING":
             return {
                 "evidence_state": "CONFLICTING",
@@ -425,21 +647,111 @@ async def node_generate(
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
         ports = runtime.context.ports
+        ctx = runtime.context
         if ports.force_infinite_loop:
             # Force loop for recursion test
             return {"validation_attempts": 0, "status": "looping"}
 
+        route = state.get("route", "knowledge")
         model = ports.model_provider
-        content = "Generated answer grounded in evidence."
-        if model:
-            resp = await model.generate(
-                role=ModelRole.ANSWER,
-                messages=[ChatMessage(role="user", content=runtime.context.question_text)],
-            )
-            content = resp.content
 
-        runtime.context.response_text = content
-        return {"response_message_id": str(uuid4()), "status": "in_progress"}
+        # Rule E.3: Route general greetings or general queries
+        if route == "general":
+            content = "Hello! I am your clinic knowledge assistant. How can I help you today?"
+            if model is not None and not ports.is_mock_profile:
+                try:
+                    gen_prompt = format_general_prompt(ctx.question_text)
+                    resp = await model.generate(
+                        role=ModelRole.ANSWER,
+                        messages=[ChatMessage(role="user", content=gen_prompt)],
+                        schema=AnswerOutput,
+                    )
+                    if resp.structured_output:
+                        content = resp.structured_output.get("answer", resp.content)
+                    else:
+                        content = resp.content
+                except Exception:
+                    logger.warning(
+                        "General reply model generation failed; using fallback", exc_info=True
+                    )
+            ctx.response_text = content
+            return {
+                "response_message_id": str(uuid4()),
+                "status": "in_progress",
+                "evidence_ids": [],
+            }
+
+        # Route knowledge
+        mode = state.get("answer_mode", "short")
+        lang = state.get("language", "en")
+        top_ids = [eid for eid in state.get("evidence_ids", []) if eid in ctx.evidence_text][:3]
+        if top_ids:
+            used_evidence = {eid: ctx.evidence_text[eid] for eid in top_ids}
+        else:
+            used_evidence = dict(list(ctx.evidence_text.items())[:3])
+
+        used_ids = list(used_evidence.keys())
+        content = "Generated answer grounded in evidence."
+
+        if model is not None and not ports.is_mock_profile:
+            ans_prompt = format_answer_prompt(
+                question=ctx.question_text,
+                evidence_text=used_evidence,
+                mode=mode,
+                language=lang,
+            )
+            try:
+                resp = await model.generate(
+                    role=ModelRole.ANSWER,
+                    messages=[
+                        ChatMessage(role="user", content=ans_prompt),
+                        ChatMessage(role="assistant", content="</think>"),
+                    ],
+                    schema=AnswerOutput,
+                    max_tokens=512,
+                )
+                if resp.structured_output:
+                    ctx.generated_answer = resp.structured_output
+                    content = resp.structured_output.get("answer", resp.content)
+                    model_cites_raw = resp.structured_output.get("evidence_ids")
+                    parsed_cites = AnswerOutput.parse_evidence_ids(model_cites_raw)
+                    if parsed_cites:
+                        used_ids = [str(cid) for cid in parsed_cites if str(cid) in used_evidence]
+                        if not used_ids:
+                            used_ids = list(used_evidence.keys())
+                    else:
+                        used_ids = list(used_evidence.keys())
+                    ctx.generated_answer["evidence_ids"] = used_ids
+                else:
+                    content = resp.content
+            except Exception as gen_exc:
+                logger.warning(
+                    "Model generation encountered an error: %r. Using safe refusal fallback.",
+                    gen_exc,
+                )
+                content = "I couldn't confirm that from the documents."
+                ctx.generated_answer = {
+                    "mode": mode,
+                    "answer": content,
+                    "evidence_ids": used_ids,
+                    "quoted_span": None,
+                    "evidence_type": "text",
+                }
+        else:
+            ctx.generated_answer = {
+                "mode": mode,
+                "answer": content,
+                "evidence_ids": used_ids,
+                "quoted_span": None,
+                "evidence_type": "text",
+            }
+
+        ctx.response_text = content
+        return {
+            "response_message_id": str(uuid4()),
+            "status": "in_progress",
+            "evidence_ids": used_ids,
+        }
 
     return await _execute_with_telemetry("generate", 7, state, runtime, _action)
 
@@ -451,17 +763,88 @@ async def node_validate(
     async def _action() -> dict[str, Any]:
         evidence = runtime.context.evidence_text
         attempts = state.get("validation_attempts", 0)
+        generated = runtime.context.generated_answer
+        provided_evidence_ids = set(state.get("evidence_ids", [])) | set(evidence.keys())
+
+        is_valid = True
+
+        ans_text = (generated.get("answer") or runtime.context.response_text or "").strip()
+        if not ans_text:
+            is_valid = False
+
+        # Rule 3c: Validation must reject an answer that is empty or only repeats a context prefix
+        if is_valid and ans_text:
+            import re
+
+            prefix_pattern = re.compile(
+                r"^.+\.(pdf|csv|xlsx)\s*-\s*Page\s*\d+(\s*-\s*.+)?$", re.IGNORECASE
+            )
+            if prefix_pattern.match(ans_text):
+                is_valid = False
+            else:
+                for text_val in evidence.values():
+                    first_line = text_val.split("\n")[0].strip()
+                    if ans_text == first_line or ans_text == text_val.strip():
+                        is_valid = False
+                        break
 
         # Invariant 4 validation rule: if evidence is explicitly inconsistent, fail validation
-        is_valid = True
         for chunk in evidence.values():
             if "Non matching" in chunk:
                 is_valid = False
                 break
 
+        if is_valid and generated:
+            cited_ids_raw = generated.get("evidence_ids", [])
+            cited_ids = AnswerOutput.parse_evidence_ids(cited_ids_raw)
+            for cid in cited_ids:
+                if cid not in provided_evidence_ids:
+                    is_valid = False
+                    break
+
+            quoted_span = generated.get("quoted_span")
+            if is_valid and quoted_span and quoted_span.strip():
+                # Every quoted span must appear character for character
+                # in stored text of cited evidence
+                span_match = False
+                target_chunks = [evidence[cid] for cid in cited_ids if cid in evidence] or list(
+                    evidence.values()
+                )
+                for text_val in target_chunks:
+                    if quoted_span in text_val:
+                        span_match = True
+                        break
+                if not span_match:
+                    is_valid = False
+
+            # Rule 3b: In table mode, validate that cited row values exist in tables_data
+            if is_valid and state.get("answer_mode") == "table":
+                table_evidence_texts = [
+                    evidence[eid]
+                    for eid in provided_evidence_ids
+                    if eid in evidence and ("Sheet:" in evidence[eid] or "Row:" in evidence[eid])
+                ]
+                if table_evidence_texts:
+                    found_any_table_value = False
+                    for t_text in table_evidence_texts:
+                        parts = t_text.split("] ", 1)
+                        if len(parts) == 2:
+                            pairs = parts[1].split(", ")
+                            for pair in pairs:
+                                if ":" in pair:
+                                    val = pair.split(":", 1)[1].strip()
+                                    if len(val) >= 3 and val.lower() in ans_text.lower():
+                                        found_any_table_value = True
+                                        break
+                        if found_any_table_value:
+                            break
+                    if not found_any_table_value:
+                        is_valid = False
+
         if not is_valid:
             if attempts < 1:
                 return {"validation_attempts": attempts + 1, "status": "retry"}
+            runtime.context.response_text = "I couldn't confirm that from the documents."
             return {"status": "refusal"}
 
         return {"status": "completed"}
@@ -545,6 +928,8 @@ def _route_from_guard(state: GraphState) -> str:
 
 
 def _route_from_route(state: GraphState) -> str:
+    if state.get("status") in ("completed", "refusal"):
+        return "respond"
     r = state.get("route", "knowledge")
     if r == "general":
         return "generate"
