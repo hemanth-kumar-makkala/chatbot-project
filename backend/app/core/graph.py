@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 # Named threshold constants for candidate scoring gate (Node 5 assess_evidence)
 # Initial values recorded in OPEN_QUESTIONS.md pending calibration on the golden evaluation set.
-RELIABLE_TEXT_THRESHOLD: float = 0.0
+RELIABLE_TEXT_THRESHOLD: float = 0.1
 WEAK_EVIDENCE_THRESHOLD: float = -2.0
 
 # --- 1. Graph State & Runtime Context ---
@@ -253,6 +253,8 @@ async def node_route(
         inventory_phrases = (
             "what data do you have",
             "what documents do you have",
+            "what documents",
+            "what can you tell me about",
             "what topics do you have",
             "what do you have",
             "what files do you have",
@@ -608,7 +610,12 @@ async def node_assess_evidence(
             else:
                 ctx.response_text = "I couldn't find that in this assistant's documents."
 
-            return {"evidence_state": computed_ev_state, "status": "refusal", "needs_vision": False}
+            return {
+                "evidence_state": computed_ev_state,
+                "status": "refusal",
+                "needs_vision": False,
+                "evidence_ids": [],
+            }
 
         if computed_ev_state == "CONFLICTING":
             return {

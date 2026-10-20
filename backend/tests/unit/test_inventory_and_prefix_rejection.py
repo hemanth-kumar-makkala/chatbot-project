@@ -130,6 +130,19 @@ async def test_inventory_query_returns_titles_and_headings_without_model(
     # Model provider call count must remain 0
     assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
 
+    # Test "what documents"
+    inventory_context.question_text = "what documents"
+    res2 = await node_route(state, MockRuntime())  # type: ignore
+    assert res2["status"] == "completed"
+    assert "clean_fax.pdf" in inventory_context.response_text
+
+    # Test "what can you tell me about"
+    inventory_context.question_text = "what can you tell me about"
+    res3 = await node_route(state, MockRuntime())  # type: ignore
+    assert res3["status"] == "completed"
+    assert "clean_fax.pdf" in inventory_context.response_text
+    assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
+
 
 @pytest.mark.asyncio
 async def test_inventory_query_empty_assistant_returns_exact_refusal(

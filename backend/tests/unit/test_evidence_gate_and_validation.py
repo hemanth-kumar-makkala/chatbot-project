@@ -1,36 +1,22 @@
-"""Unit tests for Evidence Assessment Gate (Node 5), Validation (Node 8), and User-Facing Rules (Nodes 2, 5, 8, 9).
-
-Tests:
-1. assess_evidence: NO_EVIDENCE when candidate list is empty -> refusal, no generate.
-2. assess_evidence: WEAK when candidate scores fall below threshold -> refusal, no generate.
-3. assess_evidence: RELIABLE_TEXT when candidate has strong score -> proceed to generate.
-4. assess_evidence: VISUAL_REQUIRED when strong evidence has visual evidence_type.
-5. validate: character-for-character quote match passes validation.
-6. validate: hallucinated quote fails validation, retries once, then refuses.
-7. validate: unknown citation ID fails validation, retries once, then refuses.
-8. respond: empty assistant refuses with exact text "This assistant has no documents yet. Add files in Data sources to get started."
-9. respond: WEAK or NO_EVIDENCE refusal includes "I do have information on:" with Retriever.search_titles topics.
-10. route: general query routes to general and generates short reply without retrieval.
-"""
+"""Unit tests for Evidence Assessment Gate (Node 5) and Validation (Node 8)."""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+
 import pytest
 
 from app.core.graph import (
+    RELIABLE_TEXT_THRESHOLD,
+    WEAK_EVIDENCE_THRESHOLD,
     GraphPorts,
     GraphRuntimeContext,
     GraphState,
-    build_knowledge_graph,
     node_assess_evidence,
     node_validate,
-    RELIABLE_TEXT_THRESHOLD,
-    WEAK_EVIDENCE_THRESHOLD,
 )
 from app.ports.retriever import Retriever
-from app.ports.types import ModelRole, ModelResponse, ChatMessage, TenantContext, UserRole
+from app.ports.types import ChatMessage, ModelResponse, ModelRole, TenantContext, UserRole
 
 
 class DummyRetriever(Retriever):
@@ -40,27 +26,30 @@ class DummyRetriever(Retriever):
         self.titles = titles or ["Clinic Operations Manual", "Billing Guide"]
         self.doc_count = doc_count
 
-    async def search(self, tenant_ctx: Any, query: str, filters: Any = None) -> list[Any]:
+    async def search(self, _tenant_ctx: Any, _query: str, _filters: Any = None) -> list[Any]:
         return []
 
-    async def search_titles(self, tenant_ctx: Any, query: str, limit: int = 3) -> list[str]:
+    async def search_titles(self, _tenant_ctx: Any, _query: str, limit: int = 3) -> list[str]:
         return self.titles[:limit]
 
-    async def get_evidence_text(self, tenant_ctx: Any, evidence_ids: list[str]) -> dict[str, str]:
+    async def get_evidence_text(self, _tenant_ctx: Any, _evidence_ids: list[str]) -> dict[str, str]:
         return {}
 
-    async def search_tables(self, tenant_ctx: Any, query: str, limit: int = 15) -> list[Any]:
+    async def search_tables(self, _tenant_ctx: Any, _query: str, _limit: int = 15) -> list[Any]:
         return []
 
-    async def get_inventory(self, tenant_ctx: Any, heading_limit: int = 5) -> dict[str, list[str]]:
+    async def get_inventory(
+        self, _tenant_ctx: Any, _heading_limit: int = 5
+    ) -> dict[str, list[str]]:
         return {"titles": self.titles, "headings": ["Topic A", "Topic B"]}
-
 
 
 class DummyModelProvider:
     """Stub model provider for tracking generation invocations."""
 
-    def __init__(self, response_text: str = "Test answer", structured: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, response_text: str = "Test answer", structured: dict[str, Any] | None = None
+    ) -> None:
         self.call_count = 0
         self.response_text = response_text
         self.structured = structured or {
@@ -71,7 +60,13 @@ class DummyModelProvider:
             "evidence_type": "text",
         }
 
-    async def generate(self, role: ModelRole, messages: list[ChatMessage], schema: Any = None, max_tokens: int | None = None) -> ModelResponse:
+    async def generate(
+        self,
+        _role: ModelRole,
+        _messages: list[ChatMessage],
+        _schema: Any = None,
+        _max_tokens: int | None = None,
+    ) -> ModelResponse:
         self.call_count += 1
         return ModelResponse(
             content=self.response_text,
@@ -188,8 +183,11 @@ async def test_validate_exact_quote_match_passes(base_context: GraphRuntimeConte
 
 
 @pytest.mark.asyncio
-async def test_validate_hallucinated_quote_retries_once_then_refuses(base_context: GraphRuntimeContext) -> None:
+async def test_validate_hallucinated_quote_retries_once_then_refuses(
+    base_context: GraphRuntimeContext,
+) -> None:
     """Hallucinated quote triggers retry on attempt 0, then refusal on attempt 1."""
+
     class MockRuntime:
         context = base_context
 
@@ -201,13 +199,21 @@ async def test_validate_hallucinated_quote_retries_once_then_refuses(base_contex
     }
 
     # Attempt 0 -> retry
-    state_0: GraphState = {"request_id": "r1", "evidence_ids": ["chunk-1"], "validation_attempts": 0}
+    state_0: GraphState = {
+        "request_id": "r1",
+        "evidence_ids": ["chunk-1"],
+        "validation_attempts": 0,
+    }
     res_0 = await node_validate(state_0, MockRuntime())  # type: ignore
     assert res_0["status"] == "retry"
     assert res_0["validation_attempts"] == 1
 
     # Attempt 1 -> refusal
-    state_1: GraphState = {"request_id": "r1", "evidence_ids": ["chunk-1"], "validation_attempts": 1}
+    state_1: GraphState = {
+        "request_id": "r1",
+        "evidence_ids": ["chunk-1"],
+        "validation_attempts": 1,
+    }
     res_1 = await node_validate(state_1, MockRuntime())  # type: ignore
     assert res_1["status"] == "refusal"
     assert base_context.response_text == "I couldn't confirm that from the documents."
@@ -216,6 +222,7 @@ async def test_validate_hallucinated_quote_retries_once_then_refuses(base_contex
 @pytest.mark.asyncio
 async def test_validate_unknown_citation_id_fails(base_context: GraphRuntimeContext) -> None:
     """Cited evidence ID not in retrieved evidence triggers retry/refusal."""
+
     class MockRuntime:
         context = base_context
 
@@ -226,13 +233,19 @@ async def test_validate_unknown_citation_id_fails(base_context: GraphRuntimeCont
         "quoted_span": None,
     }
 
-    state_0: GraphState = {"request_id": "r1", "evidence_ids": ["chunk-1"], "validation_attempts": 0}
+    state_0: GraphState = {
+        "request_id": "r1",
+        "evidence_ids": ["chunk-1"],
+        "validation_attempts": 0,
+    }
     res_0 = await node_validate(state_0, MockRuntime())  # type: ignore
     assert res_0["status"] == "retry"
 
 
 @pytest.mark.asyncio
-async def test_empty_assistant_refuses_without_model_call(base_context: GraphRuntimeContext) -> None:
+async def test_empty_assistant_refuses_without_model_call(
+    base_context: GraphRuntimeContext,
+) -> None:
     """Empty assistant with 0 documents refuses immediately without model call (Rule E.1)."""
     base_context.active_document_count = 0
     state: GraphState = {"request_id": "r1", "evidence_ids": []}
@@ -250,7 +263,9 @@ async def test_empty_assistant_refuses_without_model_call(base_context: GraphRun
 
 
 @pytest.mark.asyncio
-async def test_weak_evidence_includes_search_titles_topics(base_context: GraphRuntimeContext) -> None:
+async def test_weak_evidence_includes_search_titles_topics(
+    base_context: GraphRuntimeContext,
+) -> None:
     """Documents exist but WEAK evidence includes search_titles topics (Rule E.2)."""
     base_context.active_document_count = 2
     base_context.candidate_scores = {"chunk-1": WEAK_EVIDENCE_THRESHOLD - 1.0}
@@ -265,4 +280,3 @@ async def test_weak_evidence_includes_search_titles_topics(base_context: GraphRu
     assert "I couldn't find that in this assistant's documents." in base_context.response_text
     assert "I do have information on:" in base_context.response_text
     assert "Clinic Operations Manual" in base_context.response_text
-

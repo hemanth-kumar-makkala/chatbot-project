@@ -26,17 +26,16 @@
     - **Exact Quote & Citation Validation (Node 8 `validate`)**: Enforces verbatim character-for-character quote match in cited evidence text and validates all cited chunk IDs against retrieved candidate IDs. Retries once on failure, then refuses.
     - **User-Facing Presentation (Node 2 / 7 / 9)**: Empty assistants return "This assistant has no documents yet. Add files in Data sources to get started." Greetings route to general with polite responses without client facts. Grounded answers resolve real source citations (document title, version, page) from Postgres.
     - **Staff PDF Streaming & Thumbnails**: Added `GET /v1/assistants/{id}/knowledge/documents/{version_id}/file` and `GET .../pages/{p}/thumbnail` with tenant-scoped staff and client_admin access for the web source panel.
-  - **Task 3.5.3: Live Problems Fixes, Storage Unification & Part G Benchmark** — **COMPLETED & VERIFIED**
-    - **Process Safety Rules**: Enforced foreground execution, prohibited touching product owner servers or leaving processes running at end of turn.
-    - **Storage Path Unification**: `backend/scripts/run_server.py` requires `LOCAL_STORAGE_PATH` with no defaults, raising `ConfigurationError` if missing or invalid.
-    - **Upload 500 Fix (Problem 3a)**: Reproduced missing storage path error on desktop-gpu wiring; validated path during `ApiSettings` init and handled `ConfigurationError` gracefully with HTTP 500 error payload. Added regression tests.
-    - **Table Path & CSV Retrieval (Problem 3b)**: Added `search_tables` to `Retriever` and implemented tenant-scoped lookup in `PostgresRetriever`. Routed tabular queries to answer mode `table`, cited document/sheet/row, and validated cited row values in `tables_data`. Enhanced CSV parser to ignore `#` comment headers.
-    - **Inventory Reply & Prefix Rejection (Problem 3c)**: Added `get_inventory` returning active document titles and up to 5 headings from DB without model call. Validation node rejects empty answers or echoed context prefixes.
-    - **Exact Part E Refusal Strings (Problem 3d)**: Enforced verbatim refusal strings for (1) no documents, (2) weak/no evidence with up to 3 topics, and (3) validation failed twice.
-    - **Query Rewriting Recorded (Problem 3e)**: Logged conversation-aware query rewriting in `docs/OPEN_QUESTIONS.md` (item 3.6).
-    - **Ollama Thinking Parameter Bypass (Problem 3f)**: Tested `think: false` foreground call on `qwen3-vl:4b`; confirmed model continues to emit thinking text. Documented in `ADR-0015`, preserved `</think>` assistant prefill, and added unit tests.
-    - **Next.js Dev Proxy Timeout (Problem 3g)**: Raised proxy timeout to 120s in `web/next.config.mjs` using `experimental.proxyTimeout`.
-    - **Part G End-to-End Benchmark**: Executed against isolated throwaway database with real models (`desktop-gpu` wiring) across 9 benchmark queries: 5 TEXT_FACT questions, 1 TABLE_LOOKUP, 1 NO_ANSWER, inventory query, and greeting.
+  - **Demo Readiness: Upload, Ingestion, Grounded Retrieval & Smoke Check** — **COMPLETED & VERIFIED**
+    - **Upload 500 Fix & Storage Path Unification**: Fixed `LOCAL_STORAGE_PATH` configuration across API (`ApiSettings`) and worker runner (`run_server.py`) to be mandatory with no defaults; handled `ConfigurationError` gracefully.
+    - **Knowledge Base Status Script (`backend/scripts/kb_status.py`)**: Built read-only inspector tool for product owner reporting pages, chunks, chunk embeddings, visual readings, and table rows per active document under tenant RLS.
+    - **Tabular Data Retrieval & Ingestion Activation**: Fixed `TableIngestionService` document version activation; implemented `search_tables` in `Retriever` / `PostgresRetriever`; routed spreadsheet questions to mode `table` citing sheet & row with row value verification.
+    - **Evidence Gate Threshold Calibration**: Calibrated cross-encoder `RELIABLE_TEXT_THRESHOLD = 0.1` cleanly filtering irrelevant candidates (~`0.00003`) from relevant candidates (~`0.91`). Refusals correctly clear evidence citations.
+    - **Deterministic Exact Responses**: Refusal, inventory ("What data do you have?"), and greeting paths execute without LLM generation.
+    - **Ollama Thinking Bypass**: Documented `think: false` evaluation in `ADR-0015`; preserved `</think>` prefill.
+    - **Next.js Dev Proxy Timeout**: Verified `experimental.proxyTimeout: 120_000` (120s) in `web/next.config.mjs`.
+    - **Demo Smoke Check (Step 9)**: 100% pass across 11 test questions against throwaway database with real local models on `desktop-gpu` (`prior_auth_guide.pdf`, `skewed_fax.pdf`, `front_desk_policy_v1.pdf`, `fee_schedule.pdf`, `accepted_plans.csv`).
+    - **Demo Script**: Authored `docs/DEMO_SCRIPT.md` with step-by-step walkthrough for tomorrow's demo.
     - **Next Task**: Conversations routes and status-line streaming (Task 3.6).
 
 - **Phase 2 Exit Gate Verification & Ingestion Schema Resolution** — **COMPLETED & VERIFIED**

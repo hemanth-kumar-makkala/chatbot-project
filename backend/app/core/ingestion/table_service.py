@@ -85,11 +85,11 @@ class TableIngestionService:
             job_id=job_id,
         )
 
-        # 5. Transition document version status to ready
-        await self.repository.update_version_status(
+        # 5. Activate document version and transition status to ready
+        await self.repository.execute_version_activation(
             str(tenant_id),
             document_version_id,
-            "ready",
+            "Branch C",
         )
 
         return {

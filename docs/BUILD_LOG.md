@@ -2211,3 +2211,23 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run pytest tests/unit/test_evidence_gate_and_validation.py`: 9 passed.
   - `uv run pre-commit run --files ...`: all 10 hooks passed cleanly.
 - **Next Task**: Conversations routes and status-line streaming (Task 3.6).
+
+---
+
+### [2026-10-20] TASK: Demo Readiness — Upload, Ingestion, Grounded Retrieval & Smoke Check
+
+- **Task ID**: Demo Readiness
+- **What Was Built & Fixed**:
+  - **1. Upload 500 Fix & Storage Configuration**: Required `LOCAL_STORAGE_PATH` without default values in `ApiSettings` and `backend/scripts/run_server.py`. Caught `ConfigurationError` in `backend/app/api/routes/knowledge.py` returning standard 500 JSON payload.
+  - **2. Knowledge Base Status Script (`backend/scripts/kb_status.py`)**: Built read-only command-line tool for inspecting active documents, pages, chunks, embeddings, visual readings, and table rows under RLS.
+  - **3. Tabular Data Retrieval & Ingestion Version Activation**: Fixed `TableIngestionService` document version activation (`execute_version_activation("Branch C")`); added `search_tables` in `Retriever` / `PostgresRetriever`; routed spreadsheet questions to mode `table` citing sheet & row with row value verification.
+  - **4. Evidence Gate Threshold Calibration**: Cross-encoder probabilities calibrated with `RELIABLE_TEXT_THRESHOLD = 0.1` cleanly separating relevant (~`0.91`) from irrelevant (~`0.00003`) chunks. Ensured refusals clear evidence citations.
+  - **5. Exact Part E Responses**: Refusal, inventory ("What data do you have?"), and greeting paths execute without LLM generation.
+  - **6. Ollama Thinking Bypass Check**: Verified `qwen3-vl:4b` ignores `think: false` on `/api/chat` and still generates `<think>` blocks. Retained `</think>` prefill and documented in `ADR-0015`.
+  - **7. Next.js Proxy Timeout**: Verified `experimental.proxyTimeout: 120_000` (120s) in `web/next.config.mjs`.
+  - **8. Demo Smoke Check (Step 9)**: 100% pass across 11 test questions against throwaway database with real local models on `desktop-gpu` (`prior_auth_guide.pdf`, `skewed_fax.pdf`, `front_desk_policy_v1.pdf`, `fee_schedule.pdf`, `accepted_plans.csv`).
+  - **9. Demo Script**: Authored `docs/DEMO_SCRIPT.md` with step-by-step walkthrough for tomorrow's demo.
+- **Verification**:
+  - `uv run --directory backend pytest tests/unit/test_kb_status.py tests/unit/test_inventory_and_prefix_rejection.py tests/unit/test_evidence_gate_and_validation.py`: 17 passed.
+  - Step 9 Demo Smoke Check: 11/11 queries matched expected answers and sources.
+- **Next Task**: Conversations routes and status-line streaming (Task 3.6).

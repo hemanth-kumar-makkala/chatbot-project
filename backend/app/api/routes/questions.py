@@ -241,7 +241,7 @@ async def ask_question(
 
         ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
         evidence_ids: list[str] = []
-        if "evidence_ids" in result:
+        if "evidence_ids" in result and status_val not in ("refusal", "clarify"):
             evidence_ids = result["evidence_ids"]
 
         # 7. Resolve real source chips from database (Rule E.4)
