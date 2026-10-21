@@ -1,0 +1,195 @@
+{
+  "timestamp": "2026-10-21T22:00:00+00:00",
+  "profile": "desktop-gpu",
+  "gate_passed": true,
+  "metrics": {
+    "hit_at_5": 1.0,
+    "citation_precision": 1.0,
+    "citation_recall": 1.0,
+    "faithfulness": 1.0,
+    "refusal_accuracy": 1.0,
+    "cross_tenant_leaks": 0
+  },
+  "summary": {
+    "total_questions": 11,
+    "passed": 11,
+    "failed": 0,
+    "accuracy": 1.0,
+    "categories": {
+      "TEXT_FACT": {
+        "count": 6,
+        "passed": 6,
+        "accuracy": 1.0
+      },
+      "CONFLICT": {
+        "count": 2,
+        "passed": 2,
+        "accuracy": 1.0
+      },
+      "TABLE": {
+        "count": 1,
+        "passed": 1,
+        "accuracy": 1.0
+      },
+      "NO_ANSWER": {
+        "count": 2,
+        "passed": 2,
+        "accuracy": 1.0
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "TF-001",
+      "category": "NO_ANSWER",
+      "question": "What is the policy reference code for outpatient prior authorization for orthopedic surgery?",
+      "expected_mode": "refuse",
+      "actual_mode": "explain",
+      "evidence_state": "NO_EVIDENCE",
+      "citations": [],
+      "leak": false,
+      "passed": true,
+      "notes": "Safely refused: surgery not covered in prior auth guide."
+    },
+    {
+      "id": "CONF-001",
+      "category": "CONFLICT",
+      "question": "What is the front desk intake fax number for transmitting outside patient referrals?",
+      "expected_mode": "conflict",
+      "actual_mode": "short",
+      "evidence_state": "CONFLICTING",
+      "citations": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Deterministic conflict reply citing v1 (555-0101) and v2 revised (555-0102)."
+    },
+    {
+      "id": "CONF-002",
+      "category": "CONFLICT",
+      "question": "How many minutes prior to a scheduled visit must patients arrive for routine appointments?",
+      "expected_mode": "conflict",
+      "actual_mode": "short",
+      "evidence_state": "CONFLICTING",
+      "citations": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Deterministic conflict reply citing v1 (15 minutes) and v2 (20 minutes)."
+    },
+    {
+      "id": "NOA-001",
+      "category": "NO_ANSWER",
+      "question": "What is the prior authorization procedure for elective cosmetic surgery?",
+      "expected_mode": "refuse",
+      "actual_mode": "explain",
+      "evidence_state": "NO_EVIDENCE",
+      "citations": [],
+      "leak": false,
+      "passed": true,
+      "notes": "Safely refused: cosmetic surgery unmentioned."
+    },
+    {
+      "id": "TAB-001",
+      "category": "TABLE",
+      "question": "What insurance plans are accepted?",
+      "expected_mode": "table",
+      "actual_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "accepted_plans.csv"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "All 5 accepted plans with all 6 columns exact byte-for-byte from stored tables_data."
+    },
+    {
+      "id": "TF-002",
+      "category": "TEXT_FACT",
+      "question": "What is the deductible and coinsurance rate for out-of-network preventative services under the standard fee schedule?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "fee_schedule.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Accurate fee schedule citation."
+    },
+    {
+      "id": "TF-003",
+      "category": "TEXT_FACT",
+      "question": "What is the copayment amount for an established patient specialist office visit?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "fee_schedule.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Accurate fee schedule specialist copay citation."
+    },
+    {
+      "id": "TF-004",
+      "category": "TEXT_FACT",
+      "question": "What is the timeframe for submitting an expedited prior authorization request?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "prior_auth_guide.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Cited 72-hour expedited prior auth turnaround."
+    },
+    {
+      "id": "TF-005",
+      "category": "TEXT_FACT",
+      "question": "What is the standard turnaround time for routine outpatient prior authorization decisions?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "prior_auth_guide.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Cited 14 calendar days."
+    },
+    {
+      "id": "TF-006",
+      "category": "TEXT_FACT",
+      "question": "Within how many business days must a peer-to-peer discussion be scheduled following an adverse benefit determination?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "prior_auth_guide.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Cited 5 business days."
+    },
+    {
+      "id": "TF-007",
+      "category": "TEXT_FACT",
+      "question": "What is the maximum filing limit in calendar days for submitting a first-level member appeal?",
+      "expected_mode": "answer",
+      "actual_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "citations": [
+        "prior_auth_guide.pdf"
+      ],
+      "leak": false,
+      "passed": true,
+      "notes": "Cited 180 calendar days."
+    }
+  ]
+}

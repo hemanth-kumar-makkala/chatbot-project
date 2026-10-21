@@ -1,0 +1,269 @@
+{
+  "version": "1.0.0",
+  "prompts": {
+    "router_classify": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "router",
+          "description": "Classify incoming user query into route (knowledge vs general) and answer mode (exact, short, explain, table).",
+          "template": "You are the query router for a client knowledge assistant.\nAnalyze the user question and determine the appropriate route and answer mode.\nQuestion: {question}\nOutput JSON matching the required schema.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "route": {
+                "type": "string",
+                "enum": [
+                  "knowledge",
+                  "general",
+                  "clarify"
+                ]
+              },
+              "answer_mode": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "short",
+                  "explain",
+                  "table"
+                ]
+              },
+              "language": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "route",
+              "answer_mode",
+              "language"
+            ]
+          }
+        }
+      }
+    },
+    "general_reply": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "answer",
+          "description": "Generate polite short greeting or general query reply without asserting any client facts.",
+          "template": "You are a helpful client knowledge assistant.\nRespond politely and concisely to the greeting or general query.\nYou must NEVER state or assume any client facts, policies, or clinic data.\nQuestion: {question}\nOutput strictly as JSON matching the schema.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "evidence_type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "answer",
+              "evidence_ids",
+              "evidence_type"
+            ]
+          }
+        }
+      }
+    },
+    "answer_synthesis": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "answer",
+          "description": "Synthesize answer strictly from validated evidence chunks. Returns structured JSON.",
+          "template": "You are an assistant answering solely based on the provided evidence.\nDo NOT extrapolate, assume, or invent facts. If the evidence is insufficient, state refusal.\nMode: {mode}\nTarget Language: {language}\nEvidence:\n{evidence_context}\n\nQuestion: {question}\nOutput strictly as JSON matching the schema.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "quoted_span": {
+                "type": "string"
+              },
+              "evidence_type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "visual",
+                  "table"
+                ]
+              },
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "point": {
+                      "type": "string"
+                    },
+                    "quoted_span": {
+                      "type": "string"
+                    },
+                    "evidence_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "point",
+                    "quoted_span",
+                    "evidence_ids"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "mode",
+              "answer",
+              "evidence_ids",
+              "evidence_type"
+            ]
+          }
+        }
+      }
+    },
+    "conflict_detect": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "judge",
+          "description": "Detect conflicting values for a question across evidence chunks from different documents.",
+          "template": "You are assessing candidate evidence passages from different documents to determine if they give contradictory or conflicting values for what the question asks.\nQuestion: {question}\n\nEvidence:\n{evidence_context}\n\nIf two or more documents state differing or conflicting values answering the question:\n- set has_conflict to true\n- value1: first answer value\n- quote1: EXACT verbatim quoted span from the first document supporting value1\n- doc1_id: chunk or document ID for the first document\n- value2: conflicting answer value\n- quote2: EXACT verbatim quoted span from the second document supporting value2\n- doc2_id: chunk or document ID for the second document\n\nIf there is no conflict, set has_conflict to false and leave other fields empty.\nOutput strictly as JSON matching the schema.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "has_conflict": {
+                "type": "boolean"
+              },
+              "value1": {
+                "type": "string"
+              },
+              "quote1": {
+                "type": "string"
+              },
+              "doc1_id": {
+                "type": "string"
+              },
+              "value2": {
+                "type": "string"
+              },
+              "quote2": {
+                "type": "string"
+              },
+              "doc2_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "has_conflict"
+            ]
+          }
+        }
+      }
+    },
+    "vision_read_page": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "vision",
+          "description": "Read scanned or image-heavy document page to answer question or extract text.",
+          "template": "Examine the attached page image carefully.\nQuestion: {question}\nTranscribe visible text relevant to the question and provide a direct factual answer.\nState clearly if the target region is illegible or unreadable.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "answer": {
+                "type": "string"
+              },
+              "transcription": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low",
+                  "unreadable"
+                ]
+              }
+            },
+            "required": [
+              "answer",
+              "confidence"
+            ]
+          }
+        }
+      }
+    },
+    "extract_phi_fields": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "extract",
+          "description": "Extract structured fields from uploaded PHI document against schema.",
+          "template": "Extract required fields from the document image according to the schema provided.\nFor each field, assign an explicit state: FILLED_HIGH, FILLED_MEDIUM, CONFLICTING, UNREADABLE, INVALID, NOT_PRESENT, NOT_APPLICABLE.\nSchema:\n{field_schema}\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "fields": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "fields"
+            ]
+          }
+        }
+      }
+    },
+    "eval_judge_faithfulness": {
+      "default_version": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "role": "judge",
+          "description": "Score faithfulness of generated answer against ground truth evidence.",
+          "template": "Evaluate whether every claim in the answer is directly supported by the provided evidence.\nQuestion: {question}\nEvidence: {evidence}\nAnswer: {answer}\nRate faithfulness from 0.0 to 1.0 with justification.\n",
+          "response_schema": {
+            "type": "object",
+            "properties": {
+              "score": {
+                "type": "number"
+              },
+              "reasoning": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "score",
+              "reasoning"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

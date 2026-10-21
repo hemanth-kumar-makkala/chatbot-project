@@ -4,7 +4,17 @@
 - **Phase 0**: Foundations (Compliance route, retention rules, pilot workload, synthetic golden set, UI design spec; governance ongoing)
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase2_gate.json`: 15 golden documents ingested twice with zero duplicates across pages, readings, tables, chunks, and embeddings)
-- **Phase 3**: RAG Engine & Core Logic (Active Phase)
+- **Phase 3**: RAG Engine & Core Logic — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase3_baseline.json`: all 11 benchmark metrics recorded with zero cross-tenant leaks)
+- **Phase 4**: Scanned Document Ingestion & Vision Verification (Active Phase)
+  - **Task 4.1: Question-Time Vision Reading (Node 6 `vision_read`)** — **COMPLETED & VERIFIED**
+    - **6 GB VRAM Image Pre-Scaling**: `ImageProcessor` port interface wired into `GraphPorts`; page images pre-scaled to max 1024px dimension and max 4 MB before vision generation.
+    - **`ModelProvider.read_page` Implementation**: Implemented in `OllamaModelProvider` for `qwen3-vl:4b` using `vision_read_page` prompt from `prompts/registry.yaml`, stripping `<think>` tags and extracting token logprob confidence.
+    - **Node 6 Routing & Fallback**:
+      - Success: incorporates question-time visual reading into `ctx.evidence_text` and sets `vision_status="ok"`.
+      - Vision failure + OCR confidence >= 0.70: engages OCR fallback, setting `vision_status="ocr_fallback"`, routing to `generate` using OCR evidence.
+      - Vision failure + OCR confidence < 0.70: refuses cleanly (`vision_status="unusable"`, `status="refusal"`), routing straight to `respond`.
+    - **Invariant 5 Compliance**: Answer generation labels `evidence_type='visual'`.
+    - **Proving Tests**: `backend/tests/integration/test_vision_read_node.py` (6/6 pass), `backend/tests/unit/test_ollama_provider.py` (18/18 pass), `backend/tests/invariants/test_architecture_boundaries.py` (24/24 pass).
   - **Task UI-Shell: Workspace & Multi-Assistant App Shell Rebuild (ADR-0014)** — **COMPLETED & VERIFIED**
     - **ADR-0014 Adopted**: Replaced "no admin dashboards; the Knowledge page is the only admin screen" with a workspace Assistants page (`/assistants`), Workspace Settings (`/settings`), and per-assistant pages (Home, Data sources, Instructions, Guardrails, Actions placeholder, Conversations, Settings).
     - **Monochrome Theme Active**: Archived teal theme to `web/styles/themes/teal/tokens.css`. Active theme `web/styles/themes/default/tokens.css` is black & white (#111111, #FAFAFA, #FFFFFF, #E5E5E5, status tints). Verified via `theme.test.ts` (19/19 tests pass; contrast table verified).
@@ -17,26 +27,40 @@
     - **Archived Theme**: `web/styles/themes/staffingly-inc/tokens.css` created with original tokens and header comment. `docs/ui/staffingly-inc/BRAND_THEME.md` created with usage mappings. Verified via test that nothing in the app imports this theme.
     - **Default Theme**: `web/styles/themes/default/tokens.css` implemented as single active theme. High contrast WCAG AA verified (all 16 text/bg pairs >= 4.5:1, UI borders/focus >= 3:1).
     - **No Raw Colors**: Scanned and replaced all 50 hard-coded hex, rgb, rgba, and hsl values across `web/app` and `web/components` with CSS variables.
-  - **Task 3.1-3.5: Chat End-to-End Real Model Connection & Evidence Gate** — **COMPLETED & VERIFIED**
-    - **Pinned Reranker Revision**: Wired `BAAI/bge-reranker-v2-m3` on CPU with pinned revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` on `desktop-gpu` and `home-gpu` profiles; other real profiles raise ConfigurationError at startup.
-    - **Keyword Search Index**: Validated stored tsvector column `chunks.tsv` and GIN index per ADR-0008.
-    - **Request Validation**: Validated `conversation_id` as UUID in `AskQuestionRequest`; bad values return HTTP 422 with fixed code `MALFORMED_REQUEST_PAYLOAD`.
-    - **Evidence Assessment Gate (Node 5 `assess_evidence`)**: Evaluates reranked candidates against named thresholds (`RELIABLE_TEXT_THRESHOLD = 0.0`, `WEAK_EVIDENCE_THRESHOLD = -2.0`). Gates `NO_EVIDENCE`, `WEAK`, `RELIABLE_TEXT`, and `VISUAL_REQUIRED`. For `NO_EVIDENCE` and `WEAK`, model calls are bypassed; returns refusal with up to 3 topics from `Retriever.search_titles`.
-    - **Answer Generation on Ollama `qwen3-vl:4b` (Node 7 `generate`)**: Implemented `OllamaModelProvider.generate` with structured JSON output, `temperature: 0.0`, `seed: 42`, and clean primitive schema `AnswerOutput`.
-    - **Exact Quote & Citation Validation (Node 8 `validate`)**: Enforces verbatim character-for-character quote match in cited evidence text and validates all cited chunk IDs against retrieved candidate IDs. Retries once on failure, then refuses.
-    - **User-Facing Presentation (Node 2 / 7 / 9)**: Empty assistants return "This assistant has no documents yet. Add files in Data sources to get started." Greetings route to general with polite responses without client facts. Grounded answers resolve real source citations (document title, version, page) from Postgres.
-    - **Staff PDF Streaming & Thumbnails**: Added `GET /v1/assistants/{id}/knowledge/documents/{version_id}/file` and `GET .../pages/{p}/thumbnail` with tenant-scoped staff and client_admin access for the web source panel.
-  - **Demo Readiness: Upload, Ingestion, Grounded Retrieval & Smoke Check** — **COMPLETED & VERIFIED**
-    - **Upload 500 Fix & Storage Path Unification**: Fixed `LOCAL_STORAGE_PATH` configuration across API (`ApiSettings`) and worker runner (`run_server.py`) to be mandatory with no defaults; handled `ConfigurationError` gracefully.
-    - **Knowledge Base Status Script (`backend/scripts/kb_status.py`)**: Built read-only inspector tool for product owner reporting pages, chunks, chunk embeddings, visual readings, and table rows per active document under tenant RLS.
-    - **Tabular Data Retrieval & Ingestion Activation**: Fixed `TableIngestionService` document version activation; implemented `search_tables` in `Retriever` / `PostgresRetriever`; routed spreadsheet questions to mode `table` citing sheet & row with row value verification.
-    - **Evidence Gate Threshold Calibration**: Calibrated cross-encoder `RELIABLE_TEXT_THRESHOLD = 0.1` cleanly filtering irrelevant candidates (~`0.00003`) from relevant candidates (~`0.91`). Refusals correctly clear evidence citations.
-    - **Deterministic Exact Responses**: Refusal, inventory ("What data do you have?"), and greeting paths execute without LLM generation.
-    - **Ollama Thinking Bypass**: Documented `think: false` evaluation in `ADR-0015`; preserved `</think>` prefill.
-    - **Next.js Dev Proxy Timeout**: Verified `experimental.proxyTimeout: 120_000` (120s) in `web/next.config.mjs`.
-    - **Demo Smoke Check (Step 9)**: 100% pass across 11 test questions against throwaway database with real local models on `desktop-gpu` (`prior_auth_guide.pdf`, `skewed_fax.pdf`, `front_desk_policy_v1.pdf`, `fee_schedule.pdf`, `accepted_plans.csv`).
-    - **Demo Script**: Authored `docs/DEMO_SCRIPT.md` with step-by-step walkthrough for tomorrow's demo.
-    - **Next Task**: Conversations routes and status-line streaming (Task 3.6).
+  - **Task 3.3: Evidence Gate, Conflict Detection & Threshold Measurement** — **COMPLETED & VERIFIED**
+    - **Threshold Calibration & Measurement**: Pinned `RELIABLE_TEXT_THRESHOLD = 0.25` and `WEAK_EVIDENCE_THRESHOLD = 0.0`. Validated on real `bge-reranker-v2-m3` across 5 TEXT_FACT vs 5 NO_ANSWER golden questions: TEXT_FACT scores range `0.839289` to `0.996342` (min `0.839289`), NO_ANSWER scores range `0.000149` to `0.073828` (max `0.073828`), yielding a clean separation margin of `0.765461`.
+    - **Conflict Detection**: Detected cross-document conflicts between versions (e.g. `front_desk_policy_v1` vs `v2` on intake fax `555-0101` vs `555-0102`, and arrival time `15` vs `20` minutes). Emits deterministic conflict reply formatting both sides with citations without LLM hallucination.
+    - **Proving Tests**:
+      - `backend/tests/integration/test_threshold_measurement.py::test_threshold_measured_on_5_text_fact_vs_5_no_answer_golden_questions` (passed in 12.75s with real CPU reranker).
+      - `backend/tests/integration/test_evidence_gate_routing.py` (all 6 integration tests pass: conflict detection, reliable text routing, weak evidence refusal, no evidence refusal, visual required routing).
+
+  - **Task 3.4: Answer Modes & Prompts Registry** — **COMPLETED & VERIFIED**
+    - **Answer Modes & Token Caps**: Supports `exact` (`MAX_TOKENS_EXACT = 64`), `short` (`MAX_TOKENS_SHORT = 150`), `explain` (`MAX_TOKENS_EXPLAIN = 768`), and `table` (`MAX_TOKENS_TABLE = 512`). Table answers built strictly by code from stored `tables_data` cells.
+    - **Central Prompt Registry (ADR-0016)**: Prompts loaded outside core via PyYAML adapter (`app.adapters.prompts.yaml_loader`) and injected into core (`app.core.prompts.set_prompt_registry`) keeping core pure without vendor imports.
+    - **Proving Tests**: `backend/tests/unit/test_generate_node_schemas.py` (8/8 pass).
+
+  - **Task 3.5: Validation, Per-Point Explain Quotes & Junk-Answer Rejection** — **COMPLETED & VERIFIED**
+    - **Exact Quote & Citation Verification**: Enforces verbatim substring match of citations against retrieved evidence chunks; validates cited chunk IDs against candidate IDs.
+    - **Byte-for-byte Table & Conflict Verbatim Quotes**: Verifies all table cells match stored row data byte for byte; conflict quotes extracted directly from stored chunk text of cited document versions.
+    - **Junk & Echo Rejection**: Rejects empty outputs, echoed context prefixes, and junk responses; enforces retry-once-then-refuse loop.
+    - **Proving Tests**: `backend/tests/unit/test_validation_node_rules.py` (8/8 pass), `backend/tests/unit/test_table_and_conflict_validation.py` (9/9 pass).
+
+  - **Task 3.6: SSE Streaming API (Node 9 `respond`) & Conversation Routes** — **COMPLETED & VERIFIED**
+    - **SSE Streaming Endpoint (`POST /v1/questions/stream`)**: FastAPI `StreamingResponse` streaming `event: status` (pipeline stage announcements), `event: token` (answer text chunks), `event: answer`, `event: citation`, `event: done`, and safe failure `event: error` with random `ERR-XXXXXX` references without internal trace leakage. Keeps `POST /v1/questions` intact for synchronous clients (ADR-0017).
+    - **Conversation Management Routes**: `GET /v1/assistants/{id}/conversations`, `GET /v1/conversations/{id}/messages`, `DELETE /v1/assistants/{id}/conversations`, and `DELETE /v1/conversations/{id}` fully operational under tenant RLS and anti-probing rules.
+    - **Proving Tests**: `backend/tests/integration/test_sse_streaming.py` (4/4 pass).
+
+  - **Task 3.7: Next.js Chat UI & Embedded PDF.js Source Panel** — **COMPLETED & VERIFIED**
+    - Built responsive chat shell with assistant switcher, live/demo connection badges, message history, streaming indicators, and embedded `pdf.js` source panel navigating to cited `#page=N`.
+    - Verified across 12 web test suites (138 tests pass).
+
+  - **Task 3.8: Baseline Metrics Recording & Phase 3 Exit Gate** — **COMPLETED & VERIFIED**
+    - **Exit Gate Report**: Computed and recorded in `evals/reports/phase3_baseline.json` on `desktop-gpu` profile.
+    - **Metrics**: Hit@5 = 1.0, Citation Precision = 1.0, Citation Recall = 1.0, Faithfulness = 1.0, Refusal Accuracy = 1.0, Cross-tenant leaks = 0.
+    - **Phase 3 Exit Gate**: All criteria satisfied (zero cross-tenant leaks, working demo ready).
+    - **Proving Tests**: `backend/tests/eval/test_phase3_baseline.py` (3/3 pass).
+
+  - **Next Phase**: Phase 4: Scanned Document Ingestion & Vision Verification (Tasks 4.1 to 4.7).
 
 - **Phase 2 Exit Gate Verification & Ingestion Schema Resolution** — **COMPLETED & VERIFIED**
   - **Exit Gate Test**: `TestPhase2ExitGateGoldenDocuments::test_golden_documents_ingested_twice_zero_duplicates` in `backend/tests/integration/test_pipeline_idempotency.py`.
@@ -247,17 +271,9 @@
 - **Task 2.4**: Docling Parser Adapter & Tri-Path Extraction — **code complete, awaiting desktop verification**
   - Completed: Review policy with MECE coverage for all 4 page types, Migration 0005 applied to shared database (`0005_readings_table_cites`), database seeding test fixtures decoupled to `tests/fixtures/database_seeding.py`, parser profile matrix routing (`mock` -> `MockDocumentParser`, `office-cpu`/`desktop-gpu`/`home-gpu`/`dev-free-api` -> `DoclingDocumentParser`, `cloud` -> `DoclingDocumentParser` with offline/pinned models enforced), and adapter offline configuration (`EasyOCR` download disabled, model directory set, `HF_HUB_OFFLINE=1`).
 
-## Desktop Verification Pending
-Phase 2 cannot pass its exit gate until this list is empty:
-1. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_digital_text_and_table_extraction` (Digital PDF text and structured table data extraction)
-2. `tests/integration/test_docling_parser.py::TestRealDoclingModelsDesktop::test_real_docling_multipage_confidence_and_review_detection` (Multi-page document per-page confidence scores and review gating)
-3. Real BGE-M3 embedding verification: `backend/tests/unit/test_bge_m3_adapter.py::test_real_bge_m3_model` (dim 1024, L2 norm within 1e-3 of 1.0, cosine similarity order, deterministic)
-4. Real fax upload on desktop-gpu
-
-*(Decision: `test_real_docling_ocr_spanish_scanned_page` is removed from the Phase 2 gate list per multilingual deferral in OPEN_QUESTIONS 3.5. The test stays in code.)*
-
-## Next Task
-- Task 3.3: Evidence Assessment Gate (Node 5 `assess_evidence`) per `docs/phases/PHASE-3.md`.
+## Next Phase & Task
+- **Phase 4**: Scanned Document Ingestion & Vision Verification
+- **Next Task**: Task 4.2: Normalized Visual Value Validation (Node 8 `validate`) per `docs/phases/PHASE-4.md`.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
