@@ -141,8 +141,9 @@ class PagePipelineService:
         page_type = page_rec.page_type if page_rec is not None else PageType.DIGITAL_TEXT
         page_id = page_rec.id if page_rec is not None else None
 
-        # Fetch image bytes if available in storage
+        # Fetch image bytes and digital text if available in storage
         image_bytes = b""
+        digital_text: str | None = None
         if page_rec and self.storage:
             try:
                 path = page_rec.image_key
@@ -153,12 +154,23 @@ class PagePipelineService:
             except Exception:
                 image_bytes = b""
 
+            try:
+                txt_path = f"pages/{document_version_id}/{page_number}.txt"
+                txt_storage_key = StorageKey(tenant_id=UUID(tenant_id), path=txt_path)
+                raw_txt_bytes = await self.storage.get(txt_storage_key)
+                if raw_txt_bytes:
+                    digital_text = raw_txt_bytes.decode("utf-8")
+            except Exception:
+                digital_text = None
+
         # 1. Docling extract
         try:
             artifact = PageArtifact(
                 page_number=page_number,
                 image_bytes=image_bytes,
                 page_type=page_type,
+                text_content=digital_text,
+                has_text_layer=bool(digital_text),
             )
             parsed = await self.parser.extract(artifact)
         except Exception as exc:

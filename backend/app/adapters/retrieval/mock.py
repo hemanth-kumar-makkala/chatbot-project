@@ -126,6 +126,15 @@ class MockRetriever(Retriever):
             ),
         ][:limit]
 
+    async def get_neighbouring_chunks(
+        self,
+        tenant_ctx: TenantContext,
+        chunk_ids: list[str],
+    ) -> list[EvidenceId]:
+        """Return canned neighbouring chunks for mock profile."""
+        _ = (tenant_ctx, chunk_ids)
+        return []
+
     async def get_inventory(
         self,
         tenant_ctx: TenantContext,

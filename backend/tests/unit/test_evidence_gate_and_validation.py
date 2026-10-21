@@ -43,6 +43,9 @@ class DummyRetriever(Retriever):
     ) -> dict[str, list[str]]:
         return {"titles": self.titles, "headings": ["Topic A", "Topic B"]}
 
+    async def get_neighbouring_chunks(self, _tenant_ctx: Any, _chunk_ids: list[str]) -> list[Any]:
+        return []
+
 
 class DummyModelProvider:
     """Stub model provider for tracking generation invocations."""

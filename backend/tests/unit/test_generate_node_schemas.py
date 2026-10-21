@@ -14,10 +14,11 @@ PHASE-3 Requirements:
    Token caps per mode are named constants.
 """
 
+# ruff: noqa: E501, ARG002
+
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
@@ -34,26 +35,26 @@ from app.core.graph import (
     node_route,
 )
 from app.core.prompts import (
-    AnswerOutput,
-    ExplainPoint,
-    RouterOutput,
     get_prompt_registry,
     load_prompt_template,
     load_response_schema,
 )
+from app.ports.model_provider import ModelProvider
 from app.ports.retriever import Retriever
 from app.ports.types import (
     ChatMessage,
     EvidenceId,
     EvidenceType,
+    ExtractedFields,
     ModelResponse,
     ModelRole,
+    PageReading,
     TenantContext,
     UserRole,
 )
 
 
-class MockGenerationModel:
+class MockGenerationModel(ModelProvider):
     """Mock model provider capturing token limits, prompts, and returning structured outputs."""
 
     def __init__(self, output: dict[str, Any] | None = None) -> None:
@@ -77,8 +78,17 @@ class MockGenerationModel:
             structured_output=self.output,
         )
 
+    async def transcribe_page(self, role: ModelRole, image: bytes) -> PageReading:
+        return PageReading(reading="", confidence=1.0, model_id="test", model_version="1.0")
 
-class MockFailingModel:
+    async def read_page(self, role: ModelRole, image: bytes, question: str) -> PageReading:
+        return PageReading(reading="", confidence=1.0, model_id="test", model_version="1.0")
+
+    async def extract_fields(self, role: ModelRole, image: bytes, schema: Any) -> ExtractedFields:
+        return ExtractedFields(fields={}, model_id="test", model_version="1.0")
+
+
+class MockFailingModel(ModelProvider):
     """Mock model that raises an exception during generation."""
 
     async def generate(
@@ -90,29 +100,55 @@ class MockFailingModel:
     ) -> ModelResponse:
         raise RuntimeError("Model provider connection timeout")
 
+    async def transcribe_page(self, role: ModelRole, image: bytes) -> PageReading:
+        raise RuntimeError("Model provider connection timeout")
+
+    async def read_page(self, role: ModelRole, image: bytes, question: str) -> PageReading:
+        raise RuntimeError("Model provider connection timeout")
+
+    async def extract_fields(self, role: ModelRole, image: bytes, schema: Any) -> ExtractedFields:
+        raise RuntimeError("Model provider connection timeout")
+
 
 class NeighbouringRetriever(Retriever):
     """Stub retriever providing neighbouring chunks on the same page."""
 
-    async def search(self, _tenant_ctx: TenantContext, _query: str, _filters: Any = None) -> list[EvidenceId]:
+    async def search(
+        self, _tenant_ctx: TenantContext, _query: str, _filters: Any = None
+    ) -> list[EvidenceId]:
         return []
 
-    async def search_titles(self, _tenant_ctx: TenantContext, _query: str, limit: int = 3) -> list[str]:
+    async def search_titles(
+        self, _tenant_ctx: TenantContext, _query: str, limit: int = 3
+    ) -> list[str]:
         return []
 
-    async def get_evidence_text(self, _tenant_ctx: TenantContext, evidence_ids: list[str]) -> dict[str, str]:
+    async def get_evidence_text(
+        self, _tenant_ctx: TenantContext, evidence_ids: list[str]
+    ) -> dict[str, str]:
         return {eid: f"Text for {eid}" for eid in evidence_ids}
 
-    async def search_tables(self, _tenant_ctx: TenantContext, _query: str, _limit: int = 15) -> list[Any]:
+    async def search_tables(
+        self, _tenant_ctx: TenantContext, _query: str, _limit: int = 15
+    ) -> list[Any]:
         return []
 
-    async def get_inventory(self, _tenant_ctx: TenantContext, _heading_limit: int = 5) -> dict[str, list[str]]:
+    async def get_inventory(
+        self, _tenant_ctx: TenantContext, _heading_limit: int = 5
+    ) -> dict[str, list[str]]:
         return {"titles": [], "headings": []}
 
-    async def get_neighbouring_chunks(self, _tenant_ctx: TenantContext, chunk_ids: list[str]) -> list[EvidenceId]:
+    async def get_neighbouring_chunks(
+        self, _tenant_ctx: TenantContext, chunk_ids: list[str]
+    ) -> list[EvidenceId]:
         # Return neighbouring chunks for page 1
         return [
-            EvidenceId(chunk_id=f"{cid}_neighbour", page_id="p1", document_version_id="v1", evidence_type=EvidenceType.TEXT)
+            EvidenceId(
+                chunk_id=f"{cid}_neighbour",
+                page_id="p1",
+                document_version_id="v1",
+                evidence_type=EvidenceType.TEXT,
+            )
             for cid in chunk_ids
         ]
 

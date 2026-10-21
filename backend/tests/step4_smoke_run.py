@@ -24,27 +24,33 @@ Outputs Markdown table:
 question, answer mode, evidence_state, answer, sources, complete and correct (yes/no), seconds.
 """
 
+# ruff: noqa: E501, ARG005, E402, ARG001
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
+import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-with contextlib.suppress(Exception):
-    sys.stdout.reconfigure(line_buffering=True)
+getattr(sys.stdout, "reconfigure", lambda **kw: None)(line_buffering=True)
 
-PROJECT_ROOT = Path("c:/Users/makka/Downloads/Projects/chatbots/chatbot-project")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 from dotenv import load_dotenv
+
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_DIR / ".env")
 
@@ -53,12 +59,9 @@ from httpx import ASGITransport, AsyncClient
 from procrastinate import PsycopgConnector
 from sqlalchemy import select
 
-from tests.conftest import isolated_throwaway_database
-from app.db.session import (
-    reset_session_engines,
-    tenant_session,
-    unscoped_session,
-)
+from app.adapters.auth.builtin import BuiltinAuthProvider
+from app.api.app import create_app
+from app.api.config import ApiSettings
 from app.db.models import (
     Assistant,
     DocumentVersion,
@@ -66,13 +69,16 @@ from app.db.models import (
     Tenant,
     User,
 )
+from app.db.session import (
+    reset_session_engines,
+    tenant_session,
+    unscoped_session,
+)
 from app.ports.types import TenantContext, UploadPayload, UserRole
 from app.wiring import create_upload_service
-from app.worker import app as worker_app, split_document_job
-from app.api.app import create_app
-from app.api.config import ApiSettings
-from app.adapters.auth.builtin import BuiltinAuthProvider
-
+from app.worker import app as worker_app
+from app.worker import split_document_job
+from tests.conftest import isolated_throwaway_database
 
 DOCS_TO_INGEST = [
     "front_desk_policy_v1.pdf",
@@ -82,72 +88,221 @@ DOCS_TO_INGEST = [
     "accepted_plans.csv",
 ]
 
-QUESTIONS = [
+GOLDEN_QS_PATH = PROJECT_ROOT / "evals" / "golden" / "questions.json"
+GOLDEN_QS: dict[str, Any] = {
+    q["id"]: q for q in json.loads(GOLDEN_QS_PATH.read_text(encoding="utf-8"))
+}
+
+ACCEPTED_PLANS_CSV_PATH = PROJECT_ROOT / "evals" / "golden" / "docs" / "accepted_plans.csv"
+CSV_PLANS: list[dict[str, str]] = []
+with open(ACCEPTED_PLANS_CSV_PATH, encoding="utf-8") as f:
+    clean_lines = [line for line in f if not line.strip().startswith("#")]
+    for row in csv.DictReader(clean_lines):
+        CSV_PLANS.append(row)
+
+
+def _check_q1(ans: str, state: str, src: str) -> bool:
+    """Q1: HORIZON VALLEY HEALTH CLINIC data please (explain mode)."""
+    if "couldn't confirm" in ans.lower() or "couldn't find" in ans.lower():
+        return False
+    points = [line for line in ans.splitlines() if line.strip().startswith("-")]
+    return len(points) >= 1
+
+
+def _check_q2(ans: str, state: str, src: str) -> bool:
+    """Q2: What is the front desk intake fax number? (CONF-001)."""
+    gold = GOLDEN_QS["CONF-001"]
+    has_conf_vals = all(v in ans for v in gold["conflict_values"])
+    has_v1_quote = (
+        "Front desk intake fax number is 555-0101" in ans
+        or "Outside referrals must be sent directly to this intake fax line" in ans
+    )
+    has_v2_quote = (
+        "Front desk intake fax number is 555-0102" in ans
+        or "Outside referrals must be sent directly to this revised intake fax line" in ans
+    )
+    # Stricter check: if v2 quote cites the intake fax line, it must contain "revised"
+    for line in ans.splitlines():
+        if (
+            "front_desk_policy_v2.pdf" in line
+            and "intake fax line" in line
+            and "revised" not in line
+        ):
+            return False
+    clean_src = (
+        "front_desk_policy_v2.pdf" in src
+        and "front_desk_policy_v1.pdf" in src
+        and "fee_schedule" not in src
+        and "prior_auth" not in src
+    )
+    return state == "CONFLICTING" and has_conf_vals and has_v1_quote and has_v2_quote and clean_src
+
+
+def _check_q3(ans: str, state: str, src: str) -> bool:
+    """Q3: How early must patients arrive for a routine visit? (CONF-005)."""
+    has_conf_vals = "15" in ans and "20" in ans
+    has_v1_quote = (
+        "Routine appointment arrival window is 15 minutes prior to scheduled visit" in ans
+    )
+    has_v2_quote = (
+        "Routine appointment arrival window is 20 minutes prior to scheduled visit" in ans
+    )
+    clean_src = (
+        "front_desk_policy_v2.pdf" in src
+        and "front_desk_policy_v1.pdf" in src
+        and "fee_schedule" not in src
+        and "prior_auth" not in src
+    )
+    return state == "CONFLICTING" and has_conf_vals and has_v1_quote and has_v2_quote and clean_src
+
+
+def _check_q4(ans: str, state: str, src: str) -> bool:
+    """Q4: Summarize the outpatient prior authorization guide (explain mode)."""
+    if "couldn't confirm" in ans.lower() or "couldn't find" in ans.lower():
+        return False
+    points = [line for line in ans.splitlines() if line.strip().startswith("-")]
+    only_prior_auth = (
+        "prior_auth_guide.pdf" in src and "front_desk" not in src and "fee_schedule" not in src
+    )
+    return len(points) >= 1 and only_prior_auth
+
+
+def _check_q5(ans: str, state: str, src: str) -> bool:
+    """Q5: What insurance plans are accepted? (table mode). Compare EVERY cell of EVERY row to CSV."""
+    for r in CSV_PLANS:
+        for col_name, cell_val in r.items():
+            if col_name not in ans:
+                return False
+            if cell_val not in ans:
+                return False
+    if "blue horizon" in ans.lower() or "crv-epo-03" in ans.lower():
+        return False
+    only_accepted_plans = (
+        "accepted_plans.csv" in src and "front_desk" not in src and "prior_auth" not in src
+    )
+    return only_accepted_plans
+
+
+def _check_q6(ans: str, state: str, src: str) -> bool:
+    """Q6: Effective date for outpatient prior auth (TF-002)."""
+    gold = GOLDEN_QS["TF-002"]
+    has_ans = gold["expected_answer"] in ans
+    only_prior_auth = (
+        "prior_auth_guide.pdf" in src and "front_desk" not in src and "fee_schedule" not in src
+    )
+    return has_ans and only_prior_auth
+
+
+def _check_q7(ans: str, state: str, src: str) -> bool:
+    """Q7: Advance business days (TF-003)."""
+    gold = GOLDEN_QS["TF-003"]
+    allowed = (
+        [gold["expected_answer"].lower()]
+        + [a.lower() for a in gold.get("accepted_answers", [])]
+        + ["5"]
+    )
+    has_ans = any(v in ans.lower() for v in allowed)
+    only_prior_auth = "prior_auth_guide.pdf" in src and "front_desk" not in src
+    return has_ans and only_prior_auth
+
+
+def _check_q8(ans: str, state: str, src: str) -> bool:
+    """Q8: Consultation notes validity (TF-004)."""
+    has_ans = "30" in ans
+    only_prior_auth = "prior_auth_guide.pdf" in src and "front_desk" not in src
+    return has_ans and only_prior_auth
+
+
+def _check_q9(ans: str, state: str, src: str) -> bool:
+    """Q9: Policy reference code (TF-001)."""
+    gold = GOLDEN_QS["TF-001"]
+    has_ans = gold["expected_answer"] in ans
+    only_prior_auth = (
+        "prior_auth_guide.pdf" in src and "accepted_plans" not in src and "front_desk" not in src
+    )
+    return has_ans and only_prior_auth
+
+
+def _check_q10(ans: str, state: str, src: str) -> bool:
+    """Q10: Acupuncture copay (NOA-001)."""
+    is_refusal = "couldn't find" in ans.lower()
+    no_src = src == "None" or not src
+    return is_refusal and no_src
+
+
+def _check_q11(ans: str, state: str, src: str) -> bool:
+    """Q11: Discounted parking rate (NOA-002)."""
+    is_refusal = "couldn't find" in ans.lower()
+    no_src = src == "None" or not src
+    return is_refusal and no_src
+
+
+QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "Q1",
         "question": "HORIZON VALLEY HEALTH CLINIC data please",
         "expected_mode": "explain",
-        "check": lambda ans, state, src: len(ans) > 20 and ("555" in ans or "clinic" in ans.lower() or "policy" in ans.lower()),
+        "check": _check_q1,
     },
     {
         "id": "Q2",
         "question": "What is the front desk intake fax number?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: state == "CONFLICTING" or ("555-0101" in ans and "555-0102" in ans),
+        "check": _check_q2,
     },
     {
         "id": "Q3",
         "question": "How early must patients arrive for a routine visit?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: state == "CONFLICTING" or ("15" in ans and "20" in ans),
+        "check": _check_q3,
     },
     {
         "id": "Q4",
         "question": "Summarize the outpatient prior authorization guide",
         "expected_mode": "explain",
-        "check": lambda ans, state, src: len(ans) > 30 and ("prior auth" in ans.lower() or "authorization" in ans.lower() or "2026-pa-01" in ans.lower()),
+        "check": _check_q4,
     },
     {
         "id": "Q5",
         "question": "What insurance plans are accepted?",
         "expected_mode": "table",
-        "check": lambda ans, state, src: "crestview" in ans.lower() or "apex" in ans.lower() or "blue" in ans.lower() or "health" in ans.lower(),
+        "check": _check_q5,
     },
     {
         "id": "Q6",
         "question": "What is the effective date for our outpatient prior authorization policy?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: "January 1, 2026" in ans or "2026" in ans,
+        "check": _check_q6,
     },
     {
         "id": "Q7",
         "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: "5" in ans,
+        "check": _check_q7,
     },
     {
         "id": "Q8",
         "question": "How recent must clinical consultation notes be when submitting an auth request?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: "30" in ans,
+        "check": _check_q8,
     },
     {
         "id": "Q9",
         "question": "What is the policy reference code for outpatient prior authorization?",
         "expected_mode": "exact",
-        "check": lambda ans, state, src: "2026-PA-01" in ans,
+        "check": _check_q9,
     },
     {
         "id": "Q10",
         "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: "couldn't find" in ans.lower() or "couldn't confirm" in ans.lower(),
+        "check": _check_q10,
     },
     {
         "id": "Q11",
         "question": "What is the discounted parking rate for patients in the medical plaza garage?",
         "expected_mode": "short",
-        "check": lambda ans, state, src: "couldn't find" in ans.lower() or "couldn't confirm" in ans.lower(),
+        "check": _check_q11,
     },
 ]
 
@@ -194,7 +349,7 @@ async def main() -> None:
             user_id = uuid4()
             asst_id = uuid4()
             demo_email = "demo.staff@horizonvalley.local"
-            demo_password = "CorrectHorseBattery99!"
+            demo_password = "CorrectHorseBattery99!"  # pragma: allowlist secret
 
             auth_provider = BuiltinAuthProvider()
             hashed_pw = auth_provider.hash_password(demo_password)
@@ -284,18 +439,20 @@ async def main() -> None:
                             async with tenant_session(ctx) as s:
                                 ver = (
                                     await s.execute(
-                                        select(DocumentVersion).where(
-                                            DocumentVersion.id == ver_id
-                                        )
+                                        select(DocumentVersion).where(DocumentVersion.id == ver_id)
                                     )
                                 ).scalar_one_or_none()
                                 if ver is not None:
                                     if ver.status == "ready":
                                         ready = True
-                                        print(f"    [READY] {doc_name} reached 'ready' status in {round(time.monotonic() - start_wait, 1)}s")
+                                        print(
+                                            f"    [READY] {doc_name} reached 'ready' status in {round(time.monotonic() - start_wait, 1)}s"
+                                        )
                                         break
                                     elif ver.status in ("needs_review", "failed"):
-                                        print(f"    [STATUS] {doc_name} is in '{ver.status}' status")
+                                        print(
+                                            f"    [STATUS] {doc_name} is in '{ver.status}' status"
+                                        )
                                         ready = True
                                         break
                             await asyncio.sleep(0.5)
@@ -355,25 +512,42 @@ async def main() -> None:
                                 data = resp.json()
                                 answer = data.get("answer", "")
                                 ans_mode = data.get("answer_mode") or "short"
-                                ev_state = data.get("evidence_state") or ("CONFLICTING" if data.get("status") == "conflicting" else "RELIABLE_TEXT")
-                                sources = [s.get("document_title", "") for s in data.get("sources", [])]
-                                if not sources and data.get("conflict_sources"):
-                                    sources = [s.get("document_title", "") for s in data.get("conflict_sources", [])]
+                                ev_state = data.get("evidence_state") or (
+                                    "CONFLICTING"
+                                    if data.get("status") == "conflicting"
+                                    else "RELIABLE_TEXT"
+                                )
+                                raw_sources = [
+                                    s.get("document_title", "") for s in data.get("sources", [])
+                                ]
+                                if not raw_sources and data.get("conflict_sources"):
+                                    raw_sources = [
+                                        s.get("document_title", "")
+                                        for s in data.get("conflict_sources", [])
+                                    ]
+                                sources = list(dict.fromkeys(s for s in raw_sources if s))
                                 sources_str = ", ".join(sources) if sources else "None"
-                                is_correct = "yes" if item["check"](answer, ev_state, sources_str) else "no"
+                                check_fn: Callable[[str, str, str], bool] = item["check"]
+                                is_correct = (
+                                    "yes" if check_fn(answer, ev_state, sources_str) else "no"
+                                )
 
-                            rows.append({
-                                "num": idx,
-                                "question": q_text,
-                                "answer_mode": ans_mode,
-                                "evidence_state": ev_state,
-                                "answer": answer.replace("\n", " ").strip()[:100],
-                                "full_answer": answer,
-                                "sources": sources_str,
-                                "complete_and_correct": is_correct,
-                                "seconds": elapsed,
-                            })
-                            print(f"[{idx}/11] ({elapsed}s) Mode: {ans_mode} | State: {ev_state} | Correct: {is_correct}")
+                            rows.append(
+                                {
+                                    "num": idx,
+                                    "question": q_text,
+                                    "answer_mode": ans_mode,
+                                    "evidence_state": ev_state,
+                                    "answer": answer.replace("\n", " ").strip()[:100],
+                                    "full_answer": answer,
+                                    "sources": sources_str,
+                                    "complete_and_correct": is_correct,
+                                    "seconds": elapsed,
+                                }
+                            )
+                            print(
+                                f"[{idx}/11] ({elapsed}s) Mode: {ans_mode} | State: {ev_state} | Correct: {is_correct}"
+                            )
                             print(f"      Q: {q_text}")
                             print(f"      A: {answer[:120]}...")
                             print(f"      Sources: {sources_str}\n")
@@ -381,7 +555,10 @@ async def main() -> None:
                     print("\n" + "=" * 90)
                     print("PHASE 3 STEP 4 SMOKE RUN RESULTS TABLE")
                     print("=" * 90)
-                    header = "| # | Question | Answer Mode | Evidence State | Answer (snippet) | Sources | Complete & Correct | Seconds |"
+                    header = (
+                        "| # | Question | Answer Mode | Evidence State | "
+                        "Answer (snippet) | Sources | Complete & Correct | Seconds |"
+                    )
                     sep = "|---|---|---|---|---|---|---|---|"
                     print(header)
                     print(sep)
@@ -389,8 +566,18 @@ async def main() -> None:
                         q_cell = r["question"].replace("|", "\\|")
                         a_cell = r["answer"].replace("|", "\\|")
                         s_cell = r["sources"].replace("|", "\\|")
-                        print(f"| {r['num']} | {q_cell} | {r['answer_mode']} | {r['evidence_state']} | {a_cell} | {s_cell} | {r['complete_and_correct']} | {r['seconds']} |")
+                        line_str = (
+                            f"| {r['num']} | {q_cell} | {r['answer_mode']} | "
+                            f"{r['evidence_state']} | {a_cell} | {s_cell} | "
+                            f"{r['complete_and_correct']} | {r['seconds']} |"
+                        )
+                        print(line_str)
                     print("=" * 90)
+                    for r in rows:
+                        if r["num"] == 5:
+                            print("\nFULL TABLE ANSWER TEXT (Q5):")
+                            print(r["full_answer"])
+                            print("=" * 90)
 
                 finally:
                     worker_task.cancel()

@@ -18,9 +18,11 @@ PHASE-3 Requirements:
 3. Thresholds are named constants: RELIABLE_TEXT_THRESHOLD, WEAK_EVIDENCE_THRESHOLD.
 """
 
+# ruff: noqa: E501, ARG002
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -34,22 +36,27 @@ from app.core.graph import (
     build_knowledge_graph,
     node_assess_evidence,
 )
+from app.ports.model_provider import ModelProvider
 from app.ports.retriever import Retriever
 from app.ports.types import (
     ChatMessage,
     EvidenceId,
     EvidenceType,
+    ExtractedFields,
     ModelResponse,
     ModelRole,
+    PageReading,
     TenantContext,
     UserRole,
 )
 
 
-class CountingModelProvider:
+class CountingModelProvider(ModelProvider):
     """Mock model provider tracking invocations for generation and conflict detection."""
 
-    def __init__(self, conflict_detected: bool = False, conflict_payload: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, conflict_detected: bool = False, conflict_payload: dict[str, Any] | None = None
+    ) -> None:
         self.generate_call_count = 0
         self.judge_call_count = 0
         self.conflict_detected = conflict_detected
@@ -86,30 +93,53 @@ class CountingModelProvider:
             )
         return ModelResponse(content="OK", model_id="test-model", model_version="1.0")
 
+    async def transcribe_page(self, role: ModelRole, image: bytes) -> PageReading:
+        return PageReading(reading="", confidence=1.0, model_id="test", model_version="1.0")
+
+    async def read_page(self, role: ModelRole, image: bytes, question: str) -> PageReading:
+        return PageReading(reading="", confidence=1.0, model_id="test", model_version="1.0")
+
+    async def extract_fields(self, role: ModelRole, image: bytes, schema: Any) -> ExtractedFields:
+        return ExtractedFields(fields={}, model_id="test", model_version="1.0")
+
 
 class StubRetriever(Retriever):
     """Stub retriever returning candidate documents and text."""
 
-    def __init__(self, candidates: list[EvidenceId] | None = None, texts: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, candidates: list[EvidenceId] | None = None, texts: dict[str, str] | None = None
+    ) -> None:
         self.candidates = candidates or []
         self.texts = texts or {}
 
-    async def search(self, tenant_ctx: TenantContext, query: str, filters: Any = None) -> list[EvidenceId]:
+    async def search(
+        self, tenant_ctx: TenantContext, query: str, filters: Any = None
+    ) -> list[EvidenceId]:
         return self.candidates
 
-    async def search_titles(self, tenant_ctx: TenantContext, query: str, limit: int = 3) -> list[str]:
+    async def search_titles(
+        self, tenant_ctx: TenantContext, query: str, limit: int = 3
+    ) -> list[str]:
         return ["Front-Desk SOP v1", "Front-Desk SOP v2"][:limit]
 
-    async def get_evidence_text(self, tenant_ctx: TenantContext, evidence_ids: list[str]) -> dict[str, str]:
+    async def get_evidence_text(
+        self, tenant_ctx: TenantContext, evidence_ids: list[str]
+    ) -> dict[str, str]:
         return {eid: self.texts[eid] for eid in evidence_ids if eid in self.texts}
 
-    async def search_tables(self, tenant_ctx: TenantContext, query: str, limit: int = 15) -> list[Any]:
+    async def search_tables(
+        self, tenant_ctx: TenantContext, query: str, limit: int = 15
+    ) -> list[Any]:
         return []
 
-    async def get_inventory(self, tenant_ctx: TenantContext, heading_limit: int = 5) -> dict[str, list[str]]:
+    async def get_inventory(
+        self, tenant_ctx: TenantContext, heading_limit: int = 5
+    ) -> dict[str, list[str]]:
         return {"titles": ["Front-Desk SOP v1"], "headings": ["Intake"]}
 
-    async def get_neighbouring_chunks(self, tenant_ctx: TenantContext, chunk_ids: list[str]) -> list[EvidenceId]:
+    async def get_neighbouring_chunks(
+        self, tenant_ctx: TenantContext, chunk_ids: list[str]
+    ) -> list[EvidenceId]:
         return []
 
 
@@ -215,7 +245,9 @@ class TestEvidenceGateRouting:
                 evidence_type=EvidenceType.TEXT,
             )
         ]
-        retriever = StubRetriever(candidates=candidates, texts={c1_id: "Some vaguely related text."})
+        retriever = StubRetriever(
+            candidates=candidates, texts={c1_id: "Some vaguely related text."}
+        )
         ports = GraphPorts(model_provider=model, retriever=retriever)
         ctx = GraphRuntimeContext(
             ports=ports,
@@ -376,6 +408,8 @@ class TestEvidenceGateRouting:
         state = dict(base_state)
         state["evidence_ids"] = [c1_id, c2_id]
 
-        res = await node_assess_evidence(state, type("MockRuntime", (), {"context": ctx})())
+        res = await node_assess_evidence(
+            cast(GraphState, state), type("MockRuntime", (), {"context": ctx})()
+        )
         # Unverified quote must not be accepted as a valid conflict
         assert res["evidence_state"] != "CONFLICTING"

@@ -150,7 +150,19 @@ class DoclingDocumentParser(DocumentParser):
         conv_res = converter.convert(stream)
 
         # 1. Text extraction
-        text_content = conv_res.document.export_to_markdown()
+        docling_text = conv_res.document.export_to_markdown()
+        text_content = docling_text
+
+        # For digital PDFs, compare Docling text with the PDF text layer
+        # and prefer the text layer when Docling reorders words
+        pdf_text = page.text_content
+        if pdf_text and len(pdf_text.strip()) > 0:
+            import re
+
+            pdf_words = [w.lower() for w in re.findall(r"\b\w+\b", pdf_text)]
+            docling_words = [w.lower() for w in re.findall(r"\b\w+\b", docling_text)]
+            if pdf_words and pdf_words != docling_words:
+                text_content = pdf_text
 
         # 2. Table extraction
         extracted_tables: list[TableData] = []

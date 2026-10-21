@@ -44,7 +44,6 @@ from app.ports.errors import (
     TransientIngestionError,
 )
 from app.ports.types import (
-    ChatMessage,
     ModelRole,
     PageReading,
 )
@@ -508,18 +507,55 @@ class TestOllamaModelProviderUnit:
         assert exc_info.value.retryable is False
 
     @pytest.mark.asyncio
+    async def test_read_page_success(self) -> None:
+        """read_page formats prompt with question, scales image, and returns PageReading."""
+        captured_payload: dict[str, Any] = {}
+        mock_generate_payload = {
+            "model": "qwen3-vl:4b",
+            "response": "<think>scanning</think>Intake fax line: 555-0199",
+            "logprobs": [
+                {"token": "Intake", "logprob": -0.05},
+                {"token": "fax", "logprob": -0.02},
+            ],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_payload
+            if request.method == "GET" and request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                )
+            if request.method == "POST" and request.url.path == "/api/generate":
+                captured_payload = json.loads(request.content.decode("utf-8"))
+                return httpx.Response(200, json=mock_generate_payload)
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        provider = OllamaModelProvider(
+            profile="desktop-gpu",
+            base_url="http://mock-ollama:11434",
+            http_client=client,
+        )
+
+        image_bytes = _create_synthetic_page_png()
+        reading = await provider.read_page(
+            role=ModelRole.VISION,
+            image=image_bytes,
+            question="What is the fax number?",
+        )
+
+        assert reading.reading == "Intake fax line: 555-0199"
+        assert "<think>" not in reading.reading
+        assert reading.confidence is not None and reading.confidence > 0.90
+        assert "Question: What is the fax number?" in captured_payload["prompt"]
+        assert len(captured_payload["images"]) == 1
+
+    @pytest.mark.asyncio
     async def test_unimplemented_methods_raise_typed_error(self) -> None:
         """Methods not implemented yet raise typed error with fixed message."""
         provider = OllamaModelProvider(profile="desktop-gpu", base_url="http://mock-ollama:11434")
-
-        with pytest.raises(OllamaMethodNotImplementedError) as exc2:
-            await provider.read_page(
-                role=ModelRole.VISION,
-                image=b"img",
-                question="What is this?",
-            )
-        assert exc2.value.message == "Ollama provider: read_page not implemented yet"
-        assert exc2.value.error_code == "METHOD_NOT_IMPLEMENTED"
 
         with pytest.raises(OllamaMethodNotImplementedError) as exc3:
             await provider.extract_fields(

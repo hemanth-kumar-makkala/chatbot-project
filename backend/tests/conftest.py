@@ -24,6 +24,15 @@ from app.db.env_utils import load_dotenv
 load_dotenv()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def initialize_test_prompt_registry() -> None:
+    """Ensure YAML prompt registry is loaded and injected into core for all test runs."""
+    from app.adapters.prompts.yaml_loader import load_yaml_prompt_registry
+    from app.core.prompts import set_prompt_registry
+
+    set_prompt_registry(load_yaml_prompt_registry())
+
+
 def make_test_password() -> str:
     """Helper to dynamically generate high-entropy test passwords at runtime."""
     return f"sec_{secrets.token_urlsafe(16)}!Aa1"

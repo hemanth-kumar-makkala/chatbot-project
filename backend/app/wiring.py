@@ -9,6 +9,7 @@ with specified ports and checkpointer without monkeypatching or test-only overri
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.prompts.yaml_loader import load_yaml_prompt_registry
 from app.core.graph import (
     GraphPorts,
     GraphRuntimeContext,
@@ -24,6 +26,7 @@ from app.core.graph import (
 )
 from app.core.ingestion.splitter_service import DocumentSplitterService
 from app.core.ingestion.upload import UploadService
+from app.core.prompts import set_prompt_registry
 from app.ports.audit import AuditLogger
 from app.ports.chunker import Chunker
 from app.ports.document_parser import DocumentParser
@@ -40,11 +43,21 @@ from app.ports.table_extractor import TableExtractor
 from app.ports.tracer import Tracer
 from app.ports.types import TenantContext
 
+# Initialize prompt registry from YAML outside app.core
+with contextlib.suppress(Exception):
+    set_prompt_registry(load_yaml_prompt_registry())
+
 
 def build_app_graph(
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph[GraphState, GraphRuntimeContext, Any, Any]:
     """Build and compile the core knowledge graph for the application."""
+    try:
+        from app.core.prompts import get_prompt_registry
+
+        get_prompt_registry()
+    except RuntimeError:
+        set_prompt_registry(load_yaml_prompt_registry())
     builder = build_knowledge_graph()
     return builder.compile(checkpointer=checkpointer)
 
@@ -54,13 +67,17 @@ def create_production_ports(
     retriever: Retriever,
     reranker: Reranker | None = None,
     tracer: Tracer | None = None,
+    image_processor: ImageProcessor | None = None,
 ) -> GraphPorts:
     """Create production GraphPorts with is_mock_profile=False and simulation triggers disabled."""
+    from app.adapters.images.pillow import PillowImageProcessor
+
     return GraphPorts(
         model_provider=model_provider,
         retriever=retriever,
         reranker=reranker,
         tracer=tracer,
+        image_processor=image_processor or PillowImageProcessor(),
         is_mock_profile=False,
         mock_evidence_state=None,
         mock_forced_route=None,
@@ -74,6 +91,7 @@ def create_production_context(
     question_text: str,
     evidence_text: dict[str, str] | None = None,
     raw_document_bytes: bytes = b"",
+    page_image_bytes: bytes = b"",
 ) -> GraphRuntimeContext:
     """Create request-scoped production runtime context with zero simulation switches."""
     return GraphRuntimeContext(
@@ -82,6 +100,7 @@ def create_production_context(
         question_text=question_text,
         evidence_text=evidence_text or {},
         raw_document_bytes=raw_document_bytes,
+        page_image_bytes=page_image_bytes,
     )
 
 

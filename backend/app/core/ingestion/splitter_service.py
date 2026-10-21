@@ -149,6 +149,18 @@ class DocumentSplitterService:
                 )
                 stored_keys.append(storage_key)
 
+                if artifact.text_content:
+                    txt_key = StorageKey(
+                        tenant_id=UUID(ctx.tenant_id),
+                        path=f"pages/{version_id}/{p_num}.txt",
+                    )
+                    await self.storage.put(
+                        key=txt_key,
+                        data=artifact.text_content.encode("utf-8"),
+                        content_type="text/plain",
+                    )
+                    stored_keys.append(txt_key)
+
                 # Insert page record in database
                 await self.document_repo.create_page(
                     tenant_id=ctx.tenant_id,

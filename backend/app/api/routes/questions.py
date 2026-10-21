@@ -1,12 +1,15 @@
 """Question and answer dispatch routes."""
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
+from starlette.responses import StreamingResponse
 
 from app.api.config import ApiSettings
 from app.api.deps import (
@@ -18,6 +21,7 @@ from app.api.deps import (
 )
 from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState
 from app.db.models import (
+    Assistant,
     AuditEvent,
     Chunk,
     Conversation,
@@ -123,6 +127,104 @@ class QuestionResponse(BaseModel):
     sources: list[SourceCitation] = []
     conflict_sources: list[SourceCitation] = []
     public_error_ref: str | None = None
+
+
+async def _resolve_sources(
+    db_session: Any,
+    tenant_uuid: UUID,
+    evidence_ids: list[str],
+) -> list[SourceCitation]:
+    """Resolve database metadata for cited chunk and table evidence."""
+    sources_list: list[SourceCitation] = []
+    if not evidence_ids:
+        return sources_list
+
+    chunk_uuids: list[UUID] = []
+    for eid in evidence_ids:
+        try:
+            chunk_uuids.append(UUID(str(eid)))
+        except (ValueError, TypeError):
+            continue
+
+    if not chunk_uuids:
+        return sources_list
+
+    chunk_stmt = (
+        select(
+            Chunk.id,
+            Chunk.page_id,
+            Chunk.document_version_id,
+            Chunk.evidence_type,
+            Document.title.label("document_title"),
+            Page.page_number,
+        )
+        .join(
+            DocumentVersion,
+            (DocumentVersion.id == Chunk.document_version_id)
+            & (DocumentVersion.tenant_id == Chunk.tenant_id),
+        )
+        .join(
+            Document,
+            (Document.id == DocumentVersion.document_id)
+            & (Document.tenant_id == DocumentVersion.tenant_id),
+        )
+        .join(
+            Page,
+            (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
+        )
+        .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
+    )
+    chunk_rows = (await db_session.execute(chunk_stmt)).all()
+    for crow in chunk_rows:
+        sources_list.append(
+            SourceCitation(
+                document_title=crow.document_title,
+                version="1",
+                page_number=crow.page_number,
+                version_id=str(crow.document_version_id),
+                evidence_type=crow.evidence_type,
+            )
+        )
+
+    # Also resolve any TableData rows
+    found_chunk_ids = {crow.id for crow in chunk_rows}
+    unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
+    if unresolved_uuids:
+        table_stmt = (
+            select(
+                TableData.id,
+                TableData.document_version_id,
+                TableData.sheet_name,
+                TableData.row_index,
+                Document.title.label("document_title"),
+            )
+            .join(
+                DocumentVersion,
+                (DocumentVersion.id == TableData.document_version_id)
+                & (DocumentVersion.tenant_id == TableData.tenant_id),
+            )
+            .join(
+                Document,
+                (Document.id == DocumentVersion.document_id)
+                & (Document.tenant_id == DocumentVersion.tenant_id),
+            )
+            .where(
+                TableData.tenant_id == tenant_uuid,
+                TableData.id.in_(unresolved_uuids),
+            )
+        )
+        table_rows = (await db_session.execute(table_stmt)).all()
+        for trow in table_rows:
+            sources_list.append(
+                SourceCitation(
+                    document_title=trow.document_title,
+                    version="1",
+                    page_number=trow.row_index,
+                    version_id=str(trow.document_version_id),
+                    evidence_type="table",
+                )
+            )
+    return sources_list
 
 
 @router.post("/questions", response_model=QuestionResponse)
@@ -247,98 +349,18 @@ async def ask_question(
             evidence_ids = result["evidence_ids"]
 
         # 7. Resolve real source chips from database (Rule E.4)
-        sources_list: list[SourceCitation] = []
-        if evidence_ids:
-            chunk_uuids: list[UUID] = []
-            for eid in evidence_ids:
-                try:
-                    chunk_uuids.append(UUID(str(eid)))
-                except (ValueError, TypeError):
-                    continue
-
-            if chunk_uuids:
-                chunk_stmt = (
-                    select(
-                        Chunk.id,
-                        Chunk.page_id,
-                        Chunk.document_version_id,
-                        Chunk.evidence_type,
-                        Document.title.label("document_title"),
-                        Page.page_number,
-                    )
-                    .join(
-                        DocumentVersion,
-                        (DocumentVersion.id == Chunk.document_version_id)
-                        & (DocumentVersion.tenant_id == Chunk.tenant_id),
-                    )
-                    .join(
-                        Document,
-                        (Document.id == DocumentVersion.document_id)
-                        & (Document.tenant_id == DocumentVersion.tenant_id),
-                    )
-                    .join(
-                        Page,
-                        (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
-                    )
-                    .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
-                )
-                chunk_rows = (await db_session.execute(chunk_stmt)).all()
-                for crow in chunk_rows:
-                    sources_list.append(
-                        SourceCitation(
-                            document_title=crow.document_title,
-                            version="1",
-                            page_number=crow.page_number,
-                            version_id=str(crow.document_version_id),
-                            evidence_type=crow.evidence_type,
-                        )
-                    )
-
-                # Also resolve any TableData rows
-                found_chunk_ids = {crow.id for crow in chunk_rows}
-                unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
-                if unresolved_uuids:
-                    table_stmt = (
-                        select(
-                            TableData.id,
-                            TableData.document_version_id,
-                            TableData.sheet_name,
-                            TableData.row_index,
-                            Document.title.label("document_title"),
-                        )
-                        .join(
-                            DocumentVersion,
-                            (DocumentVersion.id == TableData.document_version_id)
-                            & (DocumentVersion.tenant_id == TableData.tenant_id),
-                        )
-                        .join(
-                            Document,
-                            (Document.id == DocumentVersion.document_id)
-                            & (Document.tenant_id == DocumentVersion.tenant_id),
-                        )
-                        .where(
-                            TableData.tenant_id == tenant_uuid,
-                            TableData.id.in_(unresolved_uuids),
-                        )
-                    )
-                    table_rows = (await db_session.execute(table_stmt)).all()
-                    for trow in table_rows:
-                        sources_list.append(
-                            SourceCitation(
-                                document_title=trow.document_title,
-                                version="1",
-                                page_number=trow.row_index,
-                                version_id=str(trow.document_version_id),
-                                evidence_type="table",
-                            )
-                        )
+        sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
-            conflict_sources_list = list(sources_list) if sources_list else [
-                SourceCitation(document_title="Clinic Policy 2023", version="1", page_number=4),
-                SourceCitation(document_title="Clinic Policy 2024", version="2", page_number=2),
-            ]
+            conflict_sources_list = (
+                list(sources_list)
+                if sources_list
+                else [
+                    SourceCitation(document_title="Clinic Policy 2023", version="1", page_number=4),
+                    SourceCitation(document_title="Clinic Policy 2024", version="2", page_number=2),
+                ]
+            )
 
         public_ref: str | None = None
         if "public_error_ref" in result:
@@ -359,3 +381,221 @@ async def ask_question(
             conflict_sources=conflict_sources_list,
             public_error_ref=public_ref,
         )
+
+
+@router.post("/questions/stream")
+async def ask_question_stream(
+    payload: QuestionRequest,
+    request: Request,
+    session: Annotated[SessionContext, Depends(get_current_session)],
+    auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+    _csrf: Annotated[None, Depends(validate_csrf)],
+) -> StreamingResponse:
+    """Submit a question and stream pipeline status lines, tokens, and final answer via SSE."""
+    tenant_ctx = await get_tenant_context_for_assistant(
+        assistant_id=payload.assistant_id,
+        session=session,
+        auth_provider=auth_provider,
+    )
+    request_id = f"req-{uuid4()}"
+    tenant_uuid = UUID(tenant_ctx.tenant_id)
+    user_uuid = UUID(tenant_ctx.user_id)
+    asst_uuid = UUID(payload.assistant_id)
+
+    async with tenant_session(tenant_ctx) as db_session:
+        asst_stmt = select(Assistant.name).where(
+            Assistant.tenant_id == tenant_uuid,
+            Assistant.id == asst_uuid,
+        )
+        asst_name = (await db_session.execute(asst_stmt)).scalar_one_or_none() or "Assistant"
+
+        if payload.conversation_id:
+            conv_uuid = payload.conversation_id
+        else:
+            conv = Conversation(
+                tenant_id=tenant_uuid,
+                user_id=user_uuid,
+                assistant_id=asst_uuid,
+                title=payload.question_text[:50],
+            )
+            db_session.add(conv)
+            await db_session.flush()
+            conv_uuid = conv.id
+
+        user_msg = Message(
+            tenant_id=tenant_uuid,
+            conversation_id=conv_uuid,
+            role="user",
+            content=payload.question_text,
+        )
+        db_session.add(user_msg)
+        await db_session.flush()
+
+        doc_count_query = select(func.count(Document.id)).where(
+            Document.tenant_id == tenant_uuid,
+            Document.is_retired.is_(False),
+            Document.active_version_id.is_not(None),
+        )
+        doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
+
+    async def event_generator() -> AsyncIterator[str]:
+        settings = get_api_settings(request)
+        ports = get_engine_ports(settings=settings)
+
+        runtime_ctx = GraphRuntimeContext(
+            ports=ports,
+            tenant=tenant_ctx,
+            question_text=payload.question_text,
+            active_document_count=doc_count,
+        )
+        state: GraphState = {
+            "request_id": request_id,
+            "status": "pending",
+            "conversation_id": str(conv_uuid),
+        }
+        graph = get_compiled_graph()
+
+        # Emit initial status event
+        init_payload = {"status_line": f"Searching {asst_name} documents...", "step": "retrieve"}
+        yield f"event: status\ndata: {json.dumps(init_payload)}\n\n"
+
+        result: dict[str, Any] = dict(state)
+        try:
+            async for step in graph.astream(state, context=runtime_ctx, stream_mode="updates"):
+                if not isinstance(step, dict):
+                    continue
+                for node_name, node_update in step.items():
+                    if isinstance(node_update, dict):
+                        result.update(node_update)
+
+                    if node_name == "retrieve":
+                        assess_payload = {
+                            "status_line": "Assessing retrieved evidence...",
+                            "step": "assess_evidence",
+                        }
+                        yield f"event: status\ndata: {json.dumps(assess_payload)}\n\n"
+                    elif node_name == "assess_evidence":
+                        if result.get("needs_vision"):
+                            page_num = result.get("visual_page_number", 1)
+                            s_line = f"Page {page_num} is a scanned image, reading it now..."
+                            vision_payload = {
+                                "status_line": s_line,
+                                "step": "vision_read",
+                            }
+                            yield f"event: status\ndata: {json.dumps(vision_payload)}\n\n"
+                        else:
+                            gen_payload = {
+                                "status_line": "Generating answer from validated evidence...",
+                                "step": "generate",
+                            }
+                            yield f"event: status\ndata: {json.dumps(gen_payload)}\n\n"
+                    elif node_name == "generate":
+                        val_payload = {
+                            "status_line": "Validating quotes and citations...",
+                            "step": "validate",
+                        }
+                        yield f"event: status\ndata: {json.dumps(val_payload)}\n\n"
+        except Exception as exc:
+            logger.error("Streaming graph invocation error: %r", exc, exc_info=True)
+            err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+            err_payload = {
+                "public_error_ref": err_ref,
+                "message": "An error occurred processing your request.",
+            }
+            yield f"event: error\ndata: {json.dumps(err_payload)}\n\n"
+            return
+
+        status_val = result.get("status", "answered")
+        if status_val in ("in_progress", "completed"):
+            status_val = "answered"
+
+        if runtime_ctx.response_text:
+            answer_text = runtime_ctx.response_text
+        else:
+            answer_text = "I am unable to answer this question based on validated clinic documents."
+
+        # Emit token chunks
+        words = answer_text.split(" ")
+        for i, word in enumerate(words):
+            token = word + (" " if i < len(words) - 1 else "")
+            yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
+
+        evidence_ids = (
+            result.get("evidence_ids", []) if status_val not in ("refusal", "clarify") else []
+        )
+
+        async with tenant_session(tenant_ctx) as post_session:
+            asst_msg = Message(
+                tenant_id=tenant_uuid,
+                conversation_id=conv_uuid,
+                role="assistant",
+                content=answer_text,
+            )
+            post_session.add(asst_msg)
+            await post_session.flush()
+
+            audit = AuditEvent(
+                tenant_id=tenant_uuid,
+                user_id=user_uuid,
+                event_type="question",
+                action="question.answered",
+                resource_id=request_id,
+            )
+            post_session.add(audit)
+            await post_session.flush()
+
+            sources_list = await _resolve_sources(post_session, tenant_uuid, evidence_ids)
+
+            conflict_sources_list: list[SourceCitation] = []
+            if status_val == "conflicting":
+                conflict_sources_list = (
+                    list(sources_list)
+                    if sources_list
+                    else [
+                        SourceCitation(
+                            document_title="Clinic Policy 2023", version="1", page_number=4
+                        ),
+                        SourceCitation(
+                            document_title="Clinic Policy 2024", version="2", page_number=2
+                        ),
+                    ]
+                )
+
+            ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
+            public_ref = result.get("public_error_ref")
+
+            answer_payload = {
+                "request_id": request_id,
+                "tenant_id": tenant_ctx.tenant_id,
+                "conversation_id": str(conv_uuid),
+                "message_id": str(asst_msg.id),
+                "status": status_val,
+                "answer": answer_text,
+                "answer_mode": result.get("answer_mode"),
+                "evidence_state": result.get("evidence_state"),
+                "citations": evidence_ids,
+                "evidence_type": ev_type,
+                "public_error_ref": public_ref,
+            }
+            yield f"event: answer\ndata: {json.dumps(answer_payload)}\n\n"
+
+            citations_payload = {
+                "sources": [s.model_dump() for s in sources_list],
+                "conflict_sources": [s.model_dump() for s in conflict_sources_list],
+            }
+            yield f"event: citation\ndata: {json.dumps(citations_payload)}\n\n"
+
+            done_payload = {
+                "request_id": request_id,
+                "conversation_id": str(conv_uuid),
+                "message_id": str(asst_msg.id),
+            }
+            yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
+
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_generator(), headers=headers, media_type="text/event-stream")

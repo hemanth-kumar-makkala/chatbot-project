@@ -428,7 +428,7 @@ class PostgresRetriever(Retriever):
 
             if not rows and any(
                 k in clean_query.lower()
-                for k in ("table", "sheet", "plan", "insurance", "accepted", "fee", "code", "list")
+                for k in ("table", "sheet", "plan", "insurance", "accepted plan", "fee schedule")
             ):
                 fallback_stmt = text(
                     """

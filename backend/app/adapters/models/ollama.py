@@ -612,8 +612,117 @@ class OllamaModelProvider(ModelProvider):
         image: bytes,
         question: str = "",
     ) -> PageReading:
-        del role, image, question
-        raise OllamaMethodNotImplementedError("Ollama provider: read_page not implemented yet")
+        """Perform multimodal visual reading of a single page image at question time."""
+        role_str = str(role.value)
+        if role_str not in self._models:
+            raise ConfigurationError(
+                message="Role not configured in profile",
+                error_code="CONFIGURATION_ERROR",
+            )
+        model_name = self._models[role_str]
+        model_id = model_name
+
+        # Scale image to fit within 6 GB VRAM budget (RTX 3050)
+        scaled_image = self._image_processor.prepare_image_for_vision(
+            image_bytes=image,
+            max_dimension=1024,
+            max_bytes=4 * 1024 * 1024,
+        )
+
+        b64_image = base64.b64encode(scaled_image).decode("utf-8")
+
+        prompt_text = (
+            "Examine the attached page image carefully.\n"
+            f"Question: {question}\n"
+            "Transcribe visible text relevant to the question "
+            "and provide a direct factual answer.\n"
+            "State clearly if the target region is illegible or unreadable."
+        )
+
+        payload: dict[str, Any] = {
+            "model": model_name,
+            "prompt": prompt_text,
+            "images": [b64_image],
+            "stream": False,
+            "think": False,
+            "logprobs": True,
+            "options": dict(TRANSCRIPTION_GENERATION_OPTIONS),
+        }
+
+        url = self._base_url + "/api/generate"
+
+        client_to_close: httpx.AsyncClient | None = None
+        if self._http_client is not None:
+            client = self._http_client
+        else:
+            client = httpx.AsyncClient(timeout=self._timeout_seconds)
+            client_to_close = client
+
+        try:
+            model_version = await self._get_model_digest(model_name=model_name, client=client)
+            response = await client.post(url, json=payload)
+        except httpx.TimeoutException as exc:
+            raise TransientIngestionError(
+                message="Ollama request timed out",
+                error_code="OLLAMA_TIMEOUT",
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise TransientIngestionError(
+                message="Ollama connection failed",
+                error_code="OLLAMA_CONNECTION_ERROR",
+            ) from exc
+        except httpx.NetworkError as exc:
+            raise TransientIngestionError(
+                message="Ollama network error",
+                error_code="OLLAMA_NETWORK_ERROR",
+            ) from exc
+        finally:
+            if client_to_close is not None:
+                await client_to_close.aclose()
+
+        if response.status_code >= 400:
+            raise OllamaPermanentError(
+                message="Ollama HTTP error",
+                error_code="OLLAMA_HTTP_ERROR",
+                status_code=response.status_code,
+            )
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise MalformedOutput(
+                message="Malformed Ollama JSON response",
+                error_code="MALFORMED_OUTPUT",
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise MalformedOutput(
+                message="Ollama response payload must be a JSON object",
+                error_code="MALFORMED_OUTPUT",
+            )
+
+        if "response" not in data:
+            raise MalformedOutput(
+                message="Ollama response missing required 'response' field",
+                error_code="MALFORMED_OUTPUT",
+            )
+
+        response_text = str(data["response"])
+        cleaned_text = re.sub(r"<think>[\s\S]*?</think>", "", response_text).strip()
+
+        if "logprobs" in data and isinstance(data["logprobs"], list):
+            raw_logprobs = data["logprobs"]
+            confidence = _calculate_confidence_from_logprobs(raw_logprobs)
+        else:
+            confidence = None
+
+        return PageReading(
+            reading=cleaned_text,
+            confidence=confidence,
+            model_id=model_id,
+            model_version=model_version,
+            normalized_values={},
+        )
 
     async def extract_fields(
         self,

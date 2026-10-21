@@ -89,6 +89,7 @@ warn_return_any = true
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+exclude = ["tests/debug_q1\\.py"]
 
 # Strict type enforcement on core engine and interfaces
 [[tool.mypy.overrides]]

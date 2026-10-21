@@ -1,40 +1,40 @@
+# ruff: noqa: E501
 """Prompt templates and structured output schemas for LangGraph engine.
 
 Enforces:
-- Prompts and output schemas live in prompts/registry.yaml and are loaded from there.
-- Clean architecture: pure core with no external dependencies (only stdlib, pyyaml, and pydantic).
+- Prompts and output schemas live in prompts/registry.json and are loaded from there.
+- Clean architecture: pure core with no external dependencies (only stdlib and pydantic).
 - Structured Pydantic models for router, answer generation, explain mode points, and conflict detection.
 - Exact evidence passing: only question and evidence chunks with their IDs.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, cast
 
-import yaml
 from pydantic import BaseModel, field_validator
 
 _REGISTRY_CACHE: dict[str, Any] | None = None
 
 
+def set_prompt_registry(registry: dict[str, Any]) -> None:
+    """Explicitly inject parsed prompt registry into core."""
+    global _REGISTRY_CACHE
+    _REGISTRY_CACHE = registry
+
+
 def get_prompt_registry() -> dict[str, Any]:
-    """Load and return the central prompt registry from prompts/registry.yaml."""
+    """Return the active prompt registry.
+
+    Must be injected via set_prompt_registry() from wiring/adapters (e.g. from prompts/registry.yaml).
+    """
     global _REGISTRY_CACHE
     if _REGISTRY_CACHE is not None:
         return _REGISTRY_CACHE
-
-    candidates = [
-        Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "registry.yaml",
-        Path.cwd() / "prompts" / "registry.yaml",
-        Path.cwd().parent / "prompts" / "registry.yaml",
-    ]
-    for path in candidates:
-        if path.is_file():
-            with open(path, encoding="utf-8") as f:
-                _REGISTRY_CACHE = yaml.safe_load(f)
-                return _REGISTRY_CACHE or {}
-    raise FileNotFoundError("prompts/registry.yaml not found in candidate paths")
+    raise RuntimeError(
+        "Prompt registry has not been initialized. "
+        "Load prompts/registry.yaml outside app/core and inject using set_prompt_registry()."
+    )
 
 
 def load_prompt_template(prompt_id: str, version: str | None = None) -> str:
@@ -247,9 +247,7 @@ def format_answer_prompt(
             "listing the exact values from the table)"
         )
     elif mode == "exact":
-        mode_description = (
-            "exact (Provide the verbatim stored span or direct code/identifier from evidence with minimal framing)"
-        )
+        mode_description = "exact (Provide the verbatim stored span or direct code/identifier from evidence with minimal framing)"
     elif mode == "explain":
         mode_description = (
             "explain (Provide a structured summary as a list of 'points'. Output must populate 'points' with objects "

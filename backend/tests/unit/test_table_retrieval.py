@@ -84,6 +84,12 @@ class StubTableRetriever(Retriever):
         _ = (tenant_ctx, heading_limit)
         return {"titles": ["accepted_plans.csv"], "headings": ["Accepted Plans"]}
 
+    async def get_neighbouring_chunks(
+        self, tenant_ctx: TenantContext, chunk_ids: list[str]
+    ) -> list[EvidenceId]:
+        _ = (tenant_ctx, chunk_ids)
+        return []
+
 
 @pytest.fixture
 def table_context() -> GraphRuntimeContext:

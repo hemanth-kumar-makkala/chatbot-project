@@ -74,6 +74,12 @@ class StubInventoryRetriever(Retriever):
         _ = tenant_ctx
         return {"titles": self.titles, "headings": self.headings[:heading_limit]}
 
+    async def get_neighbouring_chunks(
+        self, tenant_ctx: Any, chunk_ids: list[str]
+    ) -> list[EvidenceId]:
+        _ = (tenant_ctx, chunk_ids)
+        return []
+
 
 class TrackingModelProvider:
     """Model provider stub that tracks invocation count."""

@@ -168,6 +168,7 @@ class PyPdfiumDocumentSplitter(DocumentSplitter):
                             image_area_ratio=round(image_area_ratio, 4),
                             width_pts=pw,
                             height_pts=ph,
+                            text_content=raw_text if has_text_layer else None,
                         )
                     )
 

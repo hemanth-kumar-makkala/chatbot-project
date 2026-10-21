@@ -169,6 +169,7 @@ class PageArtifact(BaseModel):
     image_area_ratio: float = 0.0
     width_pts: float | None = None
     height_pts: float | None = None
+    text_content: str | None = None
 
 
 class TableData(BaseModel):
