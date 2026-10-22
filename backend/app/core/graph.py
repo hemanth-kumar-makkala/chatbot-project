@@ -1684,7 +1684,7 @@ async def node_respond(
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
         status = state.get("status", "completed")
-        if status in ("in_progress", "completed", "extracted"):
+        if status in ("in_progress", "completed"):
             status = "answered"
         return {"status": status}
 

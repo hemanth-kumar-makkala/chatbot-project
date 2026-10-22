@@ -35,11 +35,21 @@
     - **Invariant 6 Enforcement**: Unreadable fields stay strictly blank (`value=None`) and flagged with `FieldState.UNREADABLE`. Guessing or writing non-None value raises `ValueError` in `ExtractedField.__post_init__` and `node_validate_fields`. Disagreeing readings force `FieldState.CONFLICTING` with `value=None` and both readings preserved.
     - **Field Validators (`app/core/extraction/validators.py`)**: Pinned validators for dates (calendar day and month bounds), IDs/MRN/phone/fax, and CMS 10-digit NPI check digits using the Luhn algorithm with `80840` prefix.
     - **Proving Test**: `backend/tests/unit/test_field_state_engine.py` (11/11 pass in 0.08s).
-  - **Phase 4 Smoke Check (Desktop-GPU Profile & Throwaway Database)** — **COMPLETED & VERIFIED**
-    - Ran `backend/tests/smoke_phase4_extraction.py` on real desktop-gpu profile against `evals/golden/docs/skewed_fax.pdf` and `evals/golden/docs/faint_fax_2page.pdf`.
-    - Applied migrations through 0012 to isolated throwaway DB (`cka_test_throwaway_*`), seeded tenant and session documents, executed extraction subgraph, and persisted `extraction_results`.
-    - Evaluated 17 total fields across both documents; verified zero chunks created in knowledge index (Invariant 7).
-    - Unreadable fields that received a value: **0** (strictly verified).
+  - **Phase 4 Real-Model Extraction Verification (Docling OCR & Ollama qwen3-vl:4b)** — **COMPLETED & VERIFIED**
+    - **Real-Model Smoke Script (`backend/tests/smoke_phase4_extraction.py`)**:
+      - Executed real Docling EasyOCR (`DoclingDocumentParser`, `device="cuda"`) for Read 1 and real Ollama `qwen3-vl:4b` structured JSON vision extraction for Read 2 on `skewed_fax.pdf` (1 page) and `faint_fax_2page.pdf` (2 pages).
+      - **Benchmarks & Timing**:
+        - `skewed_fax.pdf`: 1 Ollama call, Docling OCR = 18.07s, Ollama Vision = 41.62s.
+        - `faint_fax_2page.pdf`: 2 Ollama calls, Docling OCR = 3.15s/page avg, Ollama Vision = 18.06s/page avg (Total: 21.22s/page avg across 2 pages).
+      - **Field Reconciliations & Grounding**:
+        - `skewed_fax.pdf`: Docling OCR read `Amoxicillin 5oOmg` (EasyOCR letter misread), Ollama Vision read `Amoxicillin 500mg`. Correctly reconciled to `FieldState.CONFLICTING` with `value=None` and both readings preserved. `prescriber_signature` correctly classified `FieldState.UNREADABLE` (`value=None`).
+        - `faint_fax_2page.pdf`: `pain_scale_score` read `7/10` by both Docling and Ollama, reconciled to `FieldState.FILLED_HIGH` (`value="7/10"`). `prescriber_signature` classified `FieldState.UNREADABLE` (`value=None`).
+      - **Bug 3 Fix (CONFLICTING vs UNREADABLE)**: Fixed logic in `backend/app/core/extraction/dual_read.py` where disagreeing readings were prematurely marked UNREADABLE due to sub-0.70 confidence or token overlap; disagreeing readings now strictly result in `FieldState.CONFLICTING` with both readings kept and `value=None`. Added unit test in `backend/tests/unit/test_dual_read_compare.py` (6/6 tests pass).
+      - **Invariants 6 & 7 Verified on Real Models**:
+        - Total fields evaluated: 20.
+        - Unreadable fields that received a value: **0** (Invariant 6 strictly enforced).
+        - Chunks created in knowledge index for session uploads: **0** (Invariant 7 verified in throwaway database).
+      - **Graph Contract & E2E Tests**: `backend/tests/unit/test_graph_contracts.py` (15/15 passed) and `backend/tests/integration/test_graph_end_to_end.py` (8/8 passed) pass cleanly. Full Phase 4 test suite: 55/55 passed in 1.82s.
   - **Task UI-Shell: Workspace & Multi-Assistant App Shell Rebuild (ADR-0014)** — **COMPLETED & VERIFIED**
     - **ADR-0014 Adopted**: Replaced "no admin dashboards; the Knowledge page is the only admin screen" with a workspace Assistants page (`/assistants`), Workspace Settings (`/settings`), and per-assistant pages (Home, Data sources, Instructions, Guardrails, Actions placeholder, Conversations, Settings).
     - **Monochrome Theme Active**: Archived teal theme to `web/styles/themes/teal/tokens.css`. Active theme `web/styles/themes/default/tokens.css` is black & white (#111111, #FAFAFA, #FFFFFF, #E5E5E5, status tints). Verified via `theme.test.ts` (19/19 tests pass; contrast table verified).

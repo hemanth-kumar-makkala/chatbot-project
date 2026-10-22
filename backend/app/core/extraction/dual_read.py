@@ -81,8 +81,10 @@ def dual_read_compare(
 
         display_name = key
 
-        # 1. Unreadable Check (Invariant 6: blank and flagged, NEVER guessed)
-        if _is_unreadable_token(val1) or _is_unreadable_token(val2) or conf < 0.70:
+        # 1. Unreadable Check: UNREADABLE is only for a field neither reading can read (Invariant 6)
+        u1 = _is_unreadable_token(val1)
+        u2 = _is_unreadable_token(val2)
+        if (u1 and u2) or (u1 and val2 is None) or (u2 and val1 is None):
             extracted.append(
                 ExtractedField(
                     name=display_name,
@@ -223,14 +225,16 @@ def _check_values_agree(key: str, val1: str, val2: str) -> bool:
         clean2 = re.sub(r"\D", "", val2)
         return clean1 == clean2
 
-    # 4. Dosage / Number comparison
-    if (
-        "dosage" in k_lower
-        or "strength" in k_lower
-        or "refill" in k_lower
-        or "quantity" in k_lower
-        or "pain" in k_lower
-    ):
+    # 4. Pain scale / Score comparison (e.g. 7/10 vs 1/10)
+    if "pain" in k_lower or "score" in k_lower or "scale" in k_lower:
+        m1 = re.search(r"\b(\d+)(?:\s*/\s*(\d+))?\b", val1)
+        m2 = re.search(r"\b(\d+)(?:\s*/\s*(\d+))?\b", val2)
+        if m1 and m2:
+            return m1.group(1) == m2.group(1) and m1.group(2) == m2.group(2)
+        return False
+
+    # 5. Dosage / Number comparison
+    if "dosage" in k_lower or "strength" in k_lower or "refill" in k_lower or "quantity" in k_lower:
         nums1 = normalize_digits_and_numbers(val1)
         nums2 = normalize_digits_and_numbers(val2)
         if nums1 and nums2:

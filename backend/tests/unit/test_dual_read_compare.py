@@ -117,6 +117,27 @@ class TestDualReadCompare:
         assert f.value == "1982736451"
         assert f.validator_error is not None
 
+    def test_dual_read_compare_disagreeing_readings_are_conflicting_not_unreadable(self) -> None:
+        """Two readings that disagree ('7/10' vs '1/10') must be CONFLICTING, not UNREADABLE."""
+        ocr_reading = {"pain_scale_score": "7/10"}
+        vision_reading = {"pain_scale_score": "1/10"}
+        confidences = {"pain_scale_score": 0.68}
+
+        fields = dual_read_compare(
+            read1_ocr=ocr_reading,
+            read2_vision=vision_reading,
+            confidences=confidences,
+            document_title="faint_fax_2page.pdf",
+            page_number=2,
+        )
+
+        assert len(fields) == 1
+        f = fields[0]
+        assert f.state == FieldState.CONFLICTING
+        assert f.value is None
+        assert f.read1_value == "7/10"
+        assert f.read2_value == "1/10"
+
 
 @pytest.mark.asyncio
 class TestExtractionSubgraphInvocation:

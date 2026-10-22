@@ -2464,3 +2464,61 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Unreadable Fields That Received a Value: 0 (must be 0: PASSED)
   - Chunks Created in Knowledge Index: 0 (must be 0: Invariant 7 PASSED)
 - **Static Analysis**: `ruff check`, `ruff format --check`, and `mypy` pass cleanly with zero errors across all changed source files.
+
+---
+
+### [2026-10-22] Phase 4 Verification on Real Models (Docling OCR & Ollama Vision) & Bug 3 Fix
+
+- **Task Scope**:
+  - Verified Phase 4 Tasks 4.2 to 4.5 on real hardware models (`desktop-gpu` profile, NVIDIA RTX 3050 6 GB).
+  - Executed real Docling OCR (`EasyOCR` on CUDA) for Read 1 and real Ollama `qwen3-vl:4b` structured JSON vision extraction for Read 2 on golden test PDFs: `skewed_fax.pdf` (1 page) and `faint_fax_2page.pdf` (2 pages).
+  - Fixed Bug 3: Two readings that disagree ("7/10" vs "1/10") must be `CONFLICTING` with both readings kept, not `UNREADABLE`. `UNREADABLE` is only for a field neither reading can read.
+  - Verified graph integration contract tests: `test_graph_contracts.py` and `test_graph_end_to_end.py`.
+- **Bug 3 Resolution (`backend/app/core/extraction/dual_read.py`)**:
+  - Root cause 1: premature `conf < 0.70` check forced `UNREADABLE` on disagreeing fields before conflict evaluation.
+  - Root cause 2: numerical token overlap in `normalize_digits_and_numbers` caused false agreements between `"7/10"` and `"1/10"`. Added dedicated score/pain scale regex comparator (`r"\b(\d+)(?:\s*/\s*(\d+))?\b"`).
+  - Root cause 3: tightened `_is_unreadable_token` check so `UNREADABLE` is assigned strictly when neither reading can read the field (`(u1 and u2) or (u1 and val2 is None) or (u2 and val1 is None)`).
+  - Added unit test `test_dual_read_compare_disagreeing_readings_are_conflicting_not_unreadable` in `backend/tests/unit/test_dual_read_compare.py`. All 6 tests pass in 0.47s.
+- **Real Model Smoke Check Results (`backend/tests/smoke_phase4_extraction.py`)**:
+  - **Document 1 (`skewed_fax.pdf`, 1 page)**:
+    - Number of Ollama calls: 1
+    - Seconds per page: Docling OCR = 18.07s, Ollama Vision = 41.62s
+    - Raw OCR text (first 300 chars): `'* * * SYNTHETIC TEST DOCUMENT * * * TRANSMISSION CONFIDENTIAL MEDICAL RECORD FACSIMILE\n\nNOTICE - PEDIATRIC &amp; ADULT URGENT CARE TRANSMISSION Date: 2026-02-14 Attn: Pharmacy Dispensing Coordinator Clinic Phone: 555-0145\n\nPrescription Refill Authorization: approved for Amoxicillin 5oOmg Dr. Evelyn '`
+    - Raw Vision text (first 300 chars): `'{"patient_name": "Alex Morgan", "attending_physician": "Dr. Evelyn Reed", "prescription_dosage": "Take 1 capsule by mouth three times daily for 10 days.", "chart_number": "MRN-4412-A", "authorized_medication": "Amoxicillin 500mg", "prescriber_npi": null, "prescriber_signature": null}'`
+    - Reconciled fields:
+      - `patient_name`: FILLED_HIGH ("Alex Morgan")
+      - `attending_physician`: FILLED_HIGH ("Dr. Evelyn Reed")
+      - `prescription_dosage`: FILLED_HIGH ("Take 1 capsule by mouth three times daily for 10 days.")
+      - `chart_number`: FILLED_HIGH ("MRN-4412-A")
+      - `authorized_medication`: CONFLICTING (value=None, Read 1="Amoxicillin 5oOmg", Read 2="Amoxicillin 500mg")
+      - `authorization_date`: FILLED_MEDIUM ("2026-02-14")
+      - `refill_count`: FILLED_MEDIUM ("0")
+      - `clinic_phone`: FILLED_MEDIUM ("555-0145")
+      - `prescriber_signature`: UNREADABLE (value=None)
+      - `prescriber_npi`: NOT_PRESENT (value=None)
+  - **Document 2 (`faint_fax_2page.pdf`, 2 pages)**:
+    - Number of Ollama calls: 2 (1 per page)
+    - Seconds per page (avg across 2 pages): Docling OCR = 3.15s/page, Ollama Vision = 18.06s/page (Total: 21.22s/page avg)
+    - Raw OCR text (first 300 chars): `'SYNTHETIC TEST DOCUMENT * * *\n\nADVANCED RADIOLOGY ALLIANCE ORDER CONFIRMATION Referring Provider Phone: 555-0170 Date: 2026-02-18\n\nDiagnostic Order Details: Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor. Appointment Date: 2026-03-01 at 09.30 AM Facility Location: Imaging '`
+    - Raw Vision text (first 300 chars): `'{"patient_name": "Jordan Taylor", "procedure_ordered": "MRI lumbar spine", "ordering_physician": null, "appointment_date": "2026-03-01", "clinical_justification": null, "pain_scale_score": null, "prescriber_npi": null}\n\n--- Page Break ---\n\n{"patient_name": null, "procedure_ordered": null, "ordering_'`
+    - Reconciled fields:
+      - `patient_name`: FILLED_HIGH ("Jordan Taylor")
+      - `procedure_ordered`: FILLED_HIGH ("MRI lumbar spine")
+      - `appointment_date`: FILLED_HIGH ("2026-03-01")
+      - `facility_location`: FILLED_MEDIUM ("Imaging Suite B")
+      - `referring_phone`: FILLED_MEDIUM ("555-0170")
+      - `clinical_justification`: CONFLICTING (value=None, Read 1="With radiculopathy", Read 2="chronic lower back pain with radiculopathy...")
+      - `pain_scale_score`: FILLED_HIGH ("7/10")
+      - `ordering_physician`: FILLED_MEDIUM ("Dr. Evelyn Reed")
+      - `prescriber_signature`: UNREADABLE (value=None)
+      - `prescriber_npi`: NOT_PRESENT (value=None)
+  - **Invariant Assertions**:
+    - Total fields evaluated: 20
+    - Unreadable fields that received a value: **0** (Invariant 6 strictly enforced).
+    - Chunks created in knowledge index for session uploads: **0** (Invariant 7 verified).
+- **Proving Tests**:
+  - `backend/tests/unit/test_graph_contracts.py`: 15 passed in 0.73s
+  - `backend/tests/integration/test_graph_end_to_end.py`: 8 passed in 0.22s
+  - `backend/tests/unit/test_dual_read_compare.py`: 6 passed in 0.47s
+  - Total Phase 4 test suite: 55 passed in 1.82s.
+- **Static Analysis & Pre-commit**: `pre-commit run --files` clean across all modified files.
