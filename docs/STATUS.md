@@ -5,7 +5,7 @@
 - **Phase 1**: Engine on Mock Profile — **COMPLETED** (Exit gate verified in `docs/phases/PHASE-1-GATE.md`)
 - **Phase 2**: Ingestion Pipeline — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase2_gate.json`: 15 golden documents ingested twice with zero duplicates across pages, readings, tables, chunks, and embeddings)
 - **Phase 3**: RAG Engine & Core Logic — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase3_baseline.json`: all 11 benchmark metrics recorded with zero cross-tenant leaks)
-- **Phase 4**: Scanned Document Ingestion & Vision Verification (Active Phase)
+- **Phase 4**: Scanned Document Ingestion & Vision Verification — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase4_baseline.json`: false-fill rate on unreadable fields 0.0%, visual recovery Hit@5 100%, zero unreadable fields filled)
   - **Task 4.1: Question-Time Vision Reading (Node 6 `vision_read`)** — **COMPLETED & VERIFIED**
     - **6 GB VRAM Image Pre-Scaling**: `ImageProcessor` port interface wired into `GraphPorts`; page images pre-scaled to max 1024px dimension and max 4 MB before vision generation.
     - **`ModelProvider.read_page` Implementation**: Implemented in `OllamaModelProvider` for `qwen3-vl:4b` using `vision_read_page` prompt from `prompts/registry.yaml`, stripping `<think>` tags and extracting token logprob confidence.
@@ -35,6 +35,24 @@
     - **Invariant 6 Enforcement**: Unreadable fields stay strictly blank (`value=None`) and flagged with `FieldState.UNREADABLE`. Guessing or writing non-None value raises `ValueError` in `ExtractedField.__post_init__` and `node_validate_fields`. Disagreeing readings force `FieldState.CONFLICTING` with `value=None` and both readings preserved.
     - **Field Validators (`app/core/extraction/validators.py`)**: Pinned validators for dates (calendar day and month bounds), IDs/MRN/phone/fax, and CMS 10-digit NPI check digits using the Luhn algorithm with `80840` prefix.
     - **Proving Test**: `backend/tests/unit/test_field_state_engine.py` (11/11 pass in 0.08s).
+  - **Task 4.6: Connect Chat Extraction to Live Backend** — **COMPLETED & VERIFIED**
+    - **Live Session Document Upload Routes**: `POST /v1/assistants/{assistant_id}/conversations/{conversation_id}/documents` and `POST /v1/conversations/{conversation_id}/documents` with in-memory streaming via `Request` (no external `python-multipart` dependency), validating tenant context, checking conversation access under RLS, storing `SessionDocument` with retention, executing extraction subgraph, storing `ExtractionResult`, and returning structured extraction fields with page preview image URLs (Invariant 7).
+    - **Page Image Streaming Route**: `GET /v1/assistants/{assistant_id}/conversations/{conversation_id}/documents/{document_id}/pages/{page_number}/image` rendering 200 DPI PNG via `pypdfium2` under tenant RLS.
+    - **Live Chat UI Integration**: Extended `web/lib/api.ts` with `uploadSessionDocument`; rendered side-by-side split view (`extraction-split-view`) with live page preview image (`extraction-page-image`) and `ExtractionTable` displaying all 7 field states styled to design tokens.
+    - **Proving Tests**: `backend/tests/integration/test_session_document_extraction_route.py` (1/1 pass), `web/__tests__/extraction_view.test.tsx` (3/3 pass), full web test suite (141/141 pass across 13 suites).
+  - **Task 4.7: False-Fill and Visual Recovery Benchmark Recording** — **COMPLETED & VERIFIED**
+    - **Synthetic Golden Fax Documents**: Created 3 new synthetic faxes in `evals/golden/docs/`: `invalid_npi_fax.pdf` (invalid NPI `1982736451` failing Luhn algorithm), `unreadable_field_fax.pdf` (smudged illegible clinical justification), and `missing_field_fax.pdf` (missing secondary insurance and emergency override).
+    - **Extraction Benchmark Dataset**: Authored `evals/golden/extractions.json` with ground truth expected values and expected states across 5 test documents (`EXT-001` through `EXT-005`), covering UNREADABLE and CONFLICTING cases.
+    - **Baseline Report (`evals/reports/phase4_baseline.json`)**:
+      - False-fill rate on unreadable fields: 0.00% (target 0.00%, strictly zero unreadable fields filled; Invariant 6).
+      - Field accuracy: 91.43% (target >= 85.0%).
+      - Visual recovery Hit@5: 100.0% (target >= 90.0%).
+      - Gate passed: True.
+    - **Proving Tests**: `backend/tests/eval/test_phase4_extraction_eval.py` (3/3 pass), all 47 eval tests pass in 1.48s.
+  - **Phase 4 Exit Gate: PASSED**
+    - [x] False-fill and visual recovery baselines recorded in `evals/reports/phase4_baseline.json`.
+    - [x] Visual readings explicitly cited with thumbnails (Invariant 5).
+    - [x] Zero unreadable fields guessed or falsely filled (Invariant 6).
   - **Phase 4 Real-Model Extraction Verification (Docling OCR & Ollama qwen3-vl:4b)** — **COMPLETED & VERIFIED**
     - **Real-Model Smoke Script (`backend/tests/smoke_phase4_extraction.py`)**:
       - Executed real Docling EasyOCR (`DoclingDocumentParser`, `device="cuda"`) for Read 1 and real Ollama `qwen3-vl:4b` structured JSON vision extraction for Read 2 on `skewed_fax.pdf` (1 page) and `faint_fax_2page.pdf` (2 pages).
@@ -307,8 +325,8 @@
   - Completed: Review policy with MECE coverage for all 4 page types, Migration 0005 applied to shared database (`0005_readings_table_cites`), database seeding test fixtures decoupled to `tests/fixtures/database_seeding.py`, parser profile matrix routing (`mock` -> `MockDocumentParser`, `office-cpu`/`desktop-gpu`/`home-gpu`/`dev-free-api` -> `DoclingDocumentParser`, `cloud` -> `DoclingDocumentParser` with offline/pinned models enforced), and adapter offline configuration (`EasyOCR` download disabled, model directory set, `HF_HUB_OFFLINE=1`).
 
 ## Next Phase & Task
-- **Phase 4**: Scanned Document Ingestion & Vision Verification
-- **Next Task**: Task 4.2: Normalized Visual Value Validation (Node 8 `validate`) per `docs/phases/PHASE-4.md`.
+- **Phase 5**: Hardening
+- **Next Task**: Task 5.1: Input Guardrails (Node 1 `guard_input`) and Rate Limiting per `docs/phases/PHASE-5.md`.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.

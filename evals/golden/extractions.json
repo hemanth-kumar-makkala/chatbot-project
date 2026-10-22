@@ -1,0 +1,97 @@
+[
+  {
+    "id": "EXT-001",
+    "category": "EXTRACTION",
+    "tenant": "A",
+    "document_file": "skewed_fax.pdf",
+    "question": "Extract all structured intake fields from skewed_fax.pdf",
+    "expected_mode": "extraction",
+    "expected_answer": "Alex Morgan",
+    "expected_fields": {
+      "patient_name": {"expected_value": "Alex Morgan", "expected_state": "FILLED_HIGH"},
+      "attending_physician": {"expected_value": "Dr. Evelyn Reed", "expected_state": "FILLED_HIGH"},
+      "prescription_dosage": {"expected_value": "Take 1 capsule by mouth three times daily for 10 days.", "expected_state": "FILLED_HIGH"},
+      "chart_number": {"expected_value": "MRN-4412-A", "expected_state": "FILLED_HIGH"},
+      "authorized_medication": {"expected_value": null, "expected_state": "CONFLICTING"},
+      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_MEDIUM"},
+      "refill_count": {"expected_value": "0", "expected_state": "FILLED_MEDIUM"},
+      "clinic_phone": {"expected_value": "555-0145", "expected_state": "FILLED_MEDIUM"},
+      "prescriber_signature": {"expected_value": null, "expected_state": "UNREADABLE"},
+      "prescriber_npi": {"expected_value": null, "expected_state": "NOT_PRESENT"}
+    },
+    "notes": "Extraction baseline for skewed fax including conflicting medication and unreadable signature"
+  },
+  {
+    "id": "EXT-002",
+    "category": "EXTRACTION",
+    "tenant": "A",
+    "document_file": "faint_fax_2page.pdf",
+    "question": "Extract all structured intake fields from faint_fax_2page.pdf",
+    "expected_mode": "extraction",
+    "expected_answer": "Jordan Taylor",
+    "expected_fields": {
+      "patient_name": {"expected_value": "Jordan Taylor", "expected_state": "FILLED_HIGH"},
+      "procedure_ordered": {"expected_value": "MRI lumbar spine", "expected_state": "FILLED_HIGH"},
+      "appointment_date": {"expected_value": "2026-03-01", "expected_state": "FILLED_HIGH"},
+      "facility_location": {"expected_value": "Imaging Suite B", "expected_state": "FILLED_MEDIUM"},
+      "referring_phone": {"expected_value": "555-0170", "expected_state": "FILLED_MEDIUM"},
+      "clinical_justification": {"expected_value": null, "expected_state": "CONFLICTING"},
+      "pain_scale_score": {"expected_value": "7/10", "expected_state": "FILLED_HIGH"},
+      "ordering_physician": {"expected_value": "Dr. Evelyn Reed", "expected_state": "FILLED_MEDIUM"},
+      "prescriber_signature": {"expected_value": null, "expected_state": "UNREADABLE"},
+      "prescriber_npi": {"expected_value": null, "expected_state": "NOT_PRESENT"}
+    },
+    "notes": "Extraction baseline for faint fax including conflicting justification and unreadable signature"
+  },
+  {
+    "id": "EXT-003",
+    "category": "EXTRACTION",
+    "tenant": "A",
+    "document_file": "invalid_npi_fax.pdf",
+    "question": "Extract all structured intake fields from invalid_npi_fax.pdf",
+    "expected_mode": "extraction",
+    "expected_answer": "Casey Bennett",
+    "expected_fields": {
+      "patient_name": {"expected_value": "Casey Bennett", "expected_state": "FILLED_HIGH"},
+      "authorized_medication": {"expected_value": "Amoxicillin 500mg", "expected_state": "FILLED_HIGH"},
+      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
+      "chart_number": {"expected_value": "MRN-1102-K", "expected_state": "FILLED_HIGH"},
+      "prescriber_npi": {"expected_value": "1982736451", "expected_state": "INVALID"}
+    },
+    "notes": "Extraction test covering invalid NPI check digit failing Luhn validation"
+  },
+  {
+    "id": "EXT-004",
+    "category": "EXTRACTION",
+    "tenant": "A",
+    "document_file": "unreadable_field_fax.pdf",
+    "question": "Extract all structured intake fields from unreadable_field_fax.pdf",
+    "expected_mode": "extraction",
+    "expected_answer": "Taylor Hayes",
+    "expected_fields": {
+      "patient_name": {"expected_value": "Taylor Hayes", "expected_state": "FILLED_HIGH"},
+      "authorized_medication": {"expected_value": "Lisinopril 10mg", "expected_state": "FILLED_HIGH"},
+      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
+      "clinical_justification": {"expected_value": null, "expected_state": "UNREADABLE"},
+      "prescriber_npi": {"expected_value": "1234567893", "expected_state": "FILLED_HIGH"}
+    },
+    "notes": "Extraction test covering unreadable smudged justification field with zero false fill"
+  },
+  {
+    "id": "EXT-005",
+    "category": "EXTRACTION",
+    "tenant": "A",
+    "document_file": "missing_field_fax.pdf",
+    "question": "Extract all structured intake fields from missing_field_fax.pdf",
+    "expected_mode": "extraction",
+    "expected_answer": "Morgan Bailey",
+    "expected_fields": {
+      "patient_name": {"expected_value": "Morgan Bailey", "expected_state": "FILLED_HIGH"},
+      "authorized_medication": {"expected_value": "Atorvastatin 20mg", "expected_state": "FILLED_HIGH"},
+      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
+      "secondary_insurance": {"expected_value": null, "expected_state": "NOT_PRESENT"},
+      "emergency_override": {"expected_value": null, "expected_state": "NOT_APPLICABLE"}
+    },
+    "notes": "Extraction test covering missing fields and not applicable override"
+  }
+]

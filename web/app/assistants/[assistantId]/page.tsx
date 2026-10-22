@@ -18,6 +18,7 @@ import {
 import {
   askQuestion,
   getCurrentUser,
+  uploadSessionDocument,
   type QuestionResponse,
   type SourceCitation,
   type User,
@@ -26,6 +27,16 @@ import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 interface HomePageProps {
   params: Promise<{ assistantId: string }>;
+}
+
+interface AttachedDocument {
+  filename: string;
+  title: string;
+  description?: string;
+  page_count: number;
+  preview_page?: number;
+  image_stem?: string;
+  path?: string;
 }
 
 interface ChatMessage {
@@ -56,10 +67,12 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   const [liveSourceWarning, setLiveSourceWarning] = useState(false);
 
   // Session upload & extraction state (Invariant 7)
-  const [attachedDoc, setAttachedDoc] = useState<GoldenFaxDocument | null>(null);
+  const [attachedDoc, setAttachedDoc] = useState<AttachedDocument | null>(null);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
   const [liveAttachWarningOpen, setLiveAttachWarningOpen] = useState(false);
   const [arbitraryFileError, setArbitraryFileError] = useState<string | null>(null);
+  const [liveExtractionError, setLiveExtractionError] = useState<string | null>(null);
+  const liveFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Feedback state (Task 5.5)
   const [feedbackMap, setFeedbackMap] = useState<
@@ -106,6 +119,68 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     }
   }, [messages, isSubmitting]);
 
+  async function handleLiveFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLiveAttachWarningOpen(false);
+    setLiveExtractionError(null);
+
+    const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
+    const res = await uploadSessionDocument(assistantId, activeConvId, file);
+    if (!res.ok) {
+      setLiveExtractionError(res.code || "UPLOAD_FAILED");
+      return;
+    }
+
+    setAttachedDoc({
+      filename: res.data.file_name,
+      title: res.data.file_name,
+      page_count: res.data.page_count,
+      path: res.data.page_image_url,
+    });
+
+    const userMsg: ChatMessage = {
+      id: `msg-${Date.now()}-u`,
+      role: "user",
+      content: `Attached session document: ${res.data.file_name}`,
+    };
+
+    const extractionResp: QuestionResponse = {
+      request_id: `req-${Date.now()}`,
+      tenant_id: "",
+      conversation_id: res.data.conversation_id,
+      message_id: `msg-${Date.now()}-a`,
+      status: "answered",
+      answer: "Extracted document fields via dual-read extraction subgraph.",
+      citations: [],
+      evidence_type: "extraction",
+      extracted_fields: res.data.extracted_fields,
+      sources: [
+        {
+          document_title: res.data.file_name,
+          page_number: 1,
+          version: "1",
+          evidence_type: "visual",
+          version_id: res.data.page_image_url,
+        },
+      ],
+      status_lines: [
+        "Session document stored under Invariant 7 (strictly isolated from knowledge index)",
+        "Executed extraction subgraph: dual read compare and field state classification",
+      ],
+    };
+
+    const asstMsg: ChatMessage = {
+      id: `msg-${Date.now()}-a`,
+      role: "assistant",
+      content: extractionResp.answer,
+      response: extractionResp,
+    };
+
+    setMessages((prev) => [...prev, userMsg, asstMsg]);
+  }
+
   // "New chat" button always starts an empty conversation
   function handleNewChat() {
     setMessages([]);
@@ -118,6 +193,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setLiveAttachWarningOpen(false);
     setLiveSourceWarning(false);
     setArbitraryFileError(null);
+    setLiveExtractionError(null);
   }
 
   function handleFeedbackClick(msgId: string, rating: "up" | "down") {
@@ -399,7 +475,11 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             <div>
               <img
                 data-testid="extraction-page-image"
-                src={`/demo/pages/${stem}-p${pageNum}.png`}
+                src={
+                  attachedDoc?.path && attachedDoc.path.startsWith("/")
+                    ? attachedDoc.path
+                    : `/demo/pages/${stem}-p${pageNum}.png`
+                }
                 alt={`${docTitle} Page ${pageNum} preview`}
                 onClick={() => handleOpenSource(docTitle, pageNum)}
                 style={{
@@ -1184,12 +1264,23 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               alignItems: "center",
             }}
           >
+            {/* Live Session Upload Input */}
+            <input
+              type="file"
+              data-testid="live-file-input"
+              ref={liveFileInputRef}
+              onChange={handleLiveFileUpload}
+              accept=".pdf,image/*"
+              style={{ display: "none" }}
+            />
+
             {/* Attach Button */}
             <button
               type="button"
               data-testid="chat-attach-button"
               onClick={() => {
                 if (isLiveAssistant) {
+                  liveFileInputRef.current?.click();
                   setLiveAttachWarningOpen(true);
                 } else {
                   setAttachPickerOpen(true);
@@ -1267,6 +1358,20 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             >
               <DataSourceChip mode="demo" label="Demo" />
               <span>Session upload needs the session document route (Phase 4 Task 4.3, not built yet)</span>
+            </div>
+          )}
+
+          {liveExtractionError && (
+            <div
+              role="alert"
+              data-testid="live-extraction-error"
+              style={{
+                marginTop: "4px",
+                fontSize: "11px",
+                color: "var(--color-danger)",
+              }}
+            >
+              {liveExtractionError}
             </div>
           )}
         </div>

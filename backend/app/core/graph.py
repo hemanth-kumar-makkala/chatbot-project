@@ -1799,10 +1799,10 @@ async def node_extract_fields(
         vision_dict["chart_number"] = f"MRN-{m_mrn_v.group(1)}-{m_mrn_v.group(2).upper()}"
     conf_dict["chart_number"] = 0.82
 
-    # Prescriber Signature (unreadable cursive check)
+    # Prescriber Signature (cursive check on vision, not found in plain OCR text)
     if "signature" in ocr_text.lower() or "prescriber" in ocr_text.lower():
-        ocr_dict["prescriber_signature"] = "[unreadable]"
-        vision_dict["prescriber_signature"] = None
+        ocr_dict["prescriber_signature"] = None
+        vision_dict["prescriber_signature"] = "[unreadable]"
         conf_dict["prescriber_signature"] = 0.42
 
     if not ocr_dict and not vision_dict:

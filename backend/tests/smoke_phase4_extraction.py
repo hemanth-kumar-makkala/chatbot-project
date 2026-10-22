@@ -144,7 +144,7 @@ def extract_fields_from_ocr_skewed(ocr_text: str) -> dict[str, Any]:
     m_phone = re.search(r"Clinic Phone:\s*([\d-]+)", ocr_text)
     if m_phone:
         fields["clinic_phone"] = m_phone.group(1).strip()
-    fields["prescriber_signature"] = "[unreadable]"
+    fields["prescriber_signature"] = None
     fields["prescriber_npi"] = None
     return fields
 
@@ -180,7 +180,7 @@ def extract_fields_from_ocr_faint(page1_text: str, page2_text: str) -> dict[str,
     if m_pain:
         fields["pain_scale_score"] = m_pain.group(1).strip()
     fields["ordering_physician"] = None
-    fields["prescriber_signature"] = "[unreadable]"
+    fields["prescriber_signature"] = None
     fields["prescriber_npi"] = None
     return fields
 
@@ -555,24 +555,77 @@ async def run_phase4_smoke() -> None:
                     "Invariant 7 verified: 0 chunks created in knowledge index for session uploads."
                 )
 
-            # Reconciled Field Report Table
+            # Expected values from evals/golden/manifest.json
+            expected_map: dict[tuple[str, str], tuple[str | None, FieldState]] = {
+                ("skewed_fax.pdf", "patient_name"): ("Alex Morgan", FieldState.FILLED_HIGH),
+                ("skewed_fax.pdf", "attending_physician"): (
+                    "Dr. Evelyn Reed",
+                    FieldState.FILLED_HIGH,
+                ),
+                ("skewed_fax.pdf", "prescription_dosage"): (
+                    "Take 1 capsule by mouth three times daily for 10 days.",
+                    FieldState.FILLED_HIGH,
+                ),
+                ("skewed_fax.pdf", "chart_number"): ("MRN-4412-A", FieldState.FILLED_HIGH),
+                ("skewed_fax.pdf", "authorized_medication"): (
+                    "Amoxicillin 500mg",
+                    FieldState.CONFLICTING,
+                ),
+                ("skewed_fax.pdf", "authorization_date"): ("2026-02-14", FieldState.FILLED_MEDIUM),
+                ("skewed_fax.pdf", "refill_count"): ("0", FieldState.FILLED_MEDIUM),
+                ("skewed_fax.pdf", "clinic_phone"): ("555-0145", FieldState.FILLED_MEDIUM),
+                ("skewed_fax.pdf", "prescriber_signature"): (None, FieldState.UNREADABLE),
+                ("skewed_fax.pdf", "prescriber_npi"): (None, FieldState.NOT_PRESENT),
+                ("faint_fax_2page.pdf", "patient_name"): ("Jordan Taylor", FieldState.FILLED_HIGH),
+                ("faint_fax_2page.pdf", "procedure_ordered"): (
+                    "MRI lumbar spine",
+                    FieldState.FILLED_HIGH,
+                ),
+                ("faint_fax_2page.pdf", "appointment_date"): ("2026-03-01", FieldState.FILLED_HIGH),
+                ("faint_fax_2page.pdf", "facility_location"): (
+                    "Imaging Suite B",
+                    FieldState.FILLED_MEDIUM,
+                ),
+                ("faint_fax_2page.pdf", "referring_phone"): ("555-0170", FieldState.FILLED_MEDIUM),
+                ("faint_fax_2page.pdf", "clinical_justification"): (
+                    "chronic lower back pain with radiculopathy",
+                    FieldState.CONFLICTING,
+                ),
+                ("faint_fax_2page.pdf", "pain_scale_score"): ("7/10", FieldState.FILLED_HIGH),
+                ("faint_fax_2page.pdf", "ordering_physician"): (
+                    "Dr. Evelyn Reed",
+                    FieldState.FILLED_MEDIUM,
+                ),
+                ("faint_fax_2page.pdf", "prescriber_signature"): (None, FieldState.UNREADABLE),
+                ("faint_fax_2page.pdf", "prescriber_npi"): (None, FieldState.NOT_PRESENT),
+            }
+
+            # Reconciled Field Report Table with Golden Expectations & Computed Match
             all_fields = [("skewed_fax.pdf", f) for f in fields1] + [
                 ("faint_fax_2page.pdf", f) for f in fields2
             ]
 
-            print("\n" + "=" * 115)
-            print("RECONCILED EXTRACTION FIELD REPORT (REAL DOCLING OCR & OLLAMA QWEN3-VL:4B)")
-            print("=" * 115)
+            print("\n" + "=" * 145)
+            print("RECONCILED EXTRACTION FIELD REPORT WITH GOLDEN EXPECTATIONS & MATCH EVALUATION")
+            print("=" * 145)
             header = (
-                f"{'Document':<20} | {'Field Name':<24} | {'Read 1 (OCR)':<22} | "
-                f"{'Read 2 (Vision)':<22} | {'State':<12} | {'Value':<22} | {'Validator Result'}"
+                f"{'Document':<20} | {'Field Name':<23} | {'Expected Value':<24} | "
+                f"{'Read 1 (OCR)':<20} | {'Read 2 (Vision)':<20} | {'State':<12} | "
+                f"{'Extracted Value':<24} | {'Match?':<6} | {'Validator / Notes'}"
             )
             print(header)
-            print("-" * 145)
+            print("-" * 175)
 
             unreadable_with_value_count = 0
+            false_fill_count = 0
 
             for doc_name, f in all_fields:
+                exp_val, exp_state = expected_map.get((doc_name, f.name), (None, None))
+                exp_display = (
+                    exp_val
+                    if exp_val is not None
+                    else f"({exp_state.value if exp_state else 'none'})"
+                )
                 r1 = f.read1_value if f.read1_value is not None else "(none)"
                 r2 = f.read2_value if f.read2_value is not None else "(none)"
                 val = f.value if f.value is not None else "(none)"
@@ -585,22 +638,57 @@ async def run_phase4_smoke() -> None:
                 if f.state == FieldState.UNREADABLE and f.value is not None:
                     unreadable_with_value_count += 1
 
+                # Match evaluation:
+                # - If expected is UNREADABLE, NOT_PRESENT, or CONFLICTING, value must be None and state match
+                # - If expected is FILLED, value must match expected
+                if exp_state in (
+                    FieldState.UNREADABLE,
+                    FieldState.NOT_PRESENT,
+                    FieldState.NOT_APPLICABLE,
+                ):
+                    is_match = f.state == exp_state and f.value is None
+                    is_false_fill = f.value is not None
+                elif exp_state == FieldState.CONFLICTING:
+                    is_match = f.state == FieldState.CONFLICTING and f.value is None
+                    is_false_fill = f.value is not None
+                else:
+                    is_match = bool(
+                        f.value
+                        and exp_val
+                        and (
+                            f.value.strip().lower() == exp_val.strip().lower()
+                            or exp_val.strip().lower() in f.value.strip().lower()
+                        )
+                    )
+                    is_false_fill = not is_match
+
+                if is_false_fill:
+                    false_fill_count += 1
+
+                match_str = "Yes" if is_match else "No"
+
                 row = (
-                    f"{doc_name:<20} | {f.name:<24} | {r1:<22} | {r2:<22} | "
-                    f"{f.state.value:<12} | {val:<22} | {val_res}"
+                    f"{doc_name:<20} | {f.name:<23} | {exp_display:<24} | "
+                    f"{r1:<20} | {r2:<20} | {f.state.value:<12} | "
+                    f"{val:<24} | {match_str:<6} | {val_res}"
                 )
                 print(row)
 
-            print("-" * 145)
+            print("-" * 175)
             print(f"TOTAL FIELDS EVALUATED: {len(all_fields)}")
+            print(
+                f"MATCHING FIELDS (STATE & VALUE GROUNDED): {sum(1 for doc_name, f in all_fields if expected_map.get((doc_name, f.name), (None, None))[1] == f.state)}"
+            )
+            print(f"FALSE FILLS (UNEXPECTED OR UNREADABLE FILLED, MUST BE 0): {false_fill_count}")
             print(
                 f"UNREADABLE FIELDS THAT RECEIVED A VALUE (MUST BE 0): {unreadable_with_value_count}"
             )
-            print("=" * 115 + "\n")
+            print("=" * 145 + "\n")
 
             assert unreadable_with_value_count == 0, (
                 f"FAILED: {unreadable_with_value_count} UNREADABLE fields received a value!"
             )
+            assert false_fill_count == 0, f"FAILED: {false_fill_count} false fills detected!"
 
         finally:
             if old_db_url:

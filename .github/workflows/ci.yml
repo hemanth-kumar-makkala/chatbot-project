@@ -40,6 +40,10 @@ jobs:
       LANGSMITH_TRACING: "false"
       AUTH_HMAC_KEY: ci_auth_hmac_key_throwaway
       COOKIE_SECURE: "false"
+      APP_PROFILE: mock
+      HF_HUB_OFFLINE: "1"
+      SESSION_UPLOAD_RETENTION_HOURS: "24"
+      LOCAL_STORAGE_PATH: /tmp/cka-storage
 
     steps:
       - name: Checkout repository
@@ -74,5 +78,8 @@ jobs:
       - name: Run database migrations
         run: uv --directory backend run alembic upgrade head
 
-      - name: Run full test suite
-        run: uv --directory backend run pytest
+      - name: Prepare local storage folder
+        run: mkdir -p /tmp/cka-storage
+
+      - name: Run test suite (no real models in CI)
+        run: uv --directory backend run pytest -m "not models"

@@ -553,6 +553,38 @@ export async function askQuestion(
   });
 }
 
+export interface SessionDocumentResponse {
+  session_document_id: string;
+  conversation_id: string;
+  file_name: string;
+  page_count: number;
+  status: string;
+  extracted_fields: ExtractedField[];
+  page_image_url: string;
+}
+
+export async function uploadSessionDocument(
+  assistantId: string,
+  conversationId: string,
+  file: File
+): Promise<ApiResult<SessionDocumentResponse>> {
+  const normId =
+    assistantId === "00000000-0000-0002-0000-000000000001"
+      ? DEV_DEFAULT_ASSISTANT_ID
+      : assistantId;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return apiFetch<SessionDocumentResponse>(
+    `/v1/assistants/${encodeURIComponent(normId)}/conversations/${encodeURIComponent(conversationId)}/documents`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+}
+
 /**
  * Safely resolves a login redirect URL (STATUS.md UI Backlog & Open-Redirect hardening).
  * Accepts strictly relative paths starting with a single '/' and not '//' or '/\'.
