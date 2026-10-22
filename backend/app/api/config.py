@@ -31,6 +31,18 @@ def _default_auth_hmac_key() -> str:
     return os.getenv("AUTH_HMAC_KEY", "dev-secret-auth-hmac-key-placeholder")
 
 
+def _default_session_upload_retention_hours() -> int | None:
+    val = os.getenv("SESSION_UPLOAD_RETENTION_HOURS")
+    if val is not None and val.strip():
+        try:
+            hrs = int(val.strip())
+            if hrs > 0:
+                return hrs
+        except ValueError:
+            return None
+    return None
+
+
 class ApiSettings(BaseModel):
     """Configuration settings for the FastAPI application."""
 
@@ -66,6 +78,10 @@ class ApiSettings(BaseModel):
         ...,
         description="Storage directory for local storage backend. Required; no default.",
     )
+    session_upload_retention_hours: int | None = Field(
+        default_factory=_default_session_upload_retention_hours,
+        description="Retention window for chat session uploads in hours. Required; no default.",
+    )
 
     def __init__(self, **data: Any) -> None:
         try:
@@ -75,6 +91,14 @@ class ApiSettings(BaseModel):
             field_str = ", ".join(invalid_fields) if invalid_fields else "unknown"
             raise ConfigurationError(
                 f"INVALID_CONFIGURATION: invalid fields: {field_str}"
+            ) from None
+
+        if (
+            self.session_upload_retention_hours is not None
+            and self.session_upload_retention_hours <= 0
+        ):
+            raise ConfigurationError(
+                "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
             ) from None
 
         if not self.storage_dir or not self.storage_dir.strip():

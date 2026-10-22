@@ -2422,3 +2422,45 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/tests/invariants/test_architecture_boundaries.py`: 24 passed in 0.34s.
   - Static analysis: `ruff check` and `ruff format --check` clean, `mypy app tests` clean across 177 source files.
 - **Next Task**: Task 4.2: Normalized Visual Value Validation (Node 8 `validate`) per `docs/phases/PHASE-4.md`.
+
+---
+
+### [2026-10-22] Tasks 4.2, 4.3, 4.4, 4.5: Visual Normalization, Session PHI Isolation, Extraction Subgraph & Field State Engine
+
+- **Tasks Completed**:
+  - Task 4.2: Node 8 visual validation with normalized values (digits, dates, IDs, amounts; Invariant 5 thumbnail citation)
+  - Task 4.3: Session document storage & retention for chat uploads (Invariant 7: isolated, never in chunks or knowledge index; required retention setting)
+  - Task 4.4: Extraction subgraph (`extract_fields` with both OCR and vision readings, `dual_read_compare` with normalized values, attached to StateGraph routing from Node 2)
+  - Task 4.5: Field state classification & validation engine (7 explicit states: FILLED_HIGH, FILLED_MEDIUM, CONFLICTING, UNREADABLE, INVALID, NOT_PRESENT, NOT_APPLICABLE; Invariant 6: unreadable fields stay blank and flagged, never guessed)
+  - Smoke Check: Executed `tests/smoke_phase4_extraction.py` on throwaway database and real desktop-gpu profile on `evals/golden/docs/skewed_fax.pdf` and `evals/golden/docs/faint_fax_2page.pdf`. Evaluated 17 fields, verified 0 unreadable fields received values, and 0 chunks created.
+- **Architectural & Design Decisions**:
+  - **Task 4.2 (Normalized Visual Comparison)**:
+    - Implemented `app/core/normalization.py` with stdlib-only parsers for numbers/dosages, canonical dates (`YYYY-MM-DD`), IDs (MRN, phone, fax, plan codes), and currency amounts.
+    - Updated `node_validate` in `app/core/graph.py` to compare question-time vs upload-time readings using normalized tokens. Discrepancies set `visual_disagreement=True` and attach `visual_warning`.
+    - Enforced Invariant 5: visual answers attach page thumbnail metadata (`has_thumbnail=True`, `evidence_type="visual"`).
+  - **Task 4.3 (Session Upload PHI Isolation & Retention)**:
+    - Added declarative models `SessionDocument` and `ExtractionResult` in `app/db/models.py` with composite tenant foreign keys.
+    - Authored Alembic migration `0012_session_documents_schema.py` creating `session_documents` and `extraction_results` tables with tenant isolation, RLS enabled, and permissions granted to `app_user` (never `retriever_user`). STOP enforced: verified via throwaway DB test and unapplied to shared DB.
+    - Added required `session_upload_retention_hours: int | None` to `ApiSettings` with no default; `create_app` refuses to start without it or if non-positive.
+    - Recorded open compliance question in `docs/OPEN_QUESTIONS.md` (subsection 2.9).
+  - **Task 4.4 (Dedicated Extraction Subgraph)**:
+    - Built dedicated extraction subgraph (`node_extract_fields -> node_dual_read_compare -> node_classify_confidence -> node_validate_fields`) in `app/core/graph.py` and attached into main StateGraph.
+    - Router routes `extraction` to `extraction_subgraph` which executes and transitions to `respond`, reusing Node 1 (`guard_input`) and Node 9 (`respond`).
+    - Implemented `dual_read_compare` in `app/core/extraction/dual_read.py`, reconciling independent OCR and Vision readings with normalized value comparison and canonical ISO date resolution.
+  - **Task 4.5 (Field State Engine & Validators)**:
+    - Defined explicit enum `FieldState` with 7 states: `FILLED_HIGH`, `FILLED_MEDIUM`, `CONFLICTING`, `UNREADABLE`, `INVALID`, `NOT_PRESENT`, `NOT_APPLICABLE` in `app/core/extraction/field_state.py`.
+    - Hardened Invariant 6 guard: `ExtractedField.__post_init__` raises `ValueError` if `state == FieldState.UNREADABLE` and `value is not None`. `node_validate_fields` asserts zero unreadable fields have values.
+    - Built validators in `app/core/extraction/validators.py`: CMS 10-digit NPI check digit (Luhn algorithm with `80840` prefix), calendar date validation, and ID formats (MRN, phone, fax).
+- **Proving Tests**:
+  - `backend/tests/unit/test_visual_normalized_validation.py` (9 passed in 0.48s)
+  - `backend/tests/invariants/test_phi_session_isolation.py` (5 passed in 0.85s)
+  - `backend/tests/integration/test_migration_0012.py` (1 passed in 0.83s)
+  - `backend/tests/unit/test_dual_read_compare.py` (5 passed in 0.48s)
+  - `backend/tests/unit/test_field_state_engine.py` (11 passed in 0.08s)
+  - `backend/tests/invariants/test_architecture_boundaries.py` (24 passed in 0.66s)
+  - Total: 55 unit and invariant tests passing.
+- **Smoke Check Table (`evals/golden/docs/skewed_fax.pdf` and `evals/golden/docs/faint_fax_2page.pdf`)**:
+  - Total Fields Evaluated: 17
+  - Unreadable Fields That Received a Value: 0 (must be 0: PASSED)
+  - Chunks Created in Knowledge Index: 0 (must be 0: Invariant 7 PASSED)
+- **Static Analysis**: `ruff check`, `ruff format --check`, and `mypy` pass cleanly with zero errors across all changed source files.

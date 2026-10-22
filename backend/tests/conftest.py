@@ -22,6 +22,7 @@ if sys.platform == "win32":
 from app.db.env_utils import load_dotenv
 
 load_dotenv()
+os.environ.setdefault("SESSION_UPLOAD_RETENTION_HOURS", "24")
 
 
 @pytest.fixture(autouse=True, scope="session")

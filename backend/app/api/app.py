@@ -42,7 +42,38 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         else:
             raise ConfigurationError("INVALID_CONFIGURATION: invalid fields: storage_dir")
 
+        if "SESSION_UPLOAD_RETENTION_HOURS" in os.environ:
+            retention_raw = os.environ["SESSION_UPLOAD_RETENTION_HOURS"].strip()
+            if retention_raw != "":
+                try:
+                    hrs = int(retention_raw)
+                    if hrs <= 0:
+                        raise ConfigurationError(
+                            "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
+                        )
+                    init_kwargs["session_upload_retention_hours"] = hrs
+                except ValueError as err:
+                    raise ConfigurationError(
+                        "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
+                    ) from err
+            else:
+                raise ConfigurationError(
+                    "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
+                )
+        else:
+            raise ConfigurationError(
+                "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
+            )
+
         app_settings = ApiSettings(**init_kwargs)
+
+    if (
+        app_settings.session_upload_retention_hours is None
+        or app_settings.session_upload_retention_hours <= 0
+    ):
+        raise ConfigurationError(
+            "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
+        )
 
     # Invariant: CORS origins must never include "*"
     if "*" in app_settings.cors_origins:

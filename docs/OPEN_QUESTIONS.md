@@ -126,6 +126,11 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Status**: **OPEN / PLANNED FOR NEXT GATE ITERATION**
 - **Context**: Node 5 currently categorizes candidates into `NO_EVIDENCE`, `WEAK`, `RELIABLE_TEXT`, and `VISUAL_REQUIRED`. Automatic semantic cross-document contradiction detection (`CONFLICTING`) is not faked and is recorded as the next gate enhancement prior to golden conflict benchmarks.
 
+### 2.9 Session Upload Retention Hours (Task 4.3, Invariant 7)
+- **Status**: **REQUIRED SETTING / COMPLIANCE DECISION PENDING**
+- **Context**: In Phase 4 Task 4.3 (Invariant 7), `SESSION_UPLOAD_RETENTION_HOURS` is enforced as a required configuration setting with no default; the application refuses to start without it.
+- **Decision Needed**: The real production value for chat session upload retention awaits the formal compliance and legal agreement with Dan on HIPAA PHI data minimization and statutory record retention timelines. A provisional value of 24 hours is used for development and local testing.
+
 ---
 
 ## 3. Phase-Deferred Architecture Decisions

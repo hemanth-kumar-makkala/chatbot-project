@@ -15,6 +15,31 @@
       - Vision failure + OCR confidence < 0.70: refuses cleanly (`vision_status="unusable"`, `status="refusal"`), routing straight to `respond`.
     - **Invariant 5 Compliance**: Answer generation labels `evidence_type='visual'`.
     - **Proving Tests**: `backend/tests/integration/test_vision_read_node.py` (6/6 pass), `backend/tests/unit/test_ollama_provider.py` (18/18 pass), `backend/tests/invariants/test_architecture_boundaries.py` (24/24 pass).
+  - **Task 4.2: Normalized Visual Value Validation (Node 8 `validate`)** — **COMPLETED & VERIFIED**
+    - **Normalized Comparisons (`app/core/normalization.py`)**: Implemented normalization and comparison for digits/quantities/dosages, calendar dates (to canonical `YYYY-MM-DD`), IDs (MRN, phone/fax, plan codes), and currency amounts. Prose may differ between question-time and upload-time readings; critical IDs, dates, dosages, and numbers must not contradict.
+    - **Disagreement Flagging**: Discrepancies between readings flag the answer (`visual_disagreement=True` and `visual_warning` with specific discrepancy notes).
+    - **Invariant 5 Thumbnail Assertion**: Visual answers always carry the page thumbnail and visual evidence metadata.
+    - **Proving Test**: `backend/tests/unit/test_visual_normalized_validation.py` (9/9 pass in 0.48s).
+  - **Task 4.3: Session PHI Document Storage & Retention (Invariant 7)** — **COMPLETED & VERIFIED**
+    - **Session Document Isolation**: Declarative models `SessionDocument` and `ExtractionResult` added in `app/db/models.py`. Session uploads are strictly scoped to conversation and tenant via composite foreign keys and isolated RLS policies; never entered into `chunks` or the shared knowledge index (Invariant 7).
+    - **Alembic Migration 0012**: Authored migration `0012_session_documents` in `backend/app/db/migrations/versions/0012_session_documents_schema.py` creating `session_documents` and `extraction_results` tables with RLS and grants to `app_user` (and never `retriever_user`). Verified via isolated throwaway DB test (`test_migration_0012.py`) and STOP enforced (unapplied to shared DB).
+    - **Required Retention Setting**: Added `session_upload_retention_hours: int | None` to `ApiSettings` with no default; `create_app` refuses to start without it or if non-positive.
+    - **Open Questions Recorded**: Compliance retention policy decision recorded in `docs/OPEN_QUESTIONS.md` (subsection 2.9).
+    - **Proving Tests**: `backend/tests/invariants/test_phi_session_isolation.py` (5/5 pass), `backend/tests/integration/test_migration_0012.py` (1/1 pass).
+  - **Task 4.4: Dedicated Extraction Subgraph Implementation** — **COMPLETED & VERIFIED**
+    - **Extraction Subgraph**: Wired `node_extract_fields -> node_dual_read_compare -> node_classify_confidence -> node_validate_fields` in `app/core/graph.py` and attached into main StateGraph. Invoked when Node 2 routes to extraction, reusing Node 1 (`guard_input`) and Node 9 (`respond`).
+    - **Dual Read Compare (`app/core/extraction/dual_read.py`)**: Reconciles independent OCR and Vision readings using normalized values. Dates canonicalized to standard ISO `YYYY-MM-DD`.
+    - **Proving Test**: `backend/tests/unit/test_dual_read_compare.py` (5/5 pass in 0.48s).
+  - **Task 4.5: Field State Classification & Validation Engine** — **COMPLETED & VERIFIED**
+    - **7 Explicit Field States**: `FILLED_HIGH`, `FILLED_MEDIUM`, `CONFLICTING`, `UNREADABLE`, `INVALID`, `NOT_PRESENT`, `NOT_APPLICABLE` implemented in `app/core/extraction/field_state.py`.
+    - **Invariant 6 Enforcement**: Unreadable fields stay strictly blank (`value=None`) and flagged with `FieldState.UNREADABLE`. Guessing or writing non-None value raises `ValueError` in `ExtractedField.__post_init__` and `node_validate_fields`. Disagreeing readings force `FieldState.CONFLICTING` with `value=None` and both readings preserved.
+    - **Field Validators (`app/core/extraction/validators.py`)**: Pinned validators for dates (calendar day and month bounds), IDs/MRN/phone/fax, and CMS 10-digit NPI check digits using the Luhn algorithm with `80840` prefix.
+    - **Proving Test**: `backend/tests/unit/test_field_state_engine.py` (11/11 pass in 0.08s).
+  - **Phase 4 Smoke Check (Desktop-GPU Profile & Throwaway Database)** — **COMPLETED & VERIFIED**
+    - Ran `backend/tests/smoke_phase4_extraction.py` on real desktop-gpu profile against `evals/golden/docs/skewed_fax.pdf` and `evals/golden/docs/faint_fax_2page.pdf`.
+    - Applied migrations through 0012 to isolated throwaway DB (`cka_test_throwaway_*`), seeded tenant and session documents, executed extraction subgraph, and persisted `extraction_results`.
+    - Evaluated 17 total fields across both documents; verified zero chunks created in knowledge index (Invariant 7).
+    - Unreadable fields that received a value: **0** (strictly verified).
   - **Task UI-Shell: Workspace & Multi-Assistant App Shell Rebuild (ADR-0014)** — **COMPLETED & VERIFIED**
     - **ADR-0014 Adopted**: Replaced "no admin dashboards; the Knowledge page is the only admin screen" with a workspace Assistants page (`/assistants`), Workspace Settings (`/settings`), and per-assistant pages (Home, Data sources, Instructions, Guardrails, Actions placeholder, Conversations, Settings).
     - **Monochrome Theme Active**: Archived teal theme to `web/styles/themes/teal/tokens.css`. Active theme `web/styles/themes/default/tokens.css` is black & white (#111111, #FAFAFA, #FFFFFF, #E5E5E5, status tints). Verified via `theme.test.ts` (19/19 tests pass; contrast table verified).

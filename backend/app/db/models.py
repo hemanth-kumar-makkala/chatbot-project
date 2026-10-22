@@ -636,3 +636,72 @@ class JobStep(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 Chat Session Upload Models (Invariant 7)
+# ---------------------------------------------------------------------------
+
+
+class SessionDocument(Base):
+    """Session PHI document upload strictly scoped to a chat conversation.
+
+    Never indexed into chunks or knowledge index unless explicitly promoted (Invariant 7).
+    """
+
+    __tablename__ = "session_documents"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_session_documents_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            name="fk_session_documents_conversation",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_count: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=sa_text("1"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(50), default="uploaded", server_default=sa_text("'uploaded'"), nullable=False
+    )
+    retention_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtractionResult(Base):
+    """Structured extraction output for a session document."""
+
+    __tablename__ = "extraction_results"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_extraction_results_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "session_document_id"],
+            ["session_documents.tenant_id", "session_documents.id"],
+            name="fk_extraction_results_session_document",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    session_document_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    fields_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
