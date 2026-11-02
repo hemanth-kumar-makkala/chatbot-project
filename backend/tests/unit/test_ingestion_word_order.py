@@ -7,12 +7,15 @@ from the PDF text layer instead of reordering words (e.g. moving 'prior' to the 
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 
 from app.adapters.parsing.docling import DoclingDocumentParser
 from app.adapters.pypdfium_splitter import PyPdfiumDocumentSplitter
+from app.ports.errors import ConfigurationError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DOCS_DIR = PROJECT_ROOT.parent / "evals" / "golden" / "docs"
@@ -23,6 +26,35 @@ if not DOCS_DIR.exists():
 @pytest.mark.asyncio
 async def test_front_desk_v1_and_v2_word_order_preserved() -> None:
     """Assert that front_desk_policy_v1 and v2 preserve reading order and key phrases."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv()
+
+    raw_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+    if not raw_artifacts_path or not raw_artifacts_path.strip():
+        raise ConfigurationError(
+            "DOCLING_ARTIFACTS_PATH environment variable is missing.",
+            error_code="DOCLING_ARTIFACTS_PATH_MISSING",
+        )
+    artifacts_path = Path(raw_artifacts_path.strip())
+    if not artifacts_path.is_dir():
+        raise ConfigurationError(
+            f"DOCLING_ARTIFACTS_PATH directory does not exist: {artifacts_path}",
+            error_code="DOCLING_ARTIFACTS_PATH_NOT_FOUND",
+        )
+
+    raw_storage_path = os.environ.get("LOCAL_STORAGE_PATH")
+    if not raw_storage_path or not raw_storage_path.strip():
+        raise ConfigurationError(
+            "LOCAL_STORAGE_PATH environment variable is missing.",
+            error_code="LOCAL_STORAGE_PATH_MISSING",
+        )
+    storage_path = Path(raw_storage_path.strip())
+    if not storage_path.is_dir():
+        raise ConfigurationError(
+            f"LOCAL_STORAGE_PATH directory does not exist: {storage_path}",
+            error_code="LOCAL_STORAGE_PATH_NOT_FOUND",
+        )
+
     v1_bytes = (DOCS_DIR / "front_desk_policy_v1.pdf").read_bytes()
     v2_bytes = (DOCS_DIR / "front_desk_policy_v2.pdf").read_bytes()
 
@@ -37,7 +69,7 @@ async def test_front_desk_v1_and_v2_word_order_preserved() -> None:
     assert v1_pages[0].text_content is not None
     assert v2_pages[0].text_content is not None
 
-    parser = DoclingDocumentParser(artifacts_path=Path("D:/dev/docling-models"), device="cuda")
+    parser = DoclingDocumentParser(artifacts_path=artifacts_path, device="cuda")
     v1_parsed = await parser.extract(v1_pages[0])
     v2_parsed = await parser.extract(v2_pages[0])
 

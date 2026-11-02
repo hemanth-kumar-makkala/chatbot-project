@@ -2552,3 +2552,54 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - [x] Visual readings explicitly cited with thumbnails (Invariant 5).
   - [x] Zero unreadable fields guessed or falsely filled (Invariant 6).
   - Exit Gate: **CLOSED & VERIFIED**.
+
+
+## 2026-11-02 — Dedicated GPU Desktop Machine Migration, Path Normalization & Ollama Build Tracking
+
+- **Context & Hardware Setup**:
+  - Migrated development to dedicated GPU desktop workstation (User: `HEMANTH`, no `D:` drive).
+  - Hardware: Intel Core i7-12700F, 32 GB RAM, NVIDIA GeForce RTX 3050 6 GB GPU (`torch.cuda.is_available() == True`).
+  - Project Data Directory: `C:\Users\HEMANTH\Downloads\Projects\cka-data` (`hf`, `docling-models`, `storage\files`, `tmp\agent-logs`, `npm-cache`, `ollama`).
+  - Standard environment variables configured: `HF_HOME`, `HF_HUB_OFFLINE="1"`, `TEMP`, and `TMP` pointing to `cka-data` with agent logs in `cka-data\tmp\agent-logs`.
+- **Path Normalization (Part 1)**:
+  - Removed hard-coded paths (`D:\...`) from `backend/tests/unit/test_ingestion_word_order.py` (line 40) and `backend/tests/smoke_phase4_extraction.py` (lines 192-222).
+  - Dynamically load `.env` via `load_dotenv` and read `DOCLING_ARTIFACTS_PATH` and `LOCAL_STORAGE_PATH` with no default; fail fast with typed `ConfigurationError` if missing or non-existent.
+  - Proved `test_ingestion_word_order.py` passes using real Docling parser on CUDA (1/1 passed in 27.79s).
+  - Updated start commands in `docs/ui/BUILD_NOTES.md` for API, worker (`uv run python -m procrastinate --app=app.worker.app worker`), and web with new machine environment paths.
+  - Updated machine and path notes in `docs/STATUS.md`.
+- **Ollama Build Tracking & ADR-0019 (Part 2)**:
+  - Audited `qwen3-vl:4b` model build update to ID `a1b29c246319` (manifest digest: `sha256:a1b29c246319cdcb1f3842f36d29f198f737c0cf516ba1bcba34b1b974e87980`).
+  - Authored `docs/decisions/ADR-0019-qwen3-vl-model-build-update.md` documenting the new build, preserving all confidence and reranker thresholds unchanged, and scheduling required re-measurements (vision confidence calibration, reranker-gated answers, Phase 3 smoke, Phase 4 extraction eval).
+  - Updated mock test digest in `backend/tests/unit/test_ollama_provider.py` to match the new build digest (18/18 passed).
+- **Readiness Check (Part 3)**:
+  - PyTorch CUDA acceleration: Available (`torch.cuda.is_available() == True`, Device: `NVIDIA GeForce RTX 3050`).
+  - Real-model BGE-M3 test (`tests/unit/test_bge_m3_adapter.py -m models`): Passed (1 passed, 9 deselected in 56.76s).
+  - Real-model Reranker test (`tests/unit/test_reranker_model_offline.py -m models`): Passed (1 passed, 6 deselected in 15.86s).
+  - Real-model Docling test (`tests/integration/test_docling_parser.py -k "not spanish" -m models`): Real Docling parser weights verified functional on CUDA via `test_ingestion_word_order.py` (1 passed in 27.79s). When invoked under `tests/integration/test_docling_parser.py`, `tests/integration/conftest.py` autouse fixture `verify_shared_database_persistence_across_suite` caught that PostgreSQL on port 5432 is not currently listening.
+- **CI Configuration & Local Test Verification (Part 4)**:
+  - Verified `.github/workflows/ci.yml` contains `APP_PROFILE: mock`, `HF_HUB_OFFLINE: "1"`, `SESSION_UPLOAD_RETENTION_HOURS: "24"`, `LOCAL_STORAGE_PATH: /tmp/cka-storage`, and `mkdir -p /tmp/cka-storage` prior to running `pytest -m "not models"`.
+  - Executed local tests and audited test suite counts.
+- **Pre-commit Verification**:
+  - `uv run --project backend pre-commit run --files <changed files>` executed cleanly with all 10 hooks passing.
+
+## 2026-11-02 — Test Suite & CI Normalization for Fresh Clones
+
+- **Storage Directory Normalization**:
+  - Replaced literal relative folder `storage_dir="storage"` across all test fixtures and unit tests with pytest's `str(tmp_path)` fixture.
+  - Preserved strict `ApiSettings` existence validation in `app/api/config.py` without weakening.
+  - Affected files updated:
+    - `backend/tests/unit/test_api_auth_and_security.py`
+    - `backend/tests/integration/test_api_auth_endpoints.py`
+    - `backend/tests/integration/test_accept_exclude_active_job_conflict.py`
+    - `backend/tests/integration/test_api_knowledge_step2.py`
+    - `backend/tests/integration/test_api_knowledge_step3.py`
+- **Evaluation Golden Path Resolution**:
+  - In `backend/tests/integration/test_session_document_extraction_route.py`, replaced relative `Path("evals/golden/docs/skewed_fax.pdf")` with repository-root anchored resolution: `Path(__file__).resolve().parents[3] / "evals" / "golden" / "docs" / "skewed_fax.pdf"`.
+  - Confirmed all other tests and scripts across `tests/` and `scripts/` resolve golden files anchored to repository root via `Path(__file__)`.
+- **Mock Retrieval & Question Route Integration**:
+  - Punctuation stripping added to `MockReranker` keyword matching (`[t.strip("?,.!:;\"') for t in query.lower().split() if t.strip("?,.!:;\"')]`), and added "clinic hours" to `MockRetriever` canned text.
+  - Seeded active document and document version in `test_api_auth_endpoints.py` (`test_post_questions_forged_tenant_id_in_request_is_ignored` and `test_post_questions_shared_contract_fixture`) to satisfy Rule E.1 invariant without weakening test assertions.
+- **Verification & Test Execution**:
+  - `backend/` execution: `uv run python -m pytest -m "not models" -q` with `APP_PROFILE=mock`: **739 passed, 1 skipped, 0 failed**.
+  - Repository root execution: `uv run --project backend python -m pytest backend/tests -m "not models" -q`: **739 passed, 1 skipped, 0 failed**.
+  - Pre-commit: All 10 hooks passed cleanly (`uv run --project backend pre-commit run --files ...`).

@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app.adapters.auth.builtin import BuiltinAuthProvider
 from app.api.app import create_app
 from app.api.config import ApiSettings
-from app.db.models import Assistant, Membership, Tenant, User
+from app.db.models import Assistant, Document, DocumentVersion, Membership, Tenant, User
 from app.db.session import tenant_session, unscoped_session
 from app.ports.errors import ConfigurationError
 from app.ports.types import TenantContext, UserRole
@@ -24,7 +24,7 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def api_settings() -> ApiSettings:
+def api_settings(tmp_path: Path) -> ApiSettings:
     return ApiSettings(
         cors_origins=["http://localhost:3000"],
         cookie_secure=False,  # localhost tests
@@ -33,7 +33,7 @@ def api_settings() -> ApiSettings:
         absolute_timeout_hours=24,
         allow_bearer_auth=False,
         profile="mock",
-        storage_dir="storage",
+        storage_dir=str(tmp_path),
     )
 
 
@@ -315,7 +315,25 @@ class TestApiAuthAndTenantEndpoints:
                 prompt_id="prompt-default",
                 prompt_version="1.0",
             )
-            t_session.add_all([mem, asst])
+            doc_id = uuid4()
+            ver_id = uuid4()
+            doc = Document(
+                id=doc_id,
+                tenant_id=t_real_id,
+                title="Clinic Guide",
+                active_version_id=ver_id,
+                is_retired=False,
+            )
+            ver = DocumentVersion(
+                id=ver_id,
+                tenant_id=t_real_id,
+                document_id=doc_id,
+                sha256="0" * 64,
+                uploaded_by=u_id,
+                status="ready",
+                file_extension="pdf",
+            )
+            t_session.add_all([mem, asst, doc, ver])
             await t_session.flush()
             asst_id = str(asst.id)
             real_tenant_id = str(t_real_id)
@@ -459,7 +477,25 @@ class TestApiAuthAndTenantEndpoints:
                 prompt_id="prompt-default",
                 prompt_version="1.0",
             )
-            t_session.add_all([mem, asst])
+            doc_id = uuid4()
+            ver_id = uuid4()
+            doc = Document(
+                id=doc_id,
+                tenant_id=t_real_id,
+                title="Clinic Guide",
+                active_version_id=ver_id,
+                is_retired=False,
+            )
+            ver = DocumentVersion(
+                id=ver_id,
+                tenant_id=t_real_id,
+                document_id=doc_id,
+                sha256="0" * 64,
+                uploaded_by=u_id,
+                status="ready",
+                file_extension="pdf",
+            )
+            t_session.add_all([mem, asst, doc, ver])
             await t_session.flush()
             asst_id = str(asst.id)
 

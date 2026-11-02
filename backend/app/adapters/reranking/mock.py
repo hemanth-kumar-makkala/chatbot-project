@@ -26,7 +26,7 @@ class MockReranker(Reranker):
             for c in candidates:
                 scored.append((c, self.score_map.get(c.candidate_id, 0.0)))
         else:
-            q_terms = [t for t in query.lower().split() if t]
+            q_terms = [t.strip("?,.!:;\"'") for t in query.lower().split() if t.strip("?,.!:;\"'")]
             total = len(candidates)
             for idx, c in enumerate(candidates):
                 c_text = c.text.lower()

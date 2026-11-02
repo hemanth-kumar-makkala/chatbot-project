@@ -35,6 +35,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import httpx
 from alembic import command
+from dotenv import load_dotenv
 from sqlalchemy import select
 
 from app.adapters.images.pillow import PillowImageProcessor
@@ -59,6 +60,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import reset_session_engines, tenant_session, unscoped_session
+from app.ports.errors import ConfigurationError
 from app.ports.types import TenantContext, UserRole
 from tests.conftest import isolated_throwaway_database
 
@@ -186,12 +188,39 @@ def extract_fields_from_ocr_faint(page1_text: str, page2_text: str) -> dict[str,
 
 
 async def run_phase4_smoke() -> None:
+    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(BACKEND_DIR / ".env")
+    load_dotenv()
+
+    raw_artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+    if not raw_artifacts_path or not raw_artifacts_path.strip():
+        raise ConfigurationError(
+            "DOCLING_ARTIFACTS_PATH environment variable is missing.",
+            error_code="DOCLING_ARTIFACTS_PATH_MISSING",
+        )
+    docling_artifacts = Path(raw_artifacts_path.strip())
+    if not docling_artifacts.is_dir():
+        raise ConfigurationError(
+            f"DOCLING_ARTIFACTS_PATH directory does not exist: {docling_artifacts}",
+            error_code="DOCLING_ARTIFACTS_PATH_NOT_FOUND",
+        )
+
+    raw_storage_path = os.environ.get("LOCAL_STORAGE_PATH")
+    if not raw_storage_path or not raw_storage_path.strip():
+        raise ConfigurationError(
+            "LOCAL_STORAGE_PATH environment variable is missing.",
+            error_code="LOCAL_STORAGE_PATH_MISSING",
+        )
+    local_storage = Path(raw_storage_path.strip())
+    if not local_storage.is_dir():
+        raise ConfigurationError(
+            f"LOCAL_STORAGE_PATH directory does not exist: {local_storage}",
+            error_code="LOCAL_STORAGE_PATH_NOT_FOUND",
+        )
+
     os.environ["APP_PROFILE"] = "desktop-gpu"
     os.environ["SESSION_UPLOAD_RETENTION_HOURS"] = "24"
     os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["HF_HOME"] = r"D:\dev\hf"
-    os.environ["TEMP"] = r"D:\dev\tmp"
-    os.environ["TMP"] = r"D:\dev\tmp"
 
     print("================================================================================")
     print("PHASE 4 SMOKE RUN: EXTRACTION FLOW ON REAL MODELS (DOCLING OCR & OLLAMA VISION)")
@@ -219,7 +248,6 @@ async def run_phase4_smoke() -> None:
     print(f"Split faint_fax_2page.pdf into {len(faint_pages)} page(s)")
 
     # 2. Initialize Docling parser with real model weights
-    docling_artifacts = Path(r"D:\dev\docling-models")
     parser = DoclingDocumentParser(artifacts_path=docling_artifacts, device="cuda")
 
     # -------------------------------------------------------------------------

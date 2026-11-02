@@ -111,8 +111,9 @@ async def test_session_document_upload_and_extraction_route(
             )
             await session.flush()
 
-        sample_pdf_path = Path("evals/golden/docs/skewed_fax.pdf")
-        assert sample_pdf_path.exists(), "evals/golden/docs/skewed_fax.pdf must exist"
+        repo_root = Path(__file__).resolve().parents[3]
+        sample_pdf_path = repo_root / "evals" / "golden" / "docs" / "skewed_fax.pdf"
+        assert sample_pdf_path.exists(), f"{sample_pdf_path} must exist"
         pdf_bytes = sample_pdf_path.read_bytes()
 
         transport = ASGITransport(app=test_app)

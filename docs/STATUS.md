@@ -204,6 +204,13 @@
     - Test `test_real_bge_m3_model` marked `models` in `backend/tests/unit/test_bge_m3_adapter.py`: verifies 1024 dims, L2 norm within 1e-3 of 1.0, similar pair cosine > unrelated pair cosine, and determinism. Prints execution time.
   - **Next Task**: Real Docling desktop tests, then real fax upload on desktop-gpu.
 
+- **Desktop GPU Machine Migration & Path Normalization** — **COMPLETED & VERIFIED**
+  - **Machine & Hardware**: Migrated to dedicated GPU desktop (User: `HEMANTH`, no D: drive). NVIDIA GeForce RTX 3050 GPU with PyTorch CUDA enabled (`torch.cuda.is_available() == True`), 32 GB RAM.
+  - **Data Folder & Environment Configuration**: Models, caches, and storage centralized in `C:\Users\HEMANTH\Downloads\Projects\cka-data` (`hf`, `docling-models`, `storage\files`, `tmp\agent-logs`, `npm-cache`, `ollama`). Standard command environment prefix configured for `HF_HOME`, `HF_HUB_OFFLINE="1"`, `TEMP`, and `TMP` with logs routing to `cka-data\tmp\agent-logs`.
+  - **Path Normalization**: Removed hard-coded machine paths (`D:\...`) from `backend/tests/unit/test_ingestion_word_order.py` and `backend/tests/smoke_phase4_extraction.py`. Configured both to load `.env` via `load_dotenv` and read `DOCLING_ARTIFACTS_PATH` and `LOCAL_STORAGE_PATH` with no default, raising typed `ConfigurationError` if missing or non-existent.
+  - **Start Commands**: Updated `docs/ui/BUILD_NOTES.md` run commands for API, worker (`uv run python -m procrastinate --app=app.worker.app worker`), and web with new machine environment paths.
+  - **Ollama Build Tracking**: Recorded Ollama `qwen3-vl:4b` build ID update to `a1b29c246319` (digest `sha256:a1b29c246319cdcb1f3842f36d29f198f737c0cf516ba1bcba34b1b974e87980`) in ADR-0019.
+
 - **Laptop Setup Verification & Hook Portability** — **COMPLETED & VERIFIED** (Preceding task)
   - **Environment Verification**: Full backend test suite on mock profile verified (576 passed, 1 skipped, 0 failed). Web unit tests verified (69 passed across 7 test files). PyTorch CUDA acceleration verified (`torch==2.14.1+cu126`, CUDA enabled on RTX 3060 Laptop GPU).
   - **Hook Portability**: Local pre-commit hooks `mypy` and `boundary-invariants` in `.pre-commit-config.yaml` updated to invoke via `python -m`, resolving Windows Application Control blocking `.venv\Scripts\*.exe` (`os error 4551`). All 10 pre-commit hooks passing cleanly.
@@ -327,6 +334,10 @@
 ## Next Phase & Task
 - **Phase 5**: Hardening
 - **Next Task**: Task 5.1: Input Guardrails (Node 1 `guard_input`) and Rate Limiting per `docs/phases/PHASE-5.md`.
+- **Test Infrastructure & CI**:
+  - Test suite passes cleanly on fresh clone and in CI from both `backend/` and repository root (`739 passed, 1 skipped, 0 failed`).
+  - Storage paths normalized across test fixtures using pytest `tmp_path`.
+  - Golden files resolved from repo root using `Path(__file__)`.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.

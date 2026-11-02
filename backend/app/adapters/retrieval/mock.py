@@ -55,7 +55,7 @@ class MockRetriever(Retriever):
             self._canned_evidence_text = canned_evidence_text
         else:
             self._canned_evidence_text = {
-                "chunk-syn-001": "General practice guidelines and protocol summary.",
+                "chunk-syn-001": "General practice guidelines, clinic hours, and protocol summary.",
                 "chunk-syn-002": "Billing schedule rates and prior authorization fax numbers.",
             }
 

@@ -88,25 +88,32 @@ uv run python scripts/seed_dev_data.py
 Run FastAPI application via the `app.api.app:create_app` factory with `APP_PROFILE=mock` and `COOKIE_SECURE=false` (for local HTTP):
 ```powershell
 cd backend
+$env:HF_HOME="$env:USERPROFILE\Downloads\Projects\cka-data\hf"
+$env:HF_HUB_OFFLINE="1"
+$env:TEMP="$env:USERPROFILE\Downloads\Projects\cka-data\tmp"
+$env:TMP=$env:TEMP
 $env:APP_PROFILE="mock"
 $env:COOKIE_SECURE="false"
-$env:HF_HUB_OFFLINE="1"
-uv run python -c "import uvicorn; from app.api.app import create_app; from app.api.config import ApiSettings; uvicorn.run(create_app(ApiSettings(profile='mock', storage_dir='./data/files', cookie_secure=False)), host='127.0.0.1', port=8000)"
+uv run python -c "import uvicorn; from app.api.app import create_app; from app.api.config import ApiSettings; uvicorn.run(create_app(ApiSettings(profile='mock', cookie_secure=False)), host='127.0.0.1', port=8000)"
 ```
 
 ### 3. Start Ingestion Worker
-Run Procrastinate background worker for document splitting, page processing, and periodic sweeps:
+Run Procrastinate background worker for document splitting, page processing, and periodic sweeps (using `python -m procrastinate` to ensure compatibility across execution policies):
 ```powershell
 cd backend
-$env:APP_PROFILE="mock"
+$env:HF_HOME="$env:USERPROFILE\Downloads\Projects\cka-data\hf"
 $env:HF_HUB_OFFLINE="1"
-uv run procrastinate --app=app.worker.app worker --queue=ingestion --queue=builtin
+$env:TEMP="$env:USERPROFILE\Downloads\Projects\cka-data\tmp"
+$env:TMP=$env:TEMP
+$env:APP_PROFILE="mock"
+uv run python -m procrastinate --app=app.worker.app worker --queue=ingestion --queue=builtin
 ```
 
 ### 4. Start Frontend Web App
 Start Next.js dev server forwarding `/v1/*` to the backend:
 ```powershell
 cd web
+$env:npm_config_cache="$env:USERPROFILE\Downloads\Projects\cka-data\npm-cache"
 $env:API_ORIGIN="http://localhost:8000"
 npm run dev
 ```

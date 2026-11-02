@@ -1,5 +1,7 @@
 """Unit and security tests for FastAPI API configuration, headers, cookies, and CSRF."""
 
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -9,7 +11,7 @@ from app.ports.errors import ConfigurationError
 
 
 @pytest.fixture
-def test_settings() -> ApiSettings:
+def test_settings(tmp_path: Path) -> ApiSettings:
     return ApiSettings(
         cors_origins=["https://client-portal.example.com"],
         cookie_secure=True,
@@ -18,7 +20,7 @@ def test_settings() -> ApiSettings:
         absolute_timeout_hours=24,
         allow_bearer_auth=False,  # strictly cookie-only in standard configuration
         profile="mock",
-        storage_dir="storage",
+        storage_dir=str(tmp_path),
     )
 
 
@@ -113,46 +115,48 @@ class TestApiAuthAndSecurityUnit:
             # Fails on invalid session, but NOT on CSRF (status != 403 CSRF)
             assert resp.status_code != 403
 
-    async def test_secure_cookie_defaults_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_secure_cookie_defaults_to_true(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """Secure cookie defaults to on (True). Only an explicit local-dev setting turns it off."""
         monkeypatch.delenv("COOKIE_SECURE", raising=False)
-        settings = ApiSettings(profile="mock", storage_dir="storage")
+        settings = ApiSettings(profile="mock", storage_dir=str(tmp_path))
         assert settings.cookie_secure is True
 
         # Explicit local-dev setting turns it off
         monkeypatch.setenv("COOKIE_SECURE", "false")
-        dev_settings = ApiSettings(profile="mock", storage_dir="storage")
+        dev_settings = ApiSettings(profile="mock", storage_dir=str(tmp_path))
         assert dev_settings.cookie_secure is False
 
         # Explicit positive setting turns it on
         monkeypatch.setenv("COOKIE_SECURE", "true")
-        prod_settings = ApiSettings(profile="mock", storage_dir="storage")
+        prod_settings = ApiSettings(profile="mock", storage_dir=str(tmp_path))
         assert prod_settings.cookie_secure is True
 
-    async def test_building_api_settings_without_profile_fails(self) -> None:
+    async def test_building_api_settings_without_profile_fails(self, tmp_path: Path) -> None:
         """Building ApiSettings without a profile fails at startup with ConfigurationError."""
         with pytest.raises(ConfigurationError, match="profile"):
-            ApiSettings(storage_dir="storage")
+            ApiSettings(storage_dir=str(tmp_path))
 
     async def test_building_api_settings_without_storage_dir_fails(self) -> None:
         """Building ApiSettings without storage_dir fails at startup with ConfigurationError."""
         with pytest.raises(ConfigurationError, match="storage_dir"):
             ApiSettings(profile="mock")
 
-    async def test_unknown_profile_raises_configuration_error(self) -> None:
+    async def test_unknown_profile_raises_configuration_error(self, tmp_path: Path) -> None:
         """Unknown profile raises ConfigurationError indicating profile is invalid."""
         with pytest.raises(ConfigurationError) as exc_info:
-            ApiSettings(profile="invalid-unknown-profile", storage_dir="storage")
+            ApiSettings(profile="invalid-unknown-profile", storage_dir=str(tmp_path))
         assert "profile" in str(exc_info.value)
         assert "INVALID_CONFIGURATION" in str(exc_info.value)
 
-    async def test_invalid_config_marker_never_in_error_or_traceback(self) -> None:
+    async def test_invalid_config_marker_never_in_error_or_traceback(self, tmp_path: Path) -> None:
         """An invalid config marker string never shows in error or traceback."""
         import traceback
 
         marker = "MARKER_SECRET_SENSITIVE_LEAK_CHECK_98765"
         with pytest.raises(ConfigurationError) as exc_info:
-            ApiSettings(profile=marker, storage_dir="storage")
+            ApiSettings(profile=marker, storage_dir=str(tmp_path))
 
         error_message = str(exc_info.value)
         tb_str = "".join(traceback.format_exception(exc_info.value))

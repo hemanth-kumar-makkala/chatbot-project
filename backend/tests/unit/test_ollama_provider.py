@@ -48,7 +48,7 @@ from app.ports.types import (
     PageReading,
 )
 
-EXPECTED_DIGEST = "sha256:1343d82ebee38e26a4dd6b0180b915eb91550184e67c505dea97509571c8f683"
+EXPECTED_DIGEST = "sha256:a1b29c246319cdcb1f3842f36d29f198f737c0cf516ba1bcba34b1b974e87980"
 
 
 def _create_synthetic_page_png() -> bytes:
