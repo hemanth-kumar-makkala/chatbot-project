@@ -27,6 +27,22 @@ from typing_extensions import TypedDict
 
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
+from app.core.guards.input_guards import (
+    PROMPT_INJECTION_MESSAGE,
+    QUESTION_RATE_LIMIT_MESSAGE,
+    QUESTION_TOO_LONG_MESSAGE,
+    check_question_length,
+    detect_input_language,
+    detect_prompt_injection,
+)
+from app.core.guards.output_guards import (
+    MAX_TOKENS_GENERAL,
+    check_answer_token_ceiling,
+    is_document_injection_sentence,
+    sanitize_evidence_text,
+    validate_general_route_no_client_facts,
+    verify_citations_tenant_scope,
+)
 from app.core.normalization import compare_normalized_values
 from app.core.prompts import (
     AnswerOutput,
@@ -220,6 +236,8 @@ class GraphRuntimeContext:
     generated_answer: dict[str, Any] = field(default_factory=dict)
     active_document_count: int | None = None
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
+    evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
+    rate_limit_exceeded: bool = False
 
 
 # --- 2. Telemetry Node Wrapper ---
@@ -293,6 +311,7 @@ async def node_guard_input(
 
         tenant_ctx = runtime.context.tenant
         if not tenant_ctx or not tenant_ctx.tenant_id:
+            runtime.context.response_text = "Unauthorized tenant context."
             return {
                 "tenant_id": "",
                 "status": "refusal",
@@ -300,26 +319,56 @@ async def node_guard_input(
             }
 
         tenant_id = tenant_ctx.tenant_id
-
         q = runtime.context.question_text
-        if len(q) > 4000:
+        lang = detect_input_language(q)
+
+        if runtime.context.rate_limit_exceeded:
+            runtime.context.response_text = QUESTION_RATE_LIMIT_MESSAGE
             return {
                 "tenant_id": tenant_id,
+                "language": lang,
+                "status": "refusal",
+                "public_error_ref": "ERR-RATE-LIMIT",
+                "evidence_ids": [],
+            }
+
+        if not check_question_length(q):
+            runtime.context.response_text = QUESTION_TOO_LONG_MESSAGE
+            return {
+                "tenant_id": tenant_id,
+                "language": lang,
                 "status": "refusal",
                 "public_error_ref": "ERR-INPUT-TOO-LONG",
+                "evidence_ids": [],
             }
-        # Basic injection keywords
-        if "ignore previous instructions" in q.lower():
+
+        matched_pattern = detect_prompt_injection(q)
+        if matched_pattern is not None:
+            logger.warning(
+                "Prompt injection blocked at guard_input",
+                extra={
+                    "request_id": state.get("request_id", ""),
+                    "tenant_id": tenant_id,
+                    "node": "guard_input",
+                    "status": "refusal",
+                    "error_code": matched_pattern,
+                    "error_type": "PromptInjectionBlocked",
+                },
+            )
+            runtime.context.response_text = PROMPT_INJECTION_MESSAGE
             return {
                 "tenant_id": tenant_id,
+                "language": lang,
                 "status": "refusal",
                 "public_error_ref": "ERR-PROMPT-INJECTION",
+                "evidence_ids": [],
             }
 
         # Invariant: status is initialized by guard_input, never trusting caller-supplied status.
         # Invariant: tenant_id comes only from runtime context's TenantContext.
         return {
             "tenant_id": tenant_id,
+            "language": lang,
             "status": "in_progress",
         }
 
@@ -550,6 +599,9 @@ async def node_retrieve(
                     else str(e.evidence_type)
                 )
                 ctx.candidate_evidence_types[e.chunk_id] = ev_type_val
+                ev_tid = getattr(e, "tenant_id", None)
+                if ev_tid:
+                    ctx.evidence_tenant_ids[e.chunk_id] = str(ev_tid)
             if evidence_ids:
                 texts = await ports.retriever.get_evidence_text(
                     tenant_ctx=ctx.tenant,
@@ -1002,6 +1054,7 @@ async def node_generate(
                         role=ModelRole.ANSWER,
                         messages=[ChatMessage(role="user", content=gen_prompt)],
                         schema=AnswerOutput,
+                        max_tokens=MAX_TOKENS_GENERAL,
                     )
                     if resp.structured_output:
                         content = resp.structured_output.get("answer", resp.content)
@@ -1012,6 +1065,13 @@ async def node_generate(
                         "General reply model generation failed; using fallback", exc_info=True
                     )
             ctx.response_text = content
+            ctx.generated_answer = {
+                "mode": "general",
+                "answer": content,
+                "evidence_ids": [],
+                "quoted_span": None,
+                "evidence_type": "text",
+            }
             return {
                 "response_message_id": str(uuid4()),
                 "status": "in_progress",
@@ -1173,14 +1233,21 @@ async def node_generate(
                     logger.warning("Failed to fetch neighbouring chunks", exc_info=True)
 
             used_evidence = {
-                eid: ctx.evidence_text[eid] for eid in top_ids if eid in ctx.evidence_text
+                eid: sanitize_evidence_text(ctx.evidence_text[eid])
+                for eid in top_ids
+                if eid in ctx.evidence_text
             }
         else:
             top_ids = [eid for eid in state.get("evidence_ids", []) if eid in ctx.evidence_text][:3]
             if top_ids:
-                used_evidence = {eid: ctx.evidence_text[eid] for eid in top_ids}
+                used_evidence = {
+                    eid: sanitize_evidence_text(ctx.evidence_text[eid]) for eid in top_ids
+                }
             else:
-                used_evidence = dict(list(ctx.evidence_text.items())[:3])
+                used_evidence = {
+                    eid: sanitize_evidence_text(txt)
+                    for eid, txt in list(ctx.evidence_text.items())[:3]
+                }
 
         used_ids = list(used_evidence.keys())
         content = "Generated answer grounded in evidence."
@@ -1369,16 +1436,17 @@ async def node_validate(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        evidence = runtime.context.evidence_text
+        raw_evidence = runtime.context.evidence_text
+        evidence = {eid: sanitize_evidence_text(txt) for eid, txt in raw_evidence.items()}
         attempts = state.get("validation_attempts", 0)
         generated = runtime.context.generated_answer
-        provided_evidence_ids = set(state.get("evidence_ids", [])) | set(evidence.keys())
+        provided_evidence_ids = set(state.get("evidence_ids", [])) | set(raw_evidence.keys())
         mode = state.get("answer_mode", "short")
 
         is_valid = True
 
         ans_text = (generated.get("answer") or runtime.context.response_text or "").strip()
-        if not ans_text:
+        if not ans_text or is_document_injection_sentence(ans_text):
             is_valid = False
 
         # Rule 3c / Task 3.5: Reject answers that are only a document title,
@@ -1412,14 +1480,36 @@ async def node_validate(
                 is_valid = False
                 break
 
-        # Citation IDs check: every citation ID must be in provided_evidence_ids
-        if is_valid and generated:
-            cited_ids_raw = generated.get("evidence_ids", [])
+        # Output Guardrail 1: Every citation must belong to provided_evidence_ids
+        # and the requesting tenant
+        if is_valid:
+            cited_ids_raw = (
+                generated.get("evidence_ids", state.get("evidence_ids", []))
+                if generated
+                else state.get("evidence_ids", [])
+            )
             cited_ids = AnswerOutput.parse_evidence_ids(cited_ids_raw)
-            for cid in cited_ids:
-                if cid not in provided_evidence_ids:
-                    is_valid = False
-                    break
+            requesting_tid = str(state.get("tenant_id") or runtime.context.tenant.tenant_id)
+            if not verify_citations_tenant_scope(
+                cited_ids=cited_ids,
+                allowed_evidence_ids=provided_evidence_ids,
+                evidence_tenant_ids=runtime.context.evidence_tenant_ids,
+                requesting_tenant_id=requesting_tid,
+            ):
+                is_valid = False
+
+        # Output Guardrail 2: Enforce answer token ceiling per mode
+        effective_mode = "general" if state.get("route") == "general" else mode
+        if is_valid and not check_answer_token_ceiling(ans_text, effective_mode):
+            is_valid = False
+
+        # Output Guardrail 3: General route must never state client facts
+        if (
+            is_valid
+            and state.get("route") == "general"
+            and not validate_general_route_no_client_facts(ans_text)
+        ):
+            is_valid = False
 
         # Task 3.5 explain mode: validate each point separately; drop points that fail;
         # show the validated points; if none validates, regenerate once (the 1-retry loop),

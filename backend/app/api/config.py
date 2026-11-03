@@ -62,6 +62,9 @@ class ApiSettings(BaseModel):
     allow_bearer_auth: bool = False  # Strictly cookie-only in standard app; True in test overrides
     login_rate_limit_max_attempts: int = 5
     login_rate_limit_window_seconds: int = 60
+    question_rate_limit_user_max_requests: int = 30
+    question_rate_limit_tenant_max_requests: int = 120
+    question_rate_limit_window_seconds: int = 60
     auth_hmac_key: str = Field(
         default_factory=_default_auth_hmac_key,
         description="Secret key for HMAC-SHA256 client IP pseudonymization from .env.",

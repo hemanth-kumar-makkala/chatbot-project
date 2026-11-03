@@ -1,12 +1,28 @@
-"""In-memory rate limiter for login attempts.
+"""Rate limiters for login attempts and per-user/per-tenant question queries.
 
-Note: In-memory state is valid for local Phase 1 development on single-process servers.
-Per ADR and spec, this must move to a shared store (e.g., Redis/Valkey) before multi-instance
-cloud deployment in Phase 6.
+Note: LoginRateLimiter uses in-memory state for local single-process login throttling.
+Question rate limiting (check_question_rate_limit) queries PostgreSQL audit_events so
+per-user and per-tenant limits persist across API restarts and multiple worker processes.
 """
+
+from __future__ import annotations
 
 import time
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID
+
+from fastapi import HTTPException
+from sqlalchemy import func, select
+
+from app.core.guards.input_guards import (
+    QUESTION_RATE_LIMIT_MESSAGE,
+    QUESTION_RATE_LIMIT_WINDOW_SECONDS,
+    TENANT_QUESTION_RATE_LIMIT_MAX_REQUESTS,
+    USER_QUESTION_RATE_LIMIT_MAX_REQUESTS,
+)
+from app.db.models import AuditEvent
 
 
 class LoginRateLimiter:
@@ -33,3 +49,39 @@ class LoginRateLimiter:
     def reset(self, key: str) -> None:
         """Reset failed attempt history for key upon successful authentication."""
         self._failures.pop(key, None)
+
+
+async def check_question_rate_limit(
+    db_session: Any,
+    tenant_uuid: UUID,
+    user_uuid: UUID,
+    user_max_requests: int = USER_QUESTION_RATE_LIMIT_MAX_REQUESTS,
+    tenant_max_requests: int = TENANT_QUESTION_RATE_LIMIT_MAX_REQUESTS,
+    window_seconds: int = QUESTION_RATE_LIMIT_WINDOW_SECONDS,
+) -> None:
+    """Enforce sliding-window per-user and per-tenant question rate limits via PostgreSQL.
+
+    Queries the append-only audit_events table (where event_type == 'question') so limits
+    survive process restarts and are shared across multiple API processes.
+    Raises HTTP 429 with QUESTION_RATE_LIMIT_MESSAGE when either ceiling is reached.
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=window_seconds)
+
+    user_count_stmt = select(func.count(AuditEvent.id)).where(
+        AuditEvent.tenant_id == tenant_uuid,
+        AuditEvent.user_id == user_uuid,
+        AuditEvent.event_type == "question",
+        AuditEvent.created_at >= cutoff,
+    )
+    user_count = (await db_session.execute(user_count_stmt)).scalar() or 0
+    if user_count >= user_max_requests:
+        raise HTTPException(status_code=429, detail=QUESTION_RATE_LIMIT_MESSAGE)
+
+    tenant_count_stmt = select(func.count(AuditEvent.id)).where(
+        AuditEvent.tenant_id == tenant_uuid,
+        AuditEvent.event_type == "question",
+        AuditEvent.created_at >= cutoff,
+    )
+    tenant_count = (await db_session.execute(tenant_count_stmt)).scalar() or 0
+    if tenant_count >= tenant_max_requests:
+        raise HTTPException(status_code=429, detail=QUESTION_RATE_LIMIT_MESSAGE)

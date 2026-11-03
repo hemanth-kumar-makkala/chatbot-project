@@ -155,9 +155,10 @@ The following items from the spec's "Open decisions" remain open and require sta
 - **Context**: Document parsing (Docling, EasyOCR) and vector embeddings (BGE-M3) utilize PyTorch. On the desktop GPU PC, CUDA acceleration is used. On GCP cloud deployments, workers could run either standard CPU wheels or GPU-accelerated workloads (e.g. Cloud Run with Nvidia L4 or GKE).
 - **Decision Driver**: CPU PyTorch wheels are ~200 MB, start quickly, and scale down to zero on Cloud Run at low compute cost within the <$100/mo cloud budget, but inference is slower. GPU instances provide sub-second OCR/embedding latency but incur higher idle and hourly costs. The choice between CPU-only vs CUDA PyTorch for Linux cloud workers will be evaluated and decided in Phase 6 based on batch ingestion volume and cloud spend telemetry.
 
-### 3.5 Multilingual Support
+### 3.5 Multilingual Support & Input Language Detection (Task 5.1)
 - **Status**: **DEFERRED**
-- Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
+- Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and `test_real_docling_ocr_spanish_scanned_page` stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.
+- **Task 5.1 Input Language Detection Gap**: `PHASE-5.md` Task 5.1 specifies language detection (`en` / `es`) inside Node 1 (`guard_input`). Because multilingual support is deferred and installing a new language-detection library is out of scope until multilingual is re-enabled, `detect_input_language` in `backend/app/core/guards/input_guards.py` treats all incoming questions as English (`"en"`) without adding a third-party dependency. When multilingual support is activated, a pinned deterministic language detector (or router classification) will be selected and benchmarked via an ADR.
 
 ### 3.6 Conversation-Aware Query Rewriting for Follow-Up Questions (Task 3.6 Decision)
 - **Status**: **SCHEDULED WITH CONVERSATIONS TASK (TASK 3.6)**

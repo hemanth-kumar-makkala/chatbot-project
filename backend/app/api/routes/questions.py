@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from starlette.responses import StreamingResponse
@@ -19,6 +19,7 @@ from app.api.deps import (
     get_tenant_context_for_assistant,
     validate_csrf,
 )
+from app.api.rate_limiter import check_question_rate_limit
 from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState
 from app.db.models import (
     Assistant,
@@ -250,9 +251,29 @@ async def ask_question(
     user_uuid = UUID(tenant_ctx.user_id)
     asst_uuid = UUID(payload.assistant_id)
 
+    settings = get_api_settings(request)
+
     async with tenant_session(tenant_ctx) as db_session:
+        # 0. Enforce database-backed per-user and per-tenant question rate limits
+        await check_question_rate_limit(
+            db_session=db_session,
+            tenant_uuid=tenant_uuid,
+            user_uuid=user_uuid,
+            user_max_requests=settings.question_rate_limit_user_max_requests,
+            tenant_max_requests=settings.question_rate_limit_tenant_max_requests,
+            window_seconds=settings.question_rate_limit_window_seconds,
+        )
+
         # 1. Resolve or create conversation
         if payload.conversation_id:
+            conv_check = await db_session.execute(
+                select(Conversation.id).where(
+                    Conversation.tenant_id == tenant_uuid,
+                    Conversation.id == payload.conversation_id,
+                )
+            )
+            if conv_check.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
             conv_uuid = payload.conversation_id
         else:
             conv = Conversation(
@@ -284,7 +305,6 @@ async def ask_question(
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
 
         # 4. Instantiate request-scoped runtime context and invoke engine
-        settings = get_api_settings(request)
         ports = get_engine_ports(settings=settings)
 
         runtime_ctx = GraphRuntimeContext(
@@ -402,7 +422,18 @@ async def ask_question_stream(
     user_uuid = UUID(tenant_ctx.user_id)
     asst_uuid = UUID(payload.assistant_id)
 
+    settings = get_api_settings(request)
+
     async with tenant_session(tenant_ctx) as db_session:
+        await check_question_rate_limit(
+            db_session=db_session,
+            tenant_uuid=tenant_uuid,
+            user_uuid=user_uuid,
+            user_max_requests=settings.question_rate_limit_user_max_requests,
+            tenant_max_requests=settings.question_rate_limit_tenant_max_requests,
+            window_seconds=settings.question_rate_limit_window_seconds,
+        )
+
         asst_stmt = select(Assistant.name).where(
             Assistant.tenant_id == tenant_uuid,
             Assistant.id == asst_uuid,
@@ -410,6 +441,14 @@ async def ask_question_stream(
         asst_name = (await db_session.execute(asst_stmt)).scalar_one_or_none() or "Assistant"
 
         if payload.conversation_id:
+            conv_check = await db_session.execute(
+                select(Conversation.id).where(
+                    Conversation.tenant_id == tenant_uuid,
+                    Conversation.id == payload.conversation_id,
+                )
+            )
+            if conv_check.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
             conv_uuid = payload.conversation_id
         else:
             conv = Conversation(
