@@ -59,4 +59,3 @@ UI-057,3,Shell,Guardrails locked built-in safety rules,"Open Guardrails page","5
 UI-058,3,Shell,Actions placeholder card,"Open Actions page","Renders placeholder card: 'Coming soon. Actions that call other systems need a separate security review.'",Pass,10/20/2026,,ADR-0014 verified by shell.test.tsx
 UI-059,3,Shell,Workspace settings tabs,"Open /settings","General tab renders read-only workspace name; Members tab displays Not connected yet disclaimer",Pass,10/20/2026,,ADR-0014 verified by shell.test.tsx
 UI-060,3,Shell,Legacy route redirects,"Navigate to /assistants/[id]/chat or /knowledge","Automatically redirects to /assistants/[id] (Home) and /assistants/[id]/data-sources",Pass,10/20/2026,,ADR-0014 verified by shell.test.tsx
-

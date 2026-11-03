@@ -1,8 +1,8 @@
 """Unit tests for reranker model offline loading, pinned revision, and question payload validation."""
 
-import os
-import pytest
 from uuid import UUID
+
+import pytest
 
 from app.adapters.reranking.bge_reranker import (
     BgeRerankerConfig,

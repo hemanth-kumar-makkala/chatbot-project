@@ -2603,3 +2603,22 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/` execution: `uv run python -m pytest -m "not models" -q` with `APP_PROFILE=mock`: **739 passed, 1 skipped, 0 failed**.
   - Repository root execution: `uv run --project backend python -m pytest backend/tests -m "not models" -q`: **739 passed, 1 skipped, 0 failed**.
   - Pre-commit: All 10 hooks passed cleanly (`uv run --project backend pre-commit run --files ...`).
+
+## 2026-11-03 — CI Mypy Dependency Isolation Fix (Optional Groups)
+
+- **Context & CI Pre-commit Failure**:
+  - GitHub Actions CI installs only default dependencies via `uv sync --frozen` (without optional `parsing` or `retrieval` dependency groups), since CI runs purely on `APP_PROFILE=mock` and does not run real models.
+  - The CI pre-commit mypy step failed with:
+    - `app/adapters/reranking/bge_reranker.py:88` and `app/adapters/embedding/bge_m3.py:110`: `Cannot find implementation or library stub for module named "torch" [import-not-found]`.
+    - `app/adapters/embedding/bge_m3.py:164`: `Returning Any from function declared to return "SentenceTransformerModelProtocol" [no-any-return]`.
+- **Mypy Override Configuration (`backend/pyproject.toml`)**:
+  - Added `"torch"` and `"torch.*"` to `[[tool.mypy.overrides]]` with `ignore_missing_imports = true` alongside `"easyocr"` and `"sentence_transformers.*"`.
+  - Ensures mypy passes type-checking cleanly regardless of whether optional model groups (`torch`, `sentence-transformers`, `easyocr`) are installed or omitted.
+- **Return Type Annotation in `load_bge_m3_model` (`backend/app/adapters/embedding/bge_m3.py`)**:
+  - In line 164, eliminated `no-any-return` by assigning the loaded instance to an explicitly typed variable:
+    `model: SentenceTransformerModelProtocol = loaded; _LOADED_MODELS[cache_key] = model; return model`.
+  - Avoids `typing.cast` and `# type: ignore`, adhering strictly to codebase conventions.
+- **Verification**:
+  - Verified mypy across all 190 source files in current environment with optional groups installed: `Success: no issues found in 190 source files`.
+  - Verified situation without groups: verified that `ignore_missing_imports` suppresses `[import-not-found]` for `torch` and that variable type annotation satisfies `no-any-return` when `sentence_transformers` yields `Any`. (No new environment created via installs/downloads, adhering to AGENTS.md rules).
+  - Pre-commit run on changed files: `uv run --project backend pre-commit run --files backend/pyproject.toml backend/app/adapters/embedding/bge_m3.py docs/STATUS.md docs/BUILD_LOG.md`: all 10 hooks passed cleanly.

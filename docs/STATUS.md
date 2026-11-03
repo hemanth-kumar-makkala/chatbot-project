@@ -338,6 +338,8 @@
   - Test suite passes cleanly on fresh clone and in CI from both `backend/` and repository root (`739 passed, 1 skipped, 0 failed`).
   - Storage paths normalized across test fixtures using pytest `tmp_path`.
   - Golden files resolved from repo root using `Path(__file__)`.
+  - CI mypy configuration hardened: `torch` and `torch.*` added to `tool.mypy.overrides` in `backend/pyproject.toml` so CI passes with default dependencies (`uv sync --frozen`, without optional `parsing` or `retrieval` groups).
+  - Model typing in `backend/app/adapters/embedding/bge_m3.py` annotated with `SentenceTransformerModelProtocol` variable assignment, resolving `no-any-return` without `cast` or `# type: ignore`.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.

@@ -1,7 +1,7 @@
 """Integration tests for staff-allowed document file streaming and page thumbnail routes (Part F)."""
 
-import os
-from uuid import UUID, uuid4
+from uuid import uuid4
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -56,10 +56,12 @@ async def test_staff_document_file_and_thumbnail_routes(test_app, api_settings, 
         tenant_b = uuid4()
 
         async with unscoped_session() as session:
-            session.add_all([
-                Tenant(id=tenant_a, name="Clinic A"),
-                Tenant(id=tenant_b, name="Clinic B"),
-            ])
+            session.add_all(
+                [
+                    Tenant(id=tenant_a, name="Clinic A"),
+                    Tenant(id=tenant_b, name="Clinic B"),
+                ]
+            )
             await session.flush()
 
         # Create staff user in Tenant A and client_admin in Tenant B
@@ -86,36 +88,40 @@ async def test_staff_document_file_and_thumbnail_routes(test_app, api_settings, 
         )
 
         async with tenant_session(ctx_a) as session:
-            session.add_all([
-                Assistant(
-                    id=asst_a_id,
-                    tenant_id=tenant_a,
-                    name="Clinic A Assistant",
-                    prompt_id="answer_synthesis",
-                    prompt_version="1.0.0",
-                ),
-                Document(id=doc_id, tenant_id=tenant_a, title="Protocols.pdf", is_retired=False),
-                DocumentVersion(
-                    id=ver_id,
-                    tenant_id=tenant_a,
-                    document_id=doc_id,
-                    sha256="dummy-sha",
-                    uploaded_by=staff_a.id,
-                    status="ready",
-                    file_extension="pdf",
-                ),
-                Page(
-                    id=page_id,
-                    tenant_id=tenant_a,
-                    document_version_id=ver_id,
-                    page_number=1,
-                    page_sha256="page1sha",
-                    page_type="digital_text",
-                    image_key=f"{tenant_a}/pages/{ver_id}/page_1.png",
-                    needs_review=False,
-                    is_excluded=False,
-                ),
-            ])
+            session.add_all(
+                [
+                    Assistant(
+                        id=asst_a_id,
+                        tenant_id=tenant_a,
+                        name="Clinic A Assistant",
+                        prompt_id="answer_synthesis",
+                        prompt_version="1.0.0",
+                    ),
+                    Document(
+                        id=doc_id, tenant_id=tenant_a, title="Protocols.pdf", is_retired=False
+                    ),
+                    DocumentVersion(
+                        id=ver_id,
+                        tenant_id=tenant_a,
+                        document_id=doc_id,
+                        sha256="dummy-sha",
+                        uploaded_by=staff_a.id,
+                        status="ready",
+                        file_extension="pdf",
+                    ),
+                    Page(
+                        id=page_id,
+                        tenant_id=tenant_a,
+                        document_version_id=ver_id,
+                        page_number=1,
+                        page_sha256="page1sha",
+                        page_type="digital_text",
+                        image_key=f"{tenant_a}/pages/{ver_id}/page_1.png",
+                        needs_review=False,
+                        is_excluded=False,
+                    ),
+                ]
+            )
             await session.flush()
 
         async with tenant_session(ctx_b) as session:

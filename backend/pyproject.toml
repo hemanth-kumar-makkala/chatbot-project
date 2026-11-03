@@ -108,6 +108,8 @@ module = [
     "easyocr",
     "sentence_transformers",
     "sentence_transformers.*",
+    "torch",
+    "torch.*",
 ]
 ignore_missing_imports = true
 

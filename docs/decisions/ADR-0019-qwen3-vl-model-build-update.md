@@ -39,4 +39,3 @@ An audit across the repository for where model digests and versions are pinned o
 - Verified local Ollama model list reports ID `a1b29c246319` for `qwen3-vl:4b`.
 - Verified manifest digest `sha256:a1b29c246319cdcb1f3842f36d29f198f737c0cf516ba1bcba34b1b974e87980` in `cka-data/ollama/manifests/registry.ollama.ai/library/qwen3-vl/4b`.
 - Updated mock digest in `backend/tests/unit/test_ollama_provider.py`; 18/18 tests pass.
-

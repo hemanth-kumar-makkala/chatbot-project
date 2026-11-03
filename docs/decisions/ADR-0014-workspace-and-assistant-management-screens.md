@@ -5,7 +5,7 @@
 - **Author**: Engineering Architecture Team / Antigravity
 
 ## Context & Problem Statement
-The original build plan specified that the application would avoid administrative dashboards, designating the single "Knowledge page" as the sole administrative screen alongside a split chat interface (`Client Knowledge Assistant Architecture and Build Plan.md`, lines 78-80, 84-85, 93-100). 
+The original build plan specified that the application would avoid administrative dashboards, designating the single "Knowledge page" as the sole administrative screen alongside a split chat interface (`Client Knowledge Assistant Architecture and Build Plan.md`, lines 78-80, 84-85, 93-100).
 
 In operational practice, tenants require multi-assistant partitioning per client (e.g. clinic-specific workflows, billing assistants, intake coordinators). Presenting assistants through an ad-hoc picker without dedicated management screens restricts administrative lifecycle control (configuration, instructions, safety guardrails, settings). Furthermore, staff users require a clear operational layout separating immediate consultation (Home chat) from transcript review (Conversations) and source document ingestion (Data sources).
 

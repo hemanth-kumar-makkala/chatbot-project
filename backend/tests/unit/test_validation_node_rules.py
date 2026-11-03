@@ -13,7 +13,6 @@ PHASE-3 Requirements:
 
 from __future__ import annotations
 
-from typing import Any
 import pytest
 
 from app.core.graph import (
@@ -121,7 +120,9 @@ class TestValidationNodeRules:
             "evidence_ids": ["t1"],
             "validation_attempts": 0,
         }
-        res_valid = await node_validate(state_valid, type("MockRuntime", (), {"context": base_context})())
+        res_valid = await node_validate(
+            state_valid, type("MockRuntime", (), {"context": base_context})()
+        )
         assert res_valid["status"] == "completed"
 
         # Invalid table answer inventing values not in tables_data
@@ -137,7 +138,9 @@ class TestValidationNodeRules:
             "evidence_ids": ["t1"],
             "validation_attempts": 0,
         }
-        res_invalid = await node_validate(state_invalid, type("MockRuntime", (), {"context": base_context})())
+        res_invalid = await node_validate(
+            state_invalid, type("MockRuntime", (), {"context": base_context})()
+        )
         assert res_invalid["status"] == "retry"
 
     @pytest.mark.asyncio

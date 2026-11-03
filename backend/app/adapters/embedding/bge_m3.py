@@ -160,8 +160,9 @@ def load_bge_m3_model(config: BgeM3Config) -> SentenceTransformerModelProtocol:
             error_code="CONFIGURATION_ERROR",
         ) from exc
 
-    _LOADED_MODELS[cache_key] = loaded
-    return loaded
+    model: SentenceTransformerModelProtocol = loaded
+    _LOADED_MODELS[cache_key] = model
+    return model
 
 
 class BgeM3EmbeddingProvider(EmbeddingProvider):
