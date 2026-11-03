@@ -1,4 +1,6 @@
-"""Unit tests for reranker model offline loading, pinned revision, and question payload validation."""
+"""Unit tests for reranker model offline loading, pinned revision,
+and question payload validation.
+"""
 
 from uuid import UUID
 
@@ -13,7 +15,7 @@ from app.api.routes.questions import QuestionRequest
 from app.ports.errors import ConfigurationError
 from app.wiring import create_reranker
 
-PINNED_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+PINNED_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"  # pragma: allowlist secret
 
 
 def test_bge_reranker_config_requires_revision() -> None:
@@ -42,7 +44,9 @@ def test_bge_reranker_config_valid_with_revision() -> None:
 
 
 def test_create_reranker_wiring_profile_guards(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reranker is wired only for desktop-gpu and home-gpu; other real profiles raise ConfigurationError."""
+    """Reranker is wired only for desktop-gpu and home-gpu;
+    other real profiles raise ConfigurationError.
+    """
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
 
     # Mock works

@@ -36,7 +36,9 @@ def base_context() -> GraphRuntimeContext:
 
 
 class TestValidationNodeRules:
-    """Verifies Task 3.5 quote verification, table row containment, explain point filtering, and rejection of echoed titles."""
+    """Verifies Task 3.5 quote verification, table row containment,
+    explain point filtering, and rejection of echoed titles.
+    """
 
     @pytest.mark.asyncio
     async def test_quoted_span_exact_character_for_character_match_passes(
@@ -66,7 +68,9 @@ class TestValidationNodeRules:
     async def test_hallucinated_quote_triggers_retry_then_refuses(
         self, base_context: GraphRuntimeContext
     ) -> None:
-        """Requirement 1: Hallucinated quote fails, retries on attempt 0, then refuses on attempt 1."""
+        """Requirement 1: Hallucinated quote fails, retries on attempt 0,
+        then refuses on attempt 1.
+        """
         base_context.evidence_text = {"c1": "Prior auth is required for surgeries."}
         base_context.response_text = "Submitted 10 days early."
         base_context.generated_answer = {
@@ -104,7 +108,10 @@ class TestValidationNodeRules:
     ) -> None:
         """Requirement 1: Table answers contain only rows and values that exist in tables_data."""
         # Row 1 exists with Crestview Health Gold Tier $500
-        table_row_text = "[Document: accepted_plans.csv, Sheet: Sheet1, Row: 1] Plan: Crestview Health, Tier: Gold, Deductible: $500.00"
+        table_row_text = (
+            "[Document: accepted_plans.csv, Sheet: Sheet1, Row: 1] "
+            "Plan: Crestview Health, Tier: Gold, Deductible: $500.00"
+        )
         base_context.evidence_text = {"t1": table_row_text}
 
         # Valid table answer containing values from tables_data
@@ -226,7 +233,9 @@ class TestValidationNodeRules:
     async def test_explain_mode_all_points_fail_retries_once_then_refuses(
         self, base_context: GraphRuntimeContext
     ) -> None:
-        """Requirement 2: explain mode where all points fail retries on attempt 0, then refuses on attempt 1."""
+        """Requirement 2: explain mode where all points fail retries on attempt 0,
+        then refuses on attempt 1.
+        """
         base_context.evidence_text = {"c1": "Policy 2026-PA-01."}
         points = [
             {

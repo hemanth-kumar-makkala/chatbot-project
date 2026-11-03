@@ -2622,3 +2622,17 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Verified mypy across all 190 source files in current environment with optional groups installed: `Success: no issues found in 190 source files`.
   - Verified situation without groups: verified that `ignore_missing_imports` suppresses `[import-not-found]` for `torch` and that variable type annotation satisfies `no-any-return` when `sentence_transformers` yields `Any`. (No new environment created via installs/downloads, adhering to AGENTS.md rules).
   - Pre-commit run on changed files: `uv run --project backend pre-commit run --files backend/pyproject.toml backend/app/adapters/embedding/bge_m3.py docs/STATUS.md docs/BUILD_LOG.md`: all 10 hooks passed cleanly.
+
+## 2026-11-03 — CI Pre-commit Hardening: Ruff E501 & Detect-Secrets
+
+- **Ruff E501 Line Length Corrections**:
+  - Wrapped docstrings in `backend/tests/integration/test_staff_source_routes.py` (lines 1 and 49).
+  - Wrapped docstrings in `backend/tests/unit/test_reranker_model_offline.py` (lines 1 and 45).
+  - Wrapped docstrings in `backend/tests/unit/test_validation_node_rules.py` (lines 39, 69, 229).
+  - Split test data string in `backend/tests/unit/test_validation_node_rules.py` (line 107) with implicit string concatenation, maintaining exact byte-for-byte value.
+- **Detect-Secrets Public Model Revision Allowlisting**:
+  - Added `# pragma: allowlist secret` to `PINNED_RERANKER_REVISION` in `backend/tests/unit/test_reranker_model_offline.py` (line 16).
+  - Extracted public revision hash in `backend/tests/unit/test_reranker_node.py` to `PINNED_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"  # pragma: allowlist secret` and reused the constant across all test cases.
+- **Verification**:
+  - Executed `uv run --project backend pre-commit run --all-files` twice from repo root: all 10 hooks passed cleanly on both passes with 0 files modified on the second run.
+  - Executed `uv --directory backend run python -m pytest tests/unit/test_validation_node_rules.py tests/unit/test_reranker_node.py tests/unit/test_reranker_model_offline.py tests/integration/test_staff_source_routes.py -m "not models" -q`: 33 passed, 1 deselected, 1 error (at session setup in `test_staff_source_routes.py` due to PostgreSQL service offline on port 5432).

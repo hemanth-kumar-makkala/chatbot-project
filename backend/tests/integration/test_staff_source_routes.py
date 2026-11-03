@@ -1,4 +1,6 @@
-"""Integration tests for staff-allowed document file streaming and page thumbnail routes (Part F)."""
+"""Integration tests for staff-allowed document file streaming
+and page thumbnail routes (Part F).
+"""
 
 from uuid import uuid4
 
@@ -46,7 +48,9 @@ def test_app(api_settings: ApiSettings):
 
 @pytest.mark.asyncio
 async def test_staff_document_file_and_thumbnail_routes(test_app, api_settings, tmp_path) -> None:
-    """Verify staff can access original document file and page thumbnail with strict tenant isolation."""
+    """Verify staff can access original document file and page thumbnail
+    with strict tenant isolation.
+    """
     api_settings.profile = "mock"
     api_settings.storage_dir = str(tmp_path)
     storage = create_storage_backend(profile="mock", base_dir=str(tmp_path))

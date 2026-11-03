@@ -229,25 +229,28 @@ class TestMockReranker:
         assert [r.rank for r in results] == [1, 2, 3]
 
 
+PINNED_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"  # pragma: allowlist secret
+
+
 class TestBgeRerankerConfigValidation:
     """Tests for BgeReranker configuration validation."""
 
     def test_validate_valid_config(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
-            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            "revision": PINNED_RERANKER_REVISION,
             "device": "cpu",
         }
         cfg = validate_bge_reranker_config(raw)
         assert cfg.model == "BAAI/bge-reranker-v2-m3"
-        assert cfg.revision == "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+        assert cfg.revision == PINNED_RERANKER_REVISION
         assert cfg.device == "cpu"
         assert cfg.max_length == 1024
 
     def test_validate_custom_max_length_and_batch_size(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
-            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            "revision": PINNED_RERANKER_REVISION,
             "device": "cpu",
             "max_length": 512,
             "batch_size": 16,
@@ -259,7 +262,7 @@ class TestBgeRerankerConfigValidation:
     def test_validate_unsupported_device_raises(self) -> None:
         raw = {
             "model": "BAAI/bge-reranker-v2-m3",
-            "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            "revision": PINNED_RERANKER_REVISION,
             "device": "tpu",
         }
         with pytest.raises(ConfigurationError) as exc_info:
@@ -279,7 +282,7 @@ class TestBgeRerankerAdapter:
         mock_model = MagicMock()
         cfg = BgeRerankerConfig(
             model="test-reranker",
-            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            revision=PINNED_RERANKER_REVISION,
             device="cpu",
         )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
@@ -296,7 +299,7 @@ class TestBgeRerankerAdapter:
 
         cfg = BgeRerankerConfig(
             model="test-reranker",
-            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            revision=PINNED_RERANKER_REVISION,
             device="cpu",
         )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
@@ -339,7 +342,7 @@ class TestBgeRerankerAdapter:
 
         cfg = BgeRerankerConfig(
             model="test-reranker",
-            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            revision=PINNED_RERANKER_REVISION,
             device="cpu",
         )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
@@ -358,7 +361,7 @@ class TestBgeRerankerAdapter:
 
         cfg = BgeRerankerConfig(
             model="test-reranker",
-            revision="953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+            revision=PINNED_RERANKER_REVISION,
             device="cpu",
         )
         adapter = BgeRerankerAdapter(model=mock_model, config=cfg)
