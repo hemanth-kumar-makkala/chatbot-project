@@ -2693,3 +2693,21 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - Executed `uv run --project backend pre-commit run --all-files`: all 10 hooks passed with 0 errors.
   - Executed `uv --directory backend run python -m pytest tests/eval/test_phase4_extraction_eval.py -q`: 3 passed in 0.42s.
   - Executed `uv --directory backend run python -m pytest tests/unit/test_session_document_upload_safety.py -q`: 3 passed in 0.38s.
+
+## 2026-11-03 — CI Fix: Model Marker Isolation and Docling Skip
+
+- **Context & CI Test Failures**:
+  - In CI (where optional `parsing` and `retrieval` dependency groups are not installed, running `pytest -m "not models"`), two tests failed:
+    1. `tests/integration/test_docling_parser.py::TestDoclingParserAdapterContracts::test_docling_extract_missing_confidence_gives_nan`: Failed with `ConfigurationError: Docling is not installed` because `docling` is an optional dependency omitted in CI.
+    2. `tests/unit/test_ingestion_word_order.py::test_front_desk_v1_and_v2_word_order_preserved`: Failed with `ConfigurationError: DOCLING_ARTIFACTS_PATH missing` because it instantiates real `DoclingDocumentParser` with CUDA and model artifacts but lacked `@pytest.mark.models`.
+- **Changes Applied**:
+  - In `backend/tests/integration/test_docling_parser.py`: added `pytest.importorskip("docling")` to `test_docling_extract_missing_confidence_gives_nan`. Chosen because this adapter contract test uses mock converter objects (`stub_converter`, `stub_doc`) and does not require downloaded model weights; it only requires the `docling` library to be present. In CI without `docling`, pytest cleanly skips it; in environments with `docling`, it executes and verifies NaN confidence resolution.
+  - In `backend/tests/unit/test_ingestion_word_order.py`: marked `test_front_desk_v1_and_v2_word_order_preserved` with `@pytest.mark.models` because it executes neural OCR / document conversion using real Docling model artifacts on GPU.
+  - Added Rule 10 to `AGENTS.md` under `## Build Rules ("Working with Antigravity")`:
+    "10. Every test that needs real models, Docling or downloaded weights must carry @pytest.mark.models, because CI runs pytest -m 'not models' without those dependencies."
+- **Audit of Other Unmarked Model Tests**:
+  - Performed deep scan across all tests in `backend/tests/` for real model loaders (`DoclingDocumentParser`, `load_bge_m3_model`, `load_reranker_model`, `FlagReranker`, `OllamaModelProvider`).
+  - Confirmed all other tests calling real model weights (`test_real_docling_*`, `TestRealDoclingModelsDesktop`, `test_threshold_measured_*`, `test_bge_m3_real_model_*`, `test_reranker_offline_real_weights`, `test_ollama_provider_real_model`) already carry `@pytest.mark.models`. Tests using mock providers or mock transports remain unmarked.
+- **Verification**:
+  - `pre-commit run --all-files`: all 10 hooks passed cleanly with 0 errors.
+  - `APP_PROFILE=mock python -m pytest -m "not models" -q`: **741 passed, 1 skipped, 11 deselected** in 5m 25s.

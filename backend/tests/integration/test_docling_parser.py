@@ -98,6 +98,7 @@ class TestDoclingParserAdapterContracts:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Missing conv_res.confidence must resolve to NaN, never defaulting to 1.0."""
+        pytest.importorskip("docling")
         from unittest.mock import MagicMock
 
         stub_doc = MagicMock()

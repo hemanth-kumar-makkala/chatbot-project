@@ -23,6 +23,7 @@ if not DOCS_DIR.exists():
     DOCS_DIR = PROJECT_ROOT / "evals" / "golden" / "docs"
 
 
+@pytest.mark.models
 @pytest.mark.asyncio
 async def test_front_desk_v1_and_v2_word_order_preserved() -> None:
     """Assert that front_desk_policy_v1 and v2 preserve reading order and key phrases."""

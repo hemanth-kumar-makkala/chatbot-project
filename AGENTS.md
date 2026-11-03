@@ -35,6 +35,7 @@ After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.m
 7. All test data is synthetic. No real documents in the repository, ever.
 8. Each module ends with a short review: what was built, what was decided, what is unclear. Decisions go into an ADR.
 9. Stop and ask when the spec is silent. Do not fill gaps with assumptions.
+10. Every test that needs real models, Docling or downloaded weights must carry @pytest.mark.models, because CI runs pytest -m 'not models' without those dependencies.
 
 ## Review Checklist (Before Accepting Any Module)
 - [ ] Staged all changes with `git add -A`, and `pre-commit run --all-files` passes on all files.
