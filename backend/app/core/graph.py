@@ -1218,8 +1218,21 @@ async def node_generate(
                             p_quote = raw_q.strip('"').strip("'")
                             if p_text:
                                 point_lines.append(f"- {p_text}")
+                            cites = AnswerOutput.parse_evidence_ids(p_dict.get("evidence_ids", []))
+                            cites = [str(c).strip("[]'\"") for c in cites if str(c).strip("[]'\"")]
                             matched_cid = None
-                            if p_quote:
+                            if p_quote and cites:
+                                for cid in cites:
+                                    if cid in used_evidence and (
+                                        p_quote in used_evidence[cid]
+                                        or (
+                                            p_quote.rstrip(".,;")
+                                            and p_quote.rstrip(".,;") in used_evidence[cid]
+                                        )
+                                    ):
+                                        matched_cid = cid
+                                        break
+                            if not matched_cid and p_quote:
                                 for eid, text in used_evidence.items():
                                     if p_quote in text or (
                                         p_quote.rstrip(".,;") and p_quote.rstrip(".,;") in text
@@ -1229,9 +1242,6 @@ async def node_generate(
                             if matched_cid:
                                 all_point_cites.add(matched_cid)
                             else:
-                                cites = AnswerOutput.parse_evidence_ids(
-                                    p_dict.get("evidence_ids", [])
-                                )
                                 for c in cites:
                                     if str(c) in used_evidence:
                                         all_point_cites.add(str(c))
@@ -1425,9 +1435,21 @@ async def node_validate(
                     p_cites = AnswerOutput.parse_evidence_ids(p_dict.get("evidence_ids", []))
                     p_cites = [str(c).strip("[]'\"") for c in p_cites if str(c).strip("[]'\"")]
 
-                    # Find which chunk in evidence contains p_quote
+                    # Find which chunk in evidence contains p_quote (check cited chunk first)
                     matched_eid = None
-                    if p_quote:
+                    if p_quote and p_cites:
+                        for cid in p_cites:
+                            if cid in evidence and (
+                                p_quote in evidence[cid]
+                                or (
+                                    p_quote.rstrip(".,;") and p_quote.rstrip(".,;") in evidence[cid]
+                                )
+                            ):
+                                matched_eid = cid
+                                break
+
+                    # If not matched in cited chunks, search all evidence for exact match
+                    if not matched_eid and p_quote:
                         for eid, chunk_txt in evidence.items():
                             if p_quote in chunk_txt or (
                                 p_quote.rstrip(".,;") and p_quote.rstrip(".,;") in chunk_txt
@@ -1435,15 +1457,18 @@ async def node_validate(
                                 matched_eid = eid
                                 break
 
-                    # If not matched directly, check if any cited chunk or any chunk has quote
-                    if not matched_eid and p_cites:
-                        for cid in p_cites:
-                            if cid in evidence and p_quote in evidence[cid]:
-                                matched_eid = cid
-                                break
-
                     # If still not matched directly, check with flexible whitespace
-                    # to get exact chunk slice
+                    # in cited chunks first
+                    if not matched_eid and p_quote and p_cites:
+                        for cid in p_cites:
+                            if cid in evidence:
+                                exact_sub = _find_exact_quote_in_chunk(p_quote, "", evidence[cid])
+                                if exact_sub and exact_sub in evidence[cid]:
+                                    matched_eid = cid
+                                    p_quote = exact_sub
+                                    break
+
+                    # If still not matched, check flexible whitespace across all chunks
                     if not matched_eid and p_quote:
                         for eid, chunk_txt in evidence.items():
                             exact_sub = _find_exact_quote_in_chunk(p_quote, "", chunk_txt)
@@ -1484,6 +1509,7 @@ async def node_validate(
                     if (
                         ans_header
                         and ans_header.strip()
+                        and not ans_header.strip().startswith("-")
                         and not any(ans_header.strip() == p["point"] for p in valid_points)
                     ):
                         runtime.context.response_text = f"{ans_header}\n" + "\n".join(point_lines)

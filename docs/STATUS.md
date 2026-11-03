@@ -66,15 +66,15 @@
       - Cross-tenant isolation enforced returning 404 for conversations belonging to other tenants.
       - Proving unit tests in `backend/tests/unit/test_session_document_upload_safety.py` (3/3 pass).
     - **ADR-0019 Re-measurement on Ollama Build `a1b29c246319`**:
-      - Re-ran `scripts/calibrate_vision_threshold.py` on real `qwen3-vl:4b` build `a1b29c246319`:
-        - `clean_fax.pdf` p1: 0.9176 (correct)
-        - `skewed_fax.pdf` p1: 0.9261 (correct; Amoxicillin 500mg verified by fuzzy token comparison)
-        - `faint_fax_2page.pdf` p1: 0.9312 (correct)
-        - `faint_fax_2page.pdf` p2: 0.8967 (correct)
-        - Lowest correct confidence: 0.8967; Highest misread confidence: None (0 misread pages on this build). Provisional threshold `0.70` confirmed and preserved.
+      - Re-ran `scripts/calibrate_vision_threshold.py` on real `qwen3-vl:4b` build `a1b29c246319` with strict exact matching after canonical normalization (reverted fuzzy matching; one-letter drug spelling difference strictly treated as misread):
+        - `clean_fax.pdf` p1: 0.9176 (CORRECT)
+        - `skewed_fax.pdf` p1: 0.9280 (MISREAD: raw vision `'Amoxillin 500mg'` vs printed `'Amoxicillin 500mg'`)
+        - `faint_fax_2page.pdf` p1: 0.9312 (CORRECT)
+        - `faint_fax_2page.pdf` p2: 0.8967 (CORRECT)
+        - Lowest correct confidence: 0.8967; Highest misread confidence: 0.9280.
     - **Phase 3 Smoke Run on Ollama Build `a1b29c246319`**:
       - Executed `tests/step4_smoke_run.py` on live PostgreSQL throwaway database with 5 ingested golden smoke documents:
-        - 9/11 scored yes by automated code assertions (identical to old build `1343d82ebee3`), with stable 2-6s per question latency.
+        - 10/11 scored yes by automated code assertions (Q1 is adversarial clinic data probe correctly refused as WEAK; Q4 outpatient guide summary passes with validated 3-5 point RELIABLE_TEXT answer after prompt tightening and token truncation JSON repair).
     - **Visual Recovery Hit@5 Recomputation on Live Database**:
       - Executed `scripts/eval_visual_recovery_hit5.py` against live PostgreSQL throwaway database. Ingested 7 golden documents and queried `PostgresRetriever` across all 16 `VISUAL_RECOVERY` questions (`VR-001` through `VR-016`). Every single target page retrieved in Top-5 (16/16 = 100.0% Hit@5).
     - **Proving Tests**: `backend/tests/eval/test_phase4_extraction_eval.py` (3/3 pass), all 47 eval tests pass in 1.48s.

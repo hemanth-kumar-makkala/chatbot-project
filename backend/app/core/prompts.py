@@ -250,7 +250,7 @@ def format_answer_prompt(
         mode_description = "exact (Provide the verbatim stored span or direct code/identifier from evidence with minimal framing)"
     elif mode == "explain":
         mode_description = (
-            "explain (Provide a structured summary as a list of 'points'. Output must populate 'points' with objects "
+            "explain (Provide a structured summary as a list of 3-5 key 'points'. Output must populate 'points' with objects "
             "containing 'point' (the factual sentence), 'quoted_span' (exact verbatim substring copied from evidence text), "
             "and 'evidence_ids' (the chunk ID string where the quote appears). Copy quotes exactly with no alterations.)"
         )

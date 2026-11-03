@@ -13,7 +13,6 @@ For each page:
 from __future__ import annotations
 
 import asyncio
-import difflib
 import io
 import json
 import os
@@ -25,67 +24,104 @@ from typing import Any
 import pypdfium2  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 
+from app.core.normalization import (
+    normalize_dates,
+    normalize_digits_and_numbers,
+    normalize_ids,
+)
 from app.ports.errors import ConfigurationError
 from app.ports.types import ModelRole, PageReading
 from app.wiring import create_model_provider
 
 
 def normalize_value(val: str) -> str:
-    """Normalize text by lowercasing, stripping punctuation, and collapsing whitespace."""
+    """Normalize text by lowercasing, collapsing whitespace, and stripping non-word characters."""
     s = val.lower().strip()
     s = re.sub(r"[\r\n\t]+", " ", s)
     s = re.sub(r"[^\w\s/]+", " ", s)
     return " ".join(s.split())
 
 
-def normalize_digits_only(val: str) -> str:
-    """Extract only alphanumeric characters for phone and ID comparisons."""
-    return re.sub(r"\W+", "", val.lower())
+def check_value_in_reading(expected: str, raw_reading: str) -> tuple[bool, str]:
+    """Check if expected value appears exactly in transcribed reading after normalization.
 
+    Normalizes case, whitespace, and applies app core normalizers (dates, IDs, numbers).
+    A one-letter drug-name discrepancy ('Amoxillin' vs 'Amoxicillin') strictly counts as MISREAD.
 
-def _token_matches(expected_token: str, reading_tokens: list[str]) -> bool:
-    """Check if token exists in reading tokens either directly or via high-similarity match."""
-    if expected_token in reading_tokens:
-        return True
-    if len(expected_token) >= 5:
-        for t in reading_tokens:
-            if len(t) >= 5 and difflib.SequenceMatcher(None, expected_token, t).ratio() >= 0.85:
-                return True
-    return False
+    Returns:
+        (matched: bool, raw_vision_text: str)
+    """
+    norm_expected = normalize_value(expected)
+    norm_reading = normalize_value(raw_reading)
+
+    # 1. Dates: compare canonical YYYY-MM-DD via app core normalizer
+    exp_dates = normalize_dates(expected)
+    if exp_dates:
+        read_dates = normalize_dates(raw_reading)
+        if exp_dates.issubset(read_dates):
+            date_pats = (
+                r"\b(20\d\d-[01]\d-[0-3]\d|[01]?\d/[0-3]?\d/20\d\d|"
+                r"[A-Za-z]+\s+\d{1,2},?\s+20\d\d)\b"
+            )
+            for m in re.finditer(date_pats, raw_reading):
+                if normalize_dates(m.group(0)) == exp_dates:
+                    return True, m.group(0)
+            return True, expected
+        return False, "<NOT FOUND>"
+
+    # 2. IDs: compare canonical MRN, phone, codes via app core normalizer
+    exp_ids = normalize_ids(expected)
+    if exp_ids:
+        read_ids = normalize_ids(raw_reading)
+        if exp_ids.issubset(read_ids):
+            m_spec = re.search(re.escape(expected), raw_reading, re.IGNORECASE)
+            if m_spec:
+                return True, m_spec.group(0)
+            for tok in re.finditer(r"\b\w+(?:[-.]\w+)*\b", raw_reading):
+                if normalize_ids(tok.group(0)) & exp_ids:
+                    return True, tok.group(0)
+            return True, expected
+        return False, "<NOT FOUND>"
+
+    # 3. Direct normalized substring match (exact character-level word matching)
+    if norm_expected in norm_reading:
+        words = [re.escape(w) for w in re.split(r"[\s/]+", expected) if w]
+        pattern = r"[\s\W]+".join(words)
+        m = re.search(pattern, raw_reading, re.IGNORECASE)
+        if m:
+            return True, m.group(0)
+        return True, expected
+
+    # 4. Standalone digits/quantities (e.g. '6', '0')
+    exp_nums = normalize_digits_and_numbers(expected)
+    read_nums = normalize_digits_and_numbers(raw_reading)
+    if exp_nums and exp_nums.issubset(read_nums) and len(norm_expected.split()) == 1:
+        pattern = r"\b" + re.escape(expected) + r"\b"
+        m = re.search(pattern, raw_reading, re.IGNORECASE)
+        if m:
+            return True, m.group(0)
+        return True, expected
+
+    # 5. Misread values: extract closest context window from vision text
+    for w in expected.split():
+        if len(w) >= 3:
+            m = re.search(r"\b\w+\s+" + re.escape(w) + r"\b", raw_reading, re.IGNORECASE)
+            if m:
+                return False, m.group(0)
+            m = re.search(r"\b" + re.escape(w) + r"\s+\w+\b", raw_reading, re.IGNORECASE)
+            if m:
+                return False, m.group(0)
+            m = re.search(r"\b" + re.escape(w) + r"\b", raw_reading, re.IGNORECASE)
+            if m:
+                return False, m.group(0)
+
+    return False, "<NOT FOUND>"
 
 
 def value_appears_in_reading(expected: str, reading: str) -> bool:
     """Check if expected normalized key value appears in the transcribed reading."""
-    norm_expected = normalize_value(expected)
-    norm_reading = normalize_value(reading)
-
-    if norm_expected in norm_reading:
-        return True
-
-    # Check alphanumeric stripped (e.g. phone numbers '5550155' vs '555-0155'
-    # or IDs 'mrn4412a' vs 'mrn-4412-a')
-    digits_expected = normalize_digits_only(expected)
-    digits_reading = normalize_digits_only(reading)
-    if len(digits_expected) >= 4 and digits_expected in digits_reading:
-        return True
-
-    reading_tokens = norm_reading.split()
-
-    # Check word tokens for compound terms (e.g. 'MRI lumbar spine' or 'Amoxicillin 500mg')
-    expected_words = norm_expected.split()
-    if len(expected_words) > 1:
-        all_words_present = True
-        for w in expected_words:
-            if len(w) > 2 and not _token_matches(w, reading_tokens):
-                all_words_present = False
-                break
-        if all_words_present:
-            return True
-    else:
-        if _token_matches(norm_expected, reading_tokens):
-            return True
-
-    return False
+    matched, _ = check_value_in_reading(expected, reading)
+    return matched
 
 
 # Expected key ground-truth values per golden VISUAL_RECOVERY document and page
@@ -181,17 +217,24 @@ async def calibrate_visual_recovery_pages(
             raw_text = reading_result.reading
 
             misread_values: list[str] = []
+            print(f"  Checked values for {file_name} (Page {page_num}):")
             for val in expected_vals:
-                if not value_appears_in_reading(val, raw_text):
+                matched, raw_snippet = check_value_in_reading(val, raw_text)
+                label = "FOUND" if matched else "MISREAD"
+                if not matched:
                     misread_values.append(val)
+                print(
+                    f"    - Printed: {val!r:42} | Raw vision: {raw_snippet!r:35} | Label: {label}"
+                )
 
             is_correct = len(misread_values) == 0
+            page_label = "CORRECT" if is_correct else "MISREAD"
 
             print(
-                f"    Confidence: {confidence:.4f} | "
-                f"Correct: {is_correct} | "
-                f"Misread ({len(misread_values)}): {misread_values} | "
-                f"Time: {elapsed:.2f}s"
+                f"  Page {page_num} Result: Confidence={confidence:.4f} | "
+                f"Status={page_label} | "
+                f"Misread count={len(misread_values)} | "
+                f"Time={elapsed:.2f}s\n"
             )
 
             snippet = raw_text[:300].replace("\n", " ").strip()

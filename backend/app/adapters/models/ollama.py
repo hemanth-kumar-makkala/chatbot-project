@@ -583,7 +583,21 @@ class OllamaModelProvider(ModelProvider):
                     end = clean_json.rfind("}") + 1
                     clean_json = clean_json[start:end]
 
-                parsed = json.loads(clean_json)
+                try:
+                    parsed = json.loads(clean_json)
+                except json.JSONDecodeError:
+                    # Handle truncated array/object (e.g. explain mode points hitting token ceiling)
+                    last_brace = clean_json.rfind("}")
+                    if last_brace != -1:
+                        candidate = clean_json[: last_brace + 1].strip()
+                        if "[" in candidate and not candidate.endswith("]"):
+                            candidate += "]}"
+                        elif not candidate.endswith("}"):
+                            candidate += "}"
+                        parsed = json.loads(candidate)
+                    else:
+                        raise
+
                 if not isinstance(parsed, dict):
                     raise ValueError("Parsed JSON is not an object")
                 validated = schema.model_validate(parsed)

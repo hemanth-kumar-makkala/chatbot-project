@@ -11,6 +11,7 @@ Steps:
 5. Reports whether expected target page is retrieved in Top-5 for each question.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import asyncio
@@ -37,16 +38,16 @@ load_dotenv(BACKEND_DIR / ".env")
 from alembic import command
 from procrastinate import PsycopgConnector
 from sqlalchemy import select, text
+from tests.conftest import isolated_throwaway_database
 
 from app.adapters.auth.builtin import BuiltinAuthProvider
 from app.adapters.retrieval.postgres_retriever import PostgresRetriever
-from app.db.models import Assistant, Document, DocumentVersion, Membership, Page, Tenant, User
+from app.db.models import Assistant, DocumentVersion, Membership, Tenant, User
 from app.db.session import reset_session_engines, tenant_session, unscoped_session
 from app.ports.types import RetrievalFilters, TenantContext, UploadPayload, UserRole
 from app.wiring import create_embedding_provider, create_upload_service
 from app.worker import app as worker_app
 from app.worker import split_document_job
-from tests.conftest import isolated_throwaway_database
 
 DOCS_TO_INGEST = [
     "clean_fax.pdf",
@@ -200,10 +201,18 @@ async def run_visual_recovery_eval() -> dict[str, Any]:
                                         select(DocumentVersion).where(DocumentVersion.id == ver_id)
                                     )
                                 ).scalar_one_or_none()
-                                if ver is not None and ver.status in ("ready", "needs_review", "error"):
-                                    print(f"    [{ver.status.upper()}] {doc_name} in {round(time.monotonic() - start_wait, 1)}s")
+                                if ver is not None and ver.status in (
+                                    "ready",
+                                    "needs_review",
+                                    "error",
+                                ):
+                                    elapsed = round(time.monotonic() - start_wait, 1)
+                                    status_str = ver.status.upper()
+                                    print(f"    [{status_str}] {doc_name} in {elapsed}s")
                                     if ver.status == "error":
-                                        print(f"    ERROR details for {doc_name}: {ver.error_message}")
+                                        print(
+                                            f"    ERROR details for {doc_name}: {ver.error_message}"
+                                        )
                                     break
                             await asyncio.sleep(1.0)
 
@@ -233,7 +242,10 @@ async def run_visual_recovery_eval() -> dict[str, Any]:
                     hits_count = 0
 
                     print("\n" + "=" * 90)
-                    print("EVALUATING VISUAL RECOVERY QUESTIONS (VR-001 TO VR-016) VIA HYBRID RETRIEVAL")
+                    print(
+                        "EVALUATING VISUAL RECOVERY QUESTIONS (VR-001 TO VR-016) "
+                        "VIA HYBRID RETRIEVAL"
+                    )
                     print("=" * 90)
 
                     for q in vr_questions:
@@ -279,19 +291,32 @@ async def run_visual_recovery_eval() -> dict[str, Any]:
 
                         hit_str = "YES" if hit else "NO"
                         top_pages_str = ", ".join(f"{fn}:p{pn}" for fn, pn in retrieved_pages)
-                        print(f"[{qid}] Hit: {hit_str:<3} | Target: {expected_filename} (p{expected_page}) | Top-5: {top_pages_str}")
+                        target_info = f"{expected_filename} (p{expected_page})"
+                        print(
+                            f"[{qid}] Hit: {hit_str:<3} | "
+                            f"Target: {target_info} | "
+                            f"Top-5: {top_pages_str}"
+                        )
 
                     hit_at_5 = round(hits_count / len(vr_questions), 4)
 
                     print("\n" + "=" * 90)
                     print("VISUAL RECOVERY RETRIEVAL RESULTS TABLE")
                     print("=" * 90)
-                    print("| Question ID | Target Document | Page | In Top-5? | Top-5 Retrieved Candidates |")
+                    print(
+                        "| Question ID | Target Document | Page | In Top-5? | "
+                        "Top-5 Retrieved Candidates |"
+                    )
                     print("|---|---|---|---|---|")
                     for r in eval_results:
                         hit_badge = "**YES**" if r["hit"] else "NO"
                         top_str = "; ".join(r["retrieved_pages"])
-                        print(f"| {r['id']} | {r['expected_document']} | {r['expected_page']} | {hit_badge} | {top_str} |")
+                        doc_col = r["expected_document"]
+                        page_col = r["expected_page"]
+                        row_line = (
+                            f"| {r['id']} | {doc_col} | {page_col} | {hit_badge} | {top_str} |"
+                        )
+                        print(row_line)
                     print("=" * 90)
                     print(f"Total VR Questions:       {len(vr_questions)}")
                     print(f"Top-5 Hits:               {hits_count}")

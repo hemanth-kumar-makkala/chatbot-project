@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app.adapters.models.ollama import (
     OllamaModelProvider,
 )
+from app.core.prompts import AnswerOutput
 from app.ports.errors import (
     MalformedOutput,
 )
@@ -240,3 +241,55 @@ async def test_no_thinking_text_leaks_to_answer_or_confidence(
         result.structured_output["answer"] == "Clean verified clinical answer without any thinking."
     )
     assert "<think>" not in str(result.structured_output)
+
+
+@pytest.mark.asyncio
+async def test_generate_handles_truncated_explain_mode_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """generate salvages completed points from truncated JSON and drops incomplete point."""
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    # Simulate model reaching token ceiling mid-point 3
+    truncated_content = (
+        '{"points": ['
+        '{"point": "Point 1 text", "quoted_span": "Quote 1", "evidence_ids": ["c1"]}, '
+        '{"point": "Point 2 text", "quoted_span": "Quote 2", "evidence_ids": ["c2"]}, '
+        '{"point": "Incomplete point 3 text", "quoted_span": "Incomplete'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+            )
+        if request.url.path == "/api/chat":
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "role": "assistant",
+                        "content": truncated_content,
+                    },
+                    "eval_count": 768,
+                },
+            )
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=_create_mock_transport(handler))
+    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client)
+
+    result = await provider.generate(
+        role=ModelRole.ANSWER,
+        messages=[ChatMessage(role="user", content="Summarize")],
+        schema=AnswerOutput,
+    )
+
+    assert result.structured_output is not None
+    points = result.structured_output.get("points")
+    assert points is not None
+    assert len(points) == 2
+    assert points[0]["point"] == "Point 1 text"
+    assert points[1]["point"] == "Point 2 text"
+    assert not any("Incomplete" in str(p) for p in points)

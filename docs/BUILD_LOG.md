@@ -2751,3 +2751,32 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - Pre-commit: `uv run --project backend pre-commit run --all-files` passed all 10 hooks with 0 errors.
   - Pytest: `uv --directory backend run python -m pytest tests/eval/test_phase4_extraction_eval.py -q` passed 3/3 tests in 0.42s.
+
+## 2026-11-03 — Phase 4 Close: Exact Calibration Normalization & Explain-Mode Truncation Recovery
+
+- **Task Overview**:
+  - Reverted fuzzy matching in vision calibration: exact matching enforced after canonical normalization (one-letter drug spelling discrepancy strictly counts as misread).
+  - Investigated and resolved Q4 smoke refusal on `qwen3-vl:4b` build `a1b29c246319`: fixed explain-mode output token truncation and citation prioritization.
+- **1. Vision Confidence Calibration on Build `a1b29c246319` (Exact Normalization)**:
+  - Reverted `difflib.SequenceMatcher` from `backend/scripts/calibrate_vision_threshold.py`.
+  - Replaced with exact matching after applying `app.core.normalization` (dates canonicalized to `YYYY-MM-DD`, IDs normalized, numbers/digits matched).
+  - Recomputed against `evals/golden/manifest.json`:
+    - `clean_fax.pdf` (p1): 8/8 FOUND, Confidence=0.9176, Status=CORRECT
+    - `skewed_fax.pdf` (p1): 9/10 FOUND, Raw vision `'Amoxillin 500mg'` vs Printed `'Amoxicillin 500mg'`, Status=MISREAD, Confidence=0.9280
+    - `faint_fax_2page.pdf` (p1): 6/6 FOUND, Confidence=0.9312, Status=CORRECT
+    - `faint_fax_2page.pdf` (p2): 6/6 FOUND, Confidence=0.8967, Status=CORRECT
+  - Summary: 3 Correct pages (lowest confidence 0.8967), 1 Misread page (highest confidence 0.9280). Rewrote `evals/reports/vision_calibration.json`.
+- **2. Explain-Mode Truncation Recovery & Citation Prioritization**:
+  - Root Cause of Q4 refusal: Build `a1b29c246319` generated 11 verbose summary points for explain mode, hitting `MAX_TOKENS_EXPLAIN=768` mid-token in JSON string. Incomplete JSON caused `json.loads` decode error, which fell back to generic refusal. Additionally, cross-document citation contamination matched common words across distractors.
+  - Fixes:
+    - `backend/app/core/prompts.py`: tightened prompt description to ask for `3-5 key 'points'` in explain mode.
+    - `backend/app/adapters/models/ollama.py`: added balanced JSON truncation recovery in `generate_answer`: when `json.loads` encounters a syntax error due to token cutoff, it finds the last completed point object (`rfind("}")`), slices out the cut-off trailing point, and balances brackets/braces (`]}`).
+    - `backend/app/core/graph.py`: prioritized model-emitted citations (`p_cites`) in both `node_generate` and `node_validate` before scanning un-cited chunks, preventing cross-document contamination. Added bullet guard to prevent duplicate bullet formatting in `node_validate`.
+    - `backend/tests/unit/test_ollama_generate.py`: added unit test `test_generate_handles_truncated_explain_mode_json` verifying truncated JSON is cleanly repaired, partial cut-off points are discarded, and surviving points are fully validated.
+- **3. Phase 3 Smoke Run on Build `a1b29c246319`**:
+  - Re-executed `tests/step4_smoke_run.py` on live PostgreSQL throwaway database.
+  - Q4 now passes with validated 3-5 point summary in `RELIABLE_TEXT` state citing `prior_auth_guide.pdf`.
+  - 10 of 11 questions scored complete and correct (`yes`). (Q1 is adversarial clinic probe correctly refused as `WEAK`).
+- **Verification**:
+  - Pre-commit: `uv run --project backend pre-commit run --all-files` passed all 10 hooks with 0 errors.
+  - Pytest: `uv --directory backend run python -m pytest tests/unit/test_ollama_generate.py` passed 5/5 tests in 0.42s.
