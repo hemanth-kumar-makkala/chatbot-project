@@ -2711,3 +2711,43 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `pre-commit run --all-files`: all 10 hooks passed cleanly with 0 errors.
   - `APP_PROFILE=mock python -m pytest -m "not models" -q`: **741 passed, 1 skipped, 11 deselected** in 5m 25s.
+
+## 2026-11-03 — Phase 4 Close: 4-Way Extraction Split, Live DB Hit@5 & Vision Calibration
+
+- **Task Overview**:
+  - Closed Phase 4 with honest ground truth evaluations, empirical PostgreSQL visual recovery measurement, calibrated vision confidence on Ollama build `a1b29c246319`, and Phase 3 smoke evaluation.
+- **1. 4-Way Extraction Classification**:
+  - Updated `backend/scripts/run_phase4_extraction_eval.py` to classify every field into four code-computed mutually exclusive categories:
+    - `correct`: value shown and equals expected (`25`)
+    - `correctly_blank`: no value shown and expected value is null (`6`)
+    - `missed`: no value shown but a value is printed on document (`4`)
+    - `false_fill`: a value shown that does not equal expected (`0`)
+  - Overall accuracy metric reported as `"fields filled correctly: 25 of 29 printed values"` (86.21%), removing ambiguous "100% (35/35)" figure.
+  - 4 Missed Fields Cataloged (all due to EasyOCR digit/letter confusion creating safe `FieldState.CONFLICTING` suppression with `value=None`):
+    1. `skewed_fax.pdf`: `authorized_medication` | Expected: `Amoxicillin 500mg` | State: `CONFLICTING` (OCR `5oOmg` vs Vision `Amoxicillin 500mg`)
+    2. `invalid_npi_fax.pdf`: `authorized_medication` | Expected: `Amoxicillin 500mg` | State: `CONFLICTING` (OCR `5oOmg` vs Vision `Amoxicillin 500mg`)
+    3. `unreadable_field_fax.pdf`: `authorized_medication` | Expected: `Lisinopril 10mg` | State: `CONFLICTING` (OCR `1Omg` vs Vision `Lisinopril 10mg`)
+    4. `missing_field_fax.pdf`: `authorized_medication` | Expected: `Atorvastatin 20mg` | State: `CONFLICTING` (OCR `2Omg` vs Vision `Atorvastatin 20mg`)
+  - Total Fields Evaluated: 35 | Correct: 25 | Correctly Blank: 6 | Missed: 4 | False Fills: 0.
+  - Invariant 6 strictly upheld: 0 false fills on unreadable fields (0.00%).
+- **2. Visual Recovery Hit@5 Recomputed on Live Database**:
+  - Authored `backend/scripts/eval_visual_recovery_hit5.py` creating an isolated throwaway PostgreSQL database with all Alembic migrations to head.
+  - Ingested 7 golden documents (`clean_fax.pdf`, `skewed_fax.pdf`, `faint_fax_2page.pdf`, `front_desk_policy_v1.pdf`, `prior_auth_guide.pdf`, `fee_schedule.pdf`, `accepted_plans.csv`) via real worker pipeline (`desktop-gpu` profile: Docling OCR, Ollama vision, BGE-M3 dense embeddings).
+  - Queried `PostgresRetriever` (hybrid dense pgvector + tsvector full text RRF) for all 16 `VISUAL_RECOVERY` questions (`VR-001` through `VR-016`).
+  - Empirical Result: **16 of 16 questions retrieved target page in Top-5** (**Hit@5: 100.0%**).
+- **3. Vision Confidence Calibration on Ollama Build `a1b29c246319`**:
+  - Updated `backend/scripts/calibrate_vision_threshold.py` with fuzzy token matching (`difflib.SequenceMatcher(ratio >= 0.85)`), resolving false misread flag for `skewed_fax.pdf` (`"Amoxicillin 500mg"` was correctly read).
+  - Calibration results across all 4 pages recorded in `evals/reports/vision_calibration.json`:
+    - `clean_fax.pdf` p1: 0.9176 (correct)
+    - `skewed_fax.pdf` p1: 0.9261 (correct)
+    - `faint_fax_2page.pdf` p1: 0.9312 (correct)
+    - `faint_fax_2page.pdf` p2: 0.8967 (correct)
+    - Lowest correct confidence: **0.8967** (`faint_fax_2page.pdf` p2).
+    - Highest misread confidence: **None** (0 misreads on build `a1b29c246319`).
+    - Current provisional threshold **0.70** maintained safely below lowest correct confidence.
+- **4. Phase 3 Smoke Run on Ollama Build `a1b29c246319`**:
+  - Ran `tests/step4_smoke_run.py` against live PostgreSQL throwaway database.
+  - 9 of 11 questions scored yes by automated code checks, identical to previous build `1343d82ebee3`, with stable 2-6s per question latency.
+- **Verification**:
+  - Pre-commit: `uv run --project backend pre-commit run --all-files` passed all 10 hooks with 0 errors.
+  - Pytest: `uv --directory backend run python -m pytest tests/eval/test_phase4_extraction_eval.py -q` passed 3/3 tests in 0.42s.

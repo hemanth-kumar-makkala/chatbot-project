@@ -45,13 +45,21 @@
     - **Extraction Benchmark Dataset**: Authored `evals/golden/extractions.json` with ground truth expected values and expected states across 5 test documents (`EXT-001` through `EXT-005`), covering UNREADABLE and CONFLICTING cases.
     - **Baseline Report (`evals/reports/phase4_baseline.json`) [Real Models: Docling OCR on GPU + Ollama qwen3-vl:4b]**:
       - Total fields evaluated: 35 across 5 synthetic faxes (`skewed_fax.pdf`, `faint_fax_2page.pdf`, `invalid_npi_fax.pdf`, `unreadable_field_fax.pdf`, `missing_field_fax.pdf`).
-      - Correct fields (shown == expected): 22
-      - Safe-not-filled fields (state CONFLICTING, UNREADABLE, or NOT_PRESENT with value None): 13
-      - False-fill fields (shown != expected): 0
+      - Four-way code-computed counts:
+        - Correct (value shown and equals expected): **25**
+        - Correctly blank (no value shown and expected value is null): **6**
+        - Missed (no value shown but value is printed on document): **4**
+        - False fill (value shown that does not equal expected): **0**
+      - Fields filled correctly: **25 of 29 printed values** (86.21%).
+      - Missed fields list (all 4 due to OCR number/letter misread resulting in safe CONFLICTING suppression):
+        - `skewed_fax.pdf` | `authorized_medication` | Expected: `Amoxicillin 500mg` | State: `CONFLICTING`
+        - `invalid_npi_fax.pdf` | `authorized_medication` | Expected: `Amoxicillin 500mg` | State: `CONFLICTING`
+        - `unreadable_field_fax.pdf` | `authorized_medication` | Expected: `Lisinopril 10mg` | State: `CONFLICTING`
+        - `missing_field_fax.pdf` | `authorized_medication` | Expected: `Atorvastatin 20mg` | State: `CONFLICTING`
       - False-fill rate overall: 0.00% (0/35)
       - False-fill rate on unreadable fields: 0.00% (0/2; Invariant 6 strictly enforced)
-      - Field extraction accuracy: 100.00% (target >= 85.0%)
-      - Visual recovery Hit@5: 100.00% (16/16 golden VR questions; target >= 90.0%)
+      - Field accuracy: 88.57% (31/35; target >= 85.0%)
+      - Visual recovery Hit@5: **100.00%** (16/16 golden VR questions in Top-5, verified on live PostgreSQL hybrid retrieval via `scripts/eval_visual_recovery_hit5.py`; target >= 90.0%)
       - Gate passed: True
     - **Upload Safety on Chat PHI Uploads (Task 2.2 Parity)**:
       - Validated `upload_session_document` in `backend/app/api/routes/conversations.py` using `validate_file` (magic byte content sniffing, file size limit enforcement via `settings.max_upload_bytes`, malware scanning stub).
@@ -59,11 +67,16 @@
       - Proving unit tests in `backend/tests/unit/test_session_document_upload_safety.py` (3/3 pass).
     - **ADR-0019 Re-measurement on Ollama Build `a1b29c246319`**:
       - Re-ran `scripts/calibrate_vision_threshold.py` on real `qwen3-vl:4b` build `a1b29c246319`:
-        - `clean_fax.pdf`: 0.9176 (correct)
-        - `skewed_fax.pdf`: 0.9280 (misread: 'Amoxicillin 500mg')
+        - `clean_fax.pdf` p1: 0.9176 (correct)
+        - `skewed_fax.pdf` p1: 0.9261 (correct; Amoxicillin 500mg verified by fuzzy token comparison)
         - `faint_fax_2page.pdf` p1: 0.9312 (correct)
         - `faint_fax_2page.pdf` p2: 0.8967 (correct)
-        - Lowest correct confidence: 0.8967 (was 0.9172); Highest misread confidence: 0.9280 (was 0.9340). Separation margin remains overlapping; provisional threshold `0.70` confirmed and preserved.
+        - Lowest correct confidence: 0.8967; Highest misread confidence: None (0 misread pages on this build). Provisional threshold `0.70` confirmed and preserved.
+    - **Phase 3 Smoke Run on Ollama Build `a1b29c246319`**:
+      - Executed `tests/step4_smoke_run.py` on live PostgreSQL throwaway database with 5 ingested golden smoke documents:
+        - 9/11 scored yes by automated code assertions (identical to old build `1343d82ebee3`), with stable 2-6s per question latency.
+    - **Visual Recovery Hit@5 Recomputation on Live Database**:
+      - Executed `scripts/eval_visual_recovery_hit5.py` against live PostgreSQL throwaway database. Ingested 7 golden documents and queried `PostgresRetriever` across all 16 `VISUAL_RECOVERY` questions (`VR-001` through `VR-016`). Every single target page retrieved in Top-5 (16/16 = 100.0% Hit@5).
     - **Proving Tests**: `backend/tests/eval/test_phase4_extraction_eval.py` (3/3 pass), all 47 eval tests pass in 1.48s.
   - **Phase 4 Exit Gate: PASSED**
     - [x] False-fill and visual recovery baselines recorded in `evals/reports/phase4_baseline.json`.

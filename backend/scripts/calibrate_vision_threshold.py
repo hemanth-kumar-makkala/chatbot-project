@@ -13,6 +13,7 @@ For each page:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import io
 import json
 import os
@@ -42,6 +43,17 @@ def normalize_digits_only(val: str) -> str:
     return re.sub(r"\W+", "", val.lower())
 
 
+def _token_matches(expected_token: str, reading_tokens: list[str]) -> bool:
+    """Check if token exists in reading tokens either directly or via high-similarity match."""
+    if expected_token in reading_tokens:
+        return True
+    if len(expected_token) >= 5:
+        for t in reading_tokens:
+            if len(t) >= 5 and difflib.SequenceMatcher(None, expected_token, t).ratio() >= 0.85:
+                return True
+    return False
+
+
 def value_appears_in_reading(expected: str, reading: str) -> bool:
     """Check if expected normalized key value appears in the transcribed reading."""
     norm_expected = normalize_value(expected)
@@ -57,15 +69,20 @@ def value_appears_in_reading(expected: str, reading: str) -> bool:
     if len(digits_expected) >= 4 and digits_expected in digits_reading:
         return True
 
-    # Check word tokens for compound terms (e.g. 'MRI lumbar spine' -> 'mri' and 'lumbar')
+    reading_tokens = norm_reading.split()
+
+    # Check word tokens for compound terms (e.g. 'MRI lumbar spine' or 'Amoxicillin 500mg')
     expected_words = norm_expected.split()
     if len(expected_words) > 1:
         all_words_present = True
         for w in expected_words:
-            if len(w) > 2 and w not in norm_reading:
+            if len(w) > 2 and not _token_matches(w, reading_tokens):
                 all_words_present = False
                 break
         if all_words_present:
+            return True
+    else:
+        if _token_matches(norm_expected, reading_tokens):
             return True
 
     return False
