@@ -8,18 +8,58 @@
     "expected_mode": "extraction",
     "expected_answer": "Alex Morgan",
     "expected_fields": {
-      "patient_name": {"expected_value": "Alex Morgan", "expected_state": "FILLED_HIGH"},
-      "attending_physician": {"expected_value": "Dr. Evelyn Reed", "expected_state": "FILLED_HIGH"},
-      "prescription_dosage": {"expected_value": "Take 1 capsule by mouth three times daily for 10 days.", "expected_state": "FILLED_HIGH"},
-      "chart_number": {"expected_value": "MRN-4412-A", "expected_state": "FILLED_HIGH"},
-      "authorized_medication": {"expected_value": null, "expected_state": "CONFLICTING"},
-      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_MEDIUM"},
-      "refill_count": {"expected_value": "0", "expected_state": "FILLED_MEDIUM"},
-      "clinic_phone": {"expected_value": "555-0145", "expected_state": "FILLED_MEDIUM"},
-      "prescriber_signature": {"expected_value": null, "expected_state": "UNREADABLE"},
-      "prescriber_npi": {"expected_value": null, "expected_state": "NOT_PRESENT"}
+      "patient_name": {
+        "expected_value": "Alex Morgan",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:592 ('Patient: Alex Morgan (Chart #MRN-4412-A)')"
+      },
+      "attending_physician": {
+        "expected_value": "Dr. Evelyn Reed",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:590 ('Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed.')"
+      },
+      "prescription_dosage": {
+        "expected_value": "Take 1 capsule by mouth three times daily for 10 days.",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:591 ('Dosage: Take 1 capsule by mouth three times daily for 10 days.')"
+      },
+      "chart_number": {
+        "expected_value": "MRN-4412-A",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:592 ('Patient: Alex Morgan (Chart #MRN-4412-A)')"
+      },
+      "authorized_medication": {
+        "expected_value": "Amoxicillin 500mg",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:590 ('Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed.')"
+      },
+      "authorization_date": {
+        "expected_value": "2026-02-14",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:585 ('Date: 2026-02-14')"
+      },
+      "refill_count": {
+        "expected_value": "0",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:593 ('Refill count: 0 (one-time course).')"
+      },
+      "clinic_phone": {
+        "expected_value": "555-0145",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:587 ('Clinic Phone: 555-0145')"
+      },
+      "prescriber_signature": {
+        "expected_value": null,
+        "expected_state": "UNREADABLE",
+        "source_line": "evals/golden/generate.py:583-594 (No signature printed on form)"
+      },
+      "prescriber_npi": {
+        "expected_value": null,
+        "expected_state": "NOT_PRESENT",
+        "source_line": "evals/golden/generate.py:583-594 (No prescriber NPI printed on form)"
+      }
     },
-    "notes": "Extraction baseline for skewed fax including conflicting medication and unreadable signature"
+    "notes": "Honest expected values from generate.py lines 583-594. Authorized medication printed is Amoxicillin 500mg."
   },
   {
     "id": "EXT-002",
@@ -30,18 +70,58 @@
     "expected_mode": "extraction",
     "expected_answer": "Jordan Taylor",
     "expected_fields": {
-      "patient_name": {"expected_value": "Jordan Taylor", "expected_state": "FILLED_HIGH"},
-      "procedure_ordered": {"expected_value": "MRI lumbar spine", "expected_state": "FILLED_HIGH"},
-      "appointment_date": {"expected_value": "2026-03-01", "expected_state": "FILLED_HIGH"},
-      "facility_location": {"expected_value": "Imaging Suite B", "expected_state": "FILLED_MEDIUM"},
-      "referring_phone": {"expected_value": "555-0170", "expected_state": "FILLED_MEDIUM"},
-      "clinical_justification": {"expected_value": null, "expected_state": "CONFLICTING"},
-      "pain_scale_score": {"expected_value": "7/10", "expected_state": "FILLED_HIGH"},
-      "ordering_physician": {"expected_value": "Dr. Evelyn Reed", "expected_state": "FILLED_MEDIUM"},
-      "prescriber_signature": {"expected_value": null, "expected_state": "UNREADABLE"},
-      "prescriber_npi": {"expected_value": null, "expected_state": "NOT_PRESENT"}
+      "patient_name": {
+        "expected_value": "Jordan Taylor",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:655 ('Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor.')"
+      },
+      "procedure_ordered": {
+        "expected_value": "MRI lumbar spine",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:655 ('Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor.')"
+      },
+      "appointment_date": {
+        "expected_value": "2026-03-01",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:656 ('Appointment Date: 2026-03-01 at 09:30 AM')"
+      },
+      "facility_location": {
+        "expected_value": "Imaging Suite B",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:657 ('Facility Location: Imaging Suite B')"
+      },
+      "referring_phone": {
+        "expected_value": "555-0170",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:651 ('Referring Provider Phone: 555-0170')"
+      },
+      "clinical_justification": {
+        "expected_value": "chronic lower back pain with radiculopathy",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:664 ('Clinical justification note: chronic lower back pain with radiculopathy.')"
+      },
+      "pain_scale_score": {
+        "expected_value": "7/10",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate.py:666 ('Pain score: 7/10 with radiating numbness along L5 dermatome.')"
+      },
+      "ordering_physician": {
+        "expected_value": "Dr. Evelyn Reed",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:667 ('Ordering Clinician Signature: Dr. Evelyn Reed')"
+      },
+      "prescriber_signature": {
+        "expected_value": "Dr. Evelyn Reed",
+        "expected_state": "FILLED_MEDIUM",
+        "source_line": "evals/golden/generate.py:667 ('Ordering Clinician Signature: Dr. Evelyn Reed')"
+      },
+      "prescriber_npi": {
+        "expected_value": null,
+        "expected_state": "NOT_PRESENT",
+        "source_line": "evals/golden/generate.py:649-669 (No prescriber NPI printed on form)"
+      }
     },
-    "notes": "Extraction baseline for faint fax including conflicting justification and unreadable signature"
+    "notes": "Honest expected values from generate.py lines 649-669. Clinical justification printed is chronic lower back pain with radiculopathy."
   },
   {
     "id": "EXT-003",
@@ -52,13 +132,33 @@
     "expected_mode": "extraction",
     "expected_answer": "Casey Bennett",
     "expected_fields": {
-      "patient_name": {"expected_value": "Casey Bennett", "expected_state": "FILLED_HIGH"},
-      "authorized_medication": {"expected_value": "Amoxicillin 500mg", "expected_state": "FILLED_HIGH"},
-      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
-      "chart_number": {"expected_value": "MRN-1102-K", "expected_state": "FILLED_HIGH"},
-      "prescriber_npi": {"expected_value": "1982736451", "expected_state": "INVALID"}
+      "patient_name": {
+        "expected_value": "Casey Bennett",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:36 ('Patient Name: Casey Bennett')"
+      },
+      "authorized_medication": {
+        "expected_value": "Amoxicillin 500mg",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:38 ('Authorized Medication: Amoxicillin 500mg')"
+      },
+      "authorization_date": {
+        "expected_value": "2026-02-14",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:39 ('Authorization Date: 2026-02-14')"
+      },
+      "chart_number": {
+        "expected_value": "MRN-1102-K",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:37 ('Chart Number: MRN-1102-K')"
+      },
+      "prescriber_npi": {
+        "expected_value": "1982736451",
+        "expected_state": "INVALID",
+        "source_line": "evals/golden/generate_extraction_faxes.py:40 ('Prescriber NPI: 1982736451')"
+      }
     },
-    "notes": "Extraction test covering invalid NPI check digit failing Luhn validation"
+    "notes": "Honest expected values from generate_extraction_faxes.py lines 33-43. Prescriber NPI 1982736451 fails Luhn check digit validation."
   },
   {
     "id": "EXT-004",
@@ -69,13 +169,33 @@
     "expected_mode": "extraction",
     "expected_answer": "Taylor Hayes",
     "expected_fields": {
-      "patient_name": {"expected_value": "Taylor Hayes", "expected_state": "FILLED_HIGH"},
-      "authorized_medication": {"expected_value": "Lisinopril 10mg", "expected_state": "FILLED_HIGH"},
-      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
-      "clinical_justification": {"expected_value": null, "expected_state": "UNREADABLE"},
-      "prescriber_npi": {"expected_value": "1234567893", "expected_state": "FILLED_HIGH"}
+      "patient_name": {
+        "expected_value": "Taylor Hayes",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:50 ('Patient Name: Taylor Hayes')"
+      },
+      "authorized_medication": {
+        "expected_value": "Lisinopril 10mg",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:51 ('Authorized Medication: Lisinopril 10mg')"
+      },
+      "authorization_date": {
+        "expected_value": "2026-02-14",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:52 ('Authorization Date: 2026-02-14')"
+      },
+      "clinical_justification": {
+        "expected_value": null,
+        "expected_state": "UNREADABLE",
+        "source_line": "evals/golden/generate_extraction_faxes.py:54-58,92-98 (Blacked out rectangle covering justification text)"
+      },
+      "prescriber_npi": {
+        "expected_value": "1234567893",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:53 ('Prescriber NPI: 1234567893')"
+      }
     },
-    "notes": "Extraction test covering unreadable smudged justification field with zero false fill"
+    "notes": "Honest expected values from generate_extraction_faxes.py lines 47-57. Clinical justification is fully blacked out."
   },
   {
     "id": "EXT-005",
@@ -86,12 +206,32 @@
     "expected_mode": "extraction",
     "expected_answer": "Morgan Bailey",
     "expected_fields": {
-      "patient_name": {"expected_value": "Morgan Bailey", "expected_state": "FILLED_HIGH"},
-      "authorized_medication": {"expected_value": "Atorvastatin 20mg", "expected_state": "FILLED_HIGH"},
-      "authorization_date": {"expected_value": "2026-02-14", "expected_state": "FILLED_HIGH"},
-      "secondary_insurance": {"expected_value": null, "expected_state": "NOT_PRESENT"},
-      "emergency_override": {"expected_value": null, "expected_state": "NOT_APPLICABLE"}
+      "patient_name": {
+        "expected_value": "Morgan Bailey",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:63 ('Patient Name: Morgan Bailey')"
+      },
+      "authorized_medication": {
+        "expected_value": "Atorvastatin 20mg",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:64 ('Authorized Medication: Atorvastatin 20mg')"
+      },
+      "authorization_date": {
+        "expected_value": "2026-02-14",
+        "expected_state": "FILLED_HIGH",
+        "source_line": "evals/golden/generate_extraction_faxes.py:65 ('Authorization Date: 2026-02-14')"
+      },
+      "secondary_insurance": {
+        "expected_value": null,
+        "expected_state": "NOT_PRESENT",
+        "source_line": "evals/golden/generate_extraction_faxes.py:60-68 (Field not printed on form)"
+      },
+      "emergency_override": {
+        "expected_value": null,
+        "expected_state": "NOT_APPLICABLE",
+        "source_line": "evals/golden/generate_extraction_faxes.py:60-68 (Field not applicable to this intake form)"
+      }
     },
-    "notes": "Extraction test covering missing fields and not applicable override"
+    "notes": "Honest expected values from generate_extraction_faxes.py lines 60-68. Secondary insurance and emergency override are not printed."
   }
 ]

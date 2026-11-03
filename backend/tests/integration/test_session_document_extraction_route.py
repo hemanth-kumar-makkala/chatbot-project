@@ -209,3 +209,47 @@ async def test_session_document_upload_and_extraction_route(
             )
             assert bad_resp.status_code == 400
             assert "INVALID_FILE_TYPE" in bad_resp.text
+
+            # 6. Content sniffing rejection: plain text disguised as .pdf
+            sniff_fail_files = {
+                "file": (
+                    "disguised.pdf",
+                    io.BytesIO(b"This is not a real PDF file at all, just plain text."),
+                    "application/pdf",
+                )
+            }
+            sniff_resp = await client.post(
+                f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents",
+                files=sniff_fail_files,
+                cookies=cookies_a,
+                headers={"X-CSRF-Token": csrf_a},
+            )
+            assert sniff_resp.status_code == 400
+            assert "INVALID_FILE_TYPE" in sniff_resp.text
+
+            # 7. Oversize file rejection: exceeds max_upload_bytes
+            oversize_content = b"%PDF-1.4\n" + b"A" * (api_settings.max_upload_bytes + 1024)
+            oversize_files = {
+                "file": (
+                    "oversize.pdf",
+                    io.BytesIO(oversize_content),
+                    "application/pdf",
+                )
+            }
+            oversize_resp = await client.post(
+                f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents",
+                files=oversize_files,
+                cookies=cookies_a,
+                headers={"X-CSRF-Token": csrf_a},
+            )
+            assert oversize_resp.status_code == 413
+            assert "FILE_TOO_LARGE" in oversize_resp.text
+
+            # 8. Another tenant's conversation gets 404
+            cross_tenant_resp = await client.post(
+                f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents",
+                files=files,
+                cookies=cookies_b,
+                headers={"X-CSRF-Token": csrf_b},
+            )
+            assert cross_tenant_resp.status_code == 404

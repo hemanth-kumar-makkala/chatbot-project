@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pypdfium2  # type: ignore[import-untyped]
+from dotenv import load_dotenv
 
 from app.ports.errors import ConfigurationError
 from app.ports.types import ModelRole, PageReading
@@ -226,6 +227,9 @@ async def calibrate_visual_recovery_pages(
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent.parent
+    load_dotenv(repo_root / ".env")
+    load_dotenv(repo_root / "backend" / ".env")
+    load_dotenv()
     docs_dir = repo_root / "evals" / "golden" / "docs"
     reports_dir = repo_root / "evals" / "reports"
 

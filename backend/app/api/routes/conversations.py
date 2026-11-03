@@ -1,6 +1,5 @@
 """Conversation and message history management routes under tenant RLS (Task 3.6, Task 4.6)."""
 
-import hashlib
 import io
 import logging
 import re
@@ -23,10 +22,13 @@ from app.api.deps import (
 )
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField
+from app.core.ingestion.validation import validate_file
 from app.db.models import Conversation, ExtractionResult, Message, SessionDocument, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
+from app.ports.errors import FileValidationError, MalwareDetectedError
 from app.ports.types import SessionContext, TenantContext
+from app.wiring import create_malware_scanner
 
 logger = logging.getLogger(__name__)
 
@@ -540,16 +542,12 @@ async def upload_session_document(
     # Derive tenant context
     found_tenant_ctx: TenantContext | None = None
     if assistant_id:
-        try:
-            found_tenant_ctx = await get_tenant_context_for_assistant(
-                assistant_id=assistant_id,
-                session=session,
-                auth_provider=auth_provider,
-            )
-        except HTTPException:
-            found_tenant_ctx = None
-
-    if not found_tenant_ctx:
+        found_tenant_ctx = await get_tenant_context_for_assistant(
+            assistant_id=assistant_id,
+            session=session,
+            auth_provider=auth_provider,
+        )
+    else:
         async with unscoped_session() as db_session:
             tenant_ids = (await db_session.execute(select(Tenant.id))).scalars().all()
 
@@ -587,16 +585,32 @@ async def upload_session_document(
             raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
 
     content, filename = await _extract_upload_content_and_filename(request)
-    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
-    if ext not in ("pdf", "png", "jpg", "jpeg"):
-        raise HTTPException(status_code=400, detail="INVALID_FILE_TYPE")
-
     if not content:
         raise HTTPException(status_code=400, detail="EMPTY_FILE")
-    if len(content) > 25 * 1024 * 1024:
+
+    if len(content) > settings.max_upload_bytes:
         raise HTTPException(status_code=413, detail="FILE_TOO_LARGE")
 
-    file_sha256 = hashlib.sha256(content).hexdigest()
+    profile = getattr(settings, "profile", "mock")
+    scanner = create_malware_scanner(profile)
+    try:
+        validated = await validate_file(
+            filename=filename,
+            content=content,
+            malware_scanner=scanner,
+        )
+    except FileValidationError as exc:
+        if "size" in str(exc).lower():
+            raise HTTPException(status_code=413, detail="FILE_TOO_LARGE") from exc
+        raise HTTPException(status_code=400, detail="INVALID_FILE_TYPE") from exc
+    except MalwareDetectedError as exc:
+        raise HTTPException(status_code=400, detail="MALWARE_DETECTED") from exc
+
+    if validated.extension not in ("pdf", "png", "jpeg", "jpg", "tiff", "tif"):
+        raise HTTPException(status_code=400, detail="INVALID_FILE_TYPE")
+
+    ext = validated.extension
+    file_sha256 = validated.sha256
     doc_id = uuid4()
 
     # Save to disk under session storage

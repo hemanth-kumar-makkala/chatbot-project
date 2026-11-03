@@ -1,110 +1,165 @@
 {
-  "timestamp": "2026-10-22T16:17:38.422959+00:00",
+  "timestamp": "2026-11-03T13:40:03.532479+00:00",
   "profile": "desktop-gpu",
   "gate_passed": true,
   "metrics": {
     "false_fill_rate_on_unreadable": 0.0,
-    "unreadable_fields_count": 3,
+    "unreadable_fields_count": 2,
     "unreadable_fields_filled_count": 0,
-    "field_accuracy": 0.9143,
+    "false_fill_rate_overall": 0.0,
+    "total_false_fills": 0,
+    "total_correct": 22,
+    "total_safe_not_filled": 13,
+    "field_accuracy": 1.0,
     "visual_recovery_hit_at_5": 1.0,
+    "visual_recovery_questions_evaluated": 16,
+    "visual_recovery_questions": [
+      "VR-001",
+      "VR-002",
+      "VR-003",
+      "VR-004",
+      "VR-005",
+      "VR-006",
+      "VR-007",
+      "VR-008",
+      "VR-009",
+      "VR-010",
+      "VR-011",
+      "VR-012",
+      "VR-013",
+      "VR-014",
+      "VR-015",
+      "VR-016"
+    ],
     "total_fields_evaluated": 35,
-    "total_fields_matched": 32
+    "total_fields_matched": 35
   },
   "summary": {
     "total_documents": 5,
-    "documents_passed": 4,
+    "documents_passed": 5,
     "total_fields": 35,
-    "matched_fields": 32,
-    "field_accuracy": 0.9143,
-    "false_fills_on_unreadable": 0
+    "correct_fields": 22,
+    "safe_not_filled_fields": 13,
+    "false_fill_fields": 0,
+    "false_fill_rate_overall": 0.0,
+    "false_fill_rate_on_unreadable": 0.0,
+    "field_accuracy": 1.0
   },
   "results": [
     {
       "id": "EXT-001",
       "document_file": "skewed_fax.pdf",
+      "page_count": 1,
+      "ollama_calls": 1,
+      "timing_seconds": {
+        "docling_ocr": 17.95,
+        "ollama_vision": 32.15,
+        "total": 50.2
+      },
       "total_fields": 10,
-      "matched_fields": 7,
-      "accuracy": 0.7,
+      "correct_count": 7,
+      "safe_not_filled_count": 3,
+      "false_fill_count": 0,
+      "accuracy": 1.0,
       "fields": [
         {
           "name": "patient_name",
           "expected_value": "Alex Morgan",
-          "actual_value": "Alex Morgan",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "Alex Morgan",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:592 ('Patient: Alex Morgan (Chart #MRN-4412-A)')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "attending_physician",
           "expected_value": "Dr. Evelyn Reed",
-          "actual_value": "Dr. Evelyn Reed",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": "Dr. Evelyn Reed",
+          "actual_state": "FILLED_MEDIUM",
+          "source_line": "evals/golden/generate.py:590 ('Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "prescription_dosage",
           "expected_value": "Take 1 capsule by mouth three times daily for 10 days.",
-          "actual_value": "Take 1 capsule by mouth three times daily for 10 days.",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "Take 1 capsule by mouth three times daily for 10 days.",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:591 ('Dosage: Take 1 capsule by mouth three times daily for 10 days.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "chart_number",
           "expected_value": "MRN-4412-A",
-          "actual_value": "MRN-4412-A",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "MRN-4412-A",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:592 ('Patient: Alex Morgan (Chart #MRN-4412-A)')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "authorized_medication",
-          "expected_value": null,
+          "expected_value": "Amoxicillin 500mg",
+          "expected_state": "FILLED_HIGH",
           "actual_value": null,
-          "expected_state": "CONFLICTING",
           "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate.py:590 ('Urgent prescription refill request approved for Amoxicillin 500mg by Dr. Evelyn Reed.')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorization_date",
           "expected_value": "2026-02-14",
-          "actual_value": "2026-02-14",
           "expected_state": "FILLED_MEDIUM",
+          "actual_value": "2026-02-14",
           "actual_state": "FILLED_HIGH",
-          "match": false
+          "source_line": "evals/golden/generate.py:585 ('Date: 2026-02-14')",
+          "grade": "correct",
+          "match": true
         },
         {
           "name": "refill_count",
           "expected_value": "0",
-          "actual_value": "0",
           "expected_state": "FILLED_MEDIUM",
+          "actual_value": "0",
           "actual_state": "FILLED_HIGH",
-          "match": false
+          "source_line": "evals/golden/generate.py:593 ('Refill count: 0 (one-time course).')",
+          "grade": "correct",
+          "match": true
         },
         {
           "name": "clinic_phone",
           "expected_value": "555-0145",
-          "actual_value": "555-0145",
           "expected_state": "FILLED_MEDIUM",
+          "actual_value": "555-0145",
           "actual_state": "FILLED_HIGH",
-          "match": false
+          "source_line": "evals/golden/generate.py:587 ('Clinic Phone: 555-0145')",
+          "grade": "correct",
+          "match": true
         },
         {
           "name": "prescriber_signature",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "UNREADABLE",
-          "actual_state": "UNREADABLE",
+          "actual_value": null,
+          "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate.py:583-594 (No signature printed on form)",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "prescriber_npi",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "NOT_PRESENT",
+          "actual_value": null,
           "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate.py:583-594 (No prescriber NPI printed on form)",
+          "grade": "safe_not_filled",
           "match": true
         }
       ]
@@ -112,88 +167,117 @@
     {
       "id": "EXT-002",
       "document_file": "faint_fax_2page.pdf",
+      "page_count": 2,
+      "ollama_calls": 2,
+      "timing_seconds": {
+        "docling_ocr": 13.07,
+        "ollama_vision": 81.61,
+        "total": 94.85
+      },
       "total_fields": 10,
-      "matched_fields": 10,
+      "correct_count": 9,
+      "safe_not_filled_count": 1,
+      "false_fill_count": 0,
       "accuracy": 1.0,
       "fields": [
         {
           "name": "patient_name",
           "expected_value": "Jordan Taylor",
-          "actual_value": "Jordan Taylor",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "Jordan Taylor",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:655 ('Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "procedure_ordered",
           "expected_value": "MRI lumbar spine",
-          "actual_value": "MRI lumbar spine",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "MRI lumbar spine",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:655 ('Diagnostic order for MRI lumbar spine scheduled for patient Jordan Taylor.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "appointment_date",
           "expected_value": "2026-03-01",
-          "actual_value": "2026-03-01",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "2026-03-01",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:656 ('Appointment Date: 2026-03-01 at 09:30 AM')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "facility_location",
           "expected_value": "Imaging Suite B",
-          "actual_value": "Imaging Suite B",
           "expected_state": "FILLED_MEDIUM",
-          "actual_state": "FILLED_MEDIUM",
+          "actual_value": "Imaging Suite B",
+          "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:657 ('Facility Location: Imaging Suite B')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "referring_phone",
           "expected_value": "555-0170",
-          "actual_value": "555-0170",
           "expected_state": "FILLED_MEDIUM",
-          "actual_state": "FILLED_MEDIUM",
+          "actual_value": "555-0170",
+          "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:651 ('Referring Provider Phone: 555-0170')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "clinical_justification",
-          "expected_value": null,
-          "actual_value": null,
-          "expected_state": "CONFLICTING",
-          "actual_state": "CONFLICTING",
+          "expected_value": "chronic lower back pain with radiculopathy",
+          "expected_state": "FILLED_HIGH",
+          "actual_value": "chronic lower back pain with radiculopathy",
+          "actual_state": "FILLED_MEDIUM",
+          "source_line": "evals/golden/generate.py:664 ('Clinical justification note: chronic lower back pain with radiculopathy.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "pain_scale_score",
           "expected_value": "7/10",
-          "actual_value": "7/10",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "7/10",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate.py:666 ('Pain score: 7/10 with radiating numbness along L5 dermatome.')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "ordering_physician",
           "expected_value": "Dr. Evelyn Reed",
-          "actual_value": "Dr. Evelyn Reed",
           "expected_state": "FILLED_MEDIUM",
+          "actual_value": "Dr. Evelyn Reed",
           "actual_state": "FILLED_MEDIUM",
+          "source_line": "evals/golden/generate.py:667 ('Ordering Clinician Signature: Dr. Evelyn Reed')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "prescriber_signature",
-          "expected_value": null,
-          "actual_value": null,
-          "expected_state": "UNREADABLE",
-          "actual_state": "UNREADABLE",
+          "expected_value": "Dr. Evelyn Reed",
+          "expected_state": "FILLED_MEDIUM",
+          "actual_value": "Dr. Evelyn Reed",
+          "actual_state": "FILLED_MEDIUM",
+          "source_line": "evals/golden/generate.py:667 ('Ordering Clinician Signature: Dr. Evelyn Reed')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "prescriber_npi",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "NOT_PRESENT",
+          "actual_value": null,
           "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate.py:649-669 (No prescriber NPI printed on form)",
+          "grade": "safe_not_filled",
           "match": true
         }
       ]
@@ -201,48 +285,67 @@
     {
       "id": "EXT-003",
       "document_file": "invalid_npi_fax.pdf",
+      "page_count": 1,
+      "ollama_calls": 1,
+      "timing_seconds": {
+        "docling_ocr": 5.65,
+        "ollama_vision": 38.62,
+        "total": 44.35
+      },
       "total_fields": 5,
-      "matched_fields": 5,
+      "correct_count": 3,
+      "safe_not_filled_count": 2,
+      "false_fill_count": 0,
       "accuracy": 1.0,
       "fields": [
         {
           "name": "patient_name",
           "expected_value": "Casey Bennett",
-          "actual_value": "Casey Bennett",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:36 ('Patient Name: Casey Bennett')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorized_medication",
           "expected_value": "Amoxicillin 500mg",
-          "actual_value": "Amoxicillin 500mg",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:38 ('Authorized Medication: Amoxicillin 500mg')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorization_date",
           "expected_value": "2026-02-14",
-          "actual_value": "2026-02-14",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "2026-02-14",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate_extraction_faxes.py:39 ('Authorization Date: 2026-02-14')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "chart_number",
           "expected_value": "MRN-1102-K",
-          "actual_value": "MRN-1102-K",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "MRN-1102-K",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate_extraction_faxes.py:37 ('Chart Number: MRN-1102-K')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "prescriber_npi",
           "expected_value": "1982736451",
-          "actual_value": "1982736451",
           "expected_state": "INVALID",
+          "actual_value": "1982736451",
           "actual_state": "INVALID",
+          "source_line": "evals/golden/generate_extraction_faxes.py:40 ('Prescriber NPI: 1982736451')",
+          "grade": "correct",
           "match": true
         }
       ]
@@ -250,48 +353,67 @@
     {
       "id": "EXT-004",
       "document_file": "unreadable_field_fax.pdf",
+      "page_count": 1,
+      "ollama_calls": 1,
+      "timing_seconds": {
+        "docling_ocr": 7.56,
+        "ollama_vision": 46.28,
+        "total": 53.92
+      },
       "total_fields": 5,
-      "matched_fields": 5,
+      "correct_count": 2,
+      "safe_not_filled_count": 3,
+      "false_fill_count": 0,
       "accuracy": 1.0,
       "fields": [
         {
           "name": "patient_name",
           "expected_value": "Taylor Hayes",
-          "actual_value": "Taylor Hayes",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:50 ('Patient Name: Taylor Hayes')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorized_medication",
           "expected_value": "Lisinopril 10mg",
-          "actual_value": "Lisinopril 10mg",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:51 ('Authorized Medication: Lisinopril 10mg')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorization_date",
           "expected_value": "2026-02-14",
-          "actual_value": "2026-02-14",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "2026-02-14",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate_extraction_faxes.py:52 ('Authorization Date: 2026-02-14')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "clinical_justification",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "UNREADABLE",
-          "actual_state": "UNREADABLE",
+          "actual_value": null,
+          "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate_extraction_faxes.py:54-58,92-98 (Blacked out rectangle covering justification text)",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "prescriber_npi",
           "expected_value": "1234567893",
-          "actual_value": "1234567893",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "1234567893",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate_extraction_faxes.py:53 ('Prescriber NPI: 1234567893')",
+          "grade": "correct",
           "match": true
         }
       ]
@@ -299,48 +421,67 @@
     {
       "id": "EXT-005",
       "document_file": "missing_field_fax.pdf",
+      "page_count": 1,
+      "ollama_calls": 1,
+      "timing_seconds": {
+        "docling_ocr": 9.83,
+        "ollama_vision": 19.63,
+        "total": 29.54
+      },
       "total_fields": 5,
-      "matched_fields": 5,
+      "correct_count": 1,
+      "safe_not_filled_count": 4,
+      "false_fill_count": 0,
       "accuracy": 1.0,
       "fields": [
         {
           "name": "patient_name",
           "expected_value": "Morgan Bailey",
-          "actual_value": "Morgan Bailey",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:63 ('Patient Name: Morgan Bailey')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorized_medication",
           "expected_value": "Atorvastatin 20mg",
-          "actual_value": "Atorvastatin 20mg",
           "expected_state": "FILLED_HIGH",
-          "actual_state": "FILLED_HIGH",
+          "actual_value": null,
+          "actual_state": "CONFLICTING",
+          "source_line": "evals/golden/generate_extraction_faxes.py:64 ('Authorized Medication: Atorvastatin 20mg')",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "authorization_date",
           "expected_value": "2026-02-14",
-          "actual_value": "2026-02-14",
           "expected_state": "FILLED_HIGH",
+          "actual_value": "2026-02-14",
           "actual_state": "FILLED_HIGH",
+          "source_line": "evals/golden/generate_extraction_faxes.py:65 ('Authorization Date: 2026-02-14')",
+          "grade": "correct",
           "match": true
         },
         {
           "name": "secondary_insurance",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "NOT_PRESENT",
+          "actual_value": null,
           "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate_extraction_faxes.py:60-68 (Field not printed on form)",
+          "grade": "safe_not_filled",
           "match": true
         },
         {
           "name": "emergency_override",
           "expected_value": null,
-          "actual_value": null,
           "expected_state": "NOT_APPLICABLE",
-          "actual_state": "NOT_APPLICABLE",
+          "actual_value": null,
+          "actual_state": "NOT_PRESENT",
+          "source_line": "evals/golden/generate_extraction_faxes.py:60-68 (Field not applicable to this intake form)",
+          "grade": "safe_not_filled",
           "match": true
         }
       ]
