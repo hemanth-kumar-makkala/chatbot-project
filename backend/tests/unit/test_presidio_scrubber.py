@@ -155,7 +155,7 @@ class TestMockExceptionScrubberForCI:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """If en_core_web_sm is unavailable, real profiles fail at startup with ConfigurationError."""
+        """If en_core_web_sm is missing, real profiles fail at startup with ConfigurationError."""
         monkeypatch.setattr("spacy.util.is_package", lambda _name: False)
 
         for real_profile in ("desktop-gpu", "office-cpu", "home-gpu", "cloud"):
@@ -229,7 +229,7 @@ class TestPresidioExceptionScrubberRealModel:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Proves Presidio uses en_core_web_sm and offline tldextract snapshot with 0 network calls."""
+        """Proves Presidio uses en_core_web_sm and offline tldextract with 0 network calls."""
 
         def _forbid_network(*args: Any, **kwargs: Any) -> Any:
             raise AssertionError(
@@ -261,4 +261,3 @@ class TestPresidioExceptionScrubberRealModel:
         ):
             assert forbidden_phi not in result.scrubbed_message
             assert forbidden_phi not in result.scrubbed_traceback
-

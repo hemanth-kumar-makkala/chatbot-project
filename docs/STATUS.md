@@ -6,7 +6,7 @@
 - **Phase 2**: Ingestion Pipeline — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase2_gate.json`: 15 golden documents ingested twice with zero duplicates across pages, readings, tables, chunks, and embeddings)
 - **Phase 3**: RAG Engine & Core Logic — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase3_baseline.json`: all 11 benchmark metrics recorded with zero cross-tenant leaks)
 - **Phase 4**: Scanned Document Ingestion & Vision Verification — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase4_baseline.json`: false-fill rate on unreadable fields 0.0%, visual recovery Hit@5 100%, zero unreadable fields filled)
-- **Phase 5**: Security, Guardrails & Hardening — **IN PROGRESS (Batch A: Tasks 5.1, 5.2, 5.3 COMPLETED & VERIFIED; Batch B: Tasks 5.4, 5.6 COMPLETED & VERIFIED)**
+- **Phase 5**: Security, Guardrails & Hardening — **COMPLETED & VERIFIED**
   - **Task 5.1: Input Validation, Output Guardrails & Rate Limits (`backend/app/core/guards/`)** — **COMPLETED & VERIFIED**
     - **Question Length Ceiling**: Enforces `MAX_QUESTION_LENGTH = 4000` characters at Node 1 (`guard_input`) and API schema level, returning `QUESTION_TOO_LONG_MESSAGE` (`"Your question is too long. Please shorten it to under 4,000 characters."`, `public_error_ref="ERR-INPUT-TOO-LONG"`) before reaching retrieval or model calls.
     - **Prompt-Injection Pattern Detection**: Normalizes zero-width characters, dotted/spaced letters, Base64 payloads, and leetspeak before checking deterministic patterns across 6 categories (`instruction_override`, `system_prompt_extraction`, `role_play_jailbreak`, `cross_tenant_data_probe`, `ungrounded_generation_bypass`, `encoded_or_obfuscated_override`). Refuses at Node 1 with `PROMPT_INJECTION_MESSAGE` (`"I can only answer questions about this client's documents."`, `public_error_ref="ERR-PROMPT-INJECTION"`). Operational logs record only `error_code=<matched_pattern>` and `error_type="PromptInjectionBlocked"` with zero user text (Invariant 9). Verified **0 false positives** across all 95 non-`INJECTION` golden questions in `evals/golden/questions.json` and 25 risky-word legitimate staff questions via `guard_question_input`.
@@ -25,25 +25,28 @@
     - **Strict Startup Enforcement**: Real profiles (`desktop-gpu`, `home-gpu`, `gcp-staging`, `production`) fail at startup with typed `ConfigurationError("SPACY_MODEL_MISSING")` if `en_core_web_sm` is unavailable. Mock profile (`mock`) injects zero-overhead `MockTelemetryScrubber` (`backend/app/adapters/scrubbing/mock.py`).
     - **Logger & Error Handling Layer Integration**: Wired into `backend/app/observability/logger.py` via `configure_telemetry_scrubber` and `scrub_exception_for_log`, serving as an automated defense-in-depth safety net scrubbing stack traces, exception messages, and query logs before operational log emission (Invariant 10 allowlist logger remains primary).
     - **Proving Tests**: `backend/tests/unit/test_presidio_scrubber.py` (6/6 pass, verifying offline execution with socket monkeypatch, PHI pattern scrubbing for SSN/phone/email/names, mock adapter determinism, and real profile startup failure when model is absent).
+  - **Task 5.5: User Feedback Mechanism (`backend/app/api/routes/feedback.py`, `web/app/assistants/[assistantId]/page.tsx`)** — **COMPLETED & VERIFIED**
+    - **API Route & Upsert Semantics**: Implemented `POST /v1/assistants/{assistant_id}/messages/{message_id}/feedback` and `POST /v1/messages/{message_id}/feedback` accepting rating (`'up'` or `'down'`) and optional reason text up to `MAX_FEEDBACK_REASON_LENGTH = 1000` chars. Enforces staff authorization, CSRF token, and strict tenant isolation (returns 404 for messages owned by another tenant/assistant). Subsequent ratings by the same user update the existing row.
+    - **Zero-Text Operational Logging**: Reason text is strictly excluded from operational logs and audit events (Invariants 9 & 10).
+    - **Alembic Migration 0014**: Created `0014_feedback_schema` (`backend/app/db/migrations/versions/0014_feedback_schema.py`) adding `feedback` table with composite foreign keys to `messages(tenant_id, id)`, unique constraint `uq_feedback_message_user`, check constraint `rating IN ('up', 'down')`, forced RLS, and grants to `app_user`. Verified in isolated throwaway DB test (`test_migration_0014.py`) and STOP enforced (unapplied to shared DB).
+    - **Web Chat UI Integration**: Wired thumbs up/down and reason modal in `web/app/assistants/[assistantId]/page.tsx` and `web/lib/api.ts` to call live backend route, displaying "Feedback recorded" note without demo chips.
+    - **Proving Tests**: `backend/tests/integration/test_feedback_api.py` (3/3 pass), `backend/tests/integration/test_migration_0014.py` (1/1 pass).
   - **Task 5.6: Capacity & Load Curve Profiling via Locust (`evals/reports/capacity_curve.json`)** — **COMPLETED & VERIFIED**
     - **Locust Load Suite (`backend/scripts/locustfile.py`, `backend/scripts/locust_target_app.py`)**: Configured headless Locust runner simulating 5, 10, 20, 50, and 100 concurrent users with 60s steps against an isolated throwaway PostgreSQL database with real hybrid retrieval and Ollama `qwen3-vl:4b` inference. Early-stop trigger halting steps when error rate exceeds 50%.
     - **Capacity Curve Results (`evals/reports/capacity_curve.json`)**:
-      - **Text Path**:
-        - 5 users: 86 reqs, 0.0% err, 1.47 RPS, p50=1500ms, p95=2100ms
-        - 10 users: 90 reqs, 0.0% err, 1.52 RPS, p50=4500ms, p95=5200ms
-        - 20 users: 81 reqs, 0.0% err, 1.40 RPS, p50=11000ms, p95=14000ms
-        - 50 users: 50 reqs, 56.0% err, 1.66 RPS, p50=30000ms, p95=30000ms (stopped early, breaking point reached)
-        - 100 users: 100 reqs, 94.0% err, 3.32 RPS, p50=30000ms, p95=30000ms (stopped early)
-        - Breaking point: **50 concurrent users**.
-      - **Vision Path**:
-        - 5 users: 11 reqs, 0.0% err, 0.19 RPS, p50=24000ms, p95=25000ms
-        - 10 users: 10 reqs, 100.0% err, 0.33 RPS, p50=30000ms, p95=30000ms (stopped early, breaking point reached)
-        - 20 users: 20 reqs, 100.0% err, 0.67 RPS, p50=30000ms, p95=30000ms (stopped early)
-        - 50 users: 50 reqs, 100.0% err, 1.66 RPS, p50=30000ms, p95=30000ms (stopped early)
-        - 100 users: 100 reqs, 100.0% err, 3.32 RPS, p50=30000ms, p95=30000ms (stopped early)
-        - Breaking point: **10 concurrent users**.
-    - **6 GB GPU Capacity Assessment**: On a single local 6 GB GPU (`RTX 3050`), concurrent inference requests serialize behind the single Ollama context window. The text path handles up to ~20 concurrent users comfortably under the 30s timeout threshold. The vision path, requiring dual-phase GPU execution (1024px vision reading in Node 6 followed by grounded generation in Node 7), saturates past 5 concurrent users.
+      - **Text Path**: 5 users: 86 reqs, 0.0% err, p50=1500ms, p95=2100ms; 10 users: 90 reqs, 0.0% err, p50=4500ms, p95=5200ms; 20 users: 81 reqs, 0.0% err, p50=11000ms, p95=14000ms; 50 users: breaking point (56.0% err); 100 users: 94.0% err. Breaking point: **50 concurrent users**.
+      - **Vision Path**: 5 users: 11 reqs, 0.0% err, p50=24000ms, p95=25000ms; 10 users: breaking point (100.0% err). Breaking point: **10 concurrent users**.
     - **Proving Tests**: `backend/tests/eval/test_locust_capacity_curve.py` (contract tests pass in 0.54s unmarked; full model benchmark passes cleanly with exit code 0).
+  - **Task 5.7: Database Backup & Tested Restore Automation (`backend/scripts/backup_db.py`, `backend/scripts/restore_db.py`)** — **COMPLETED & VERIFIED**
+    - **Backup Script (`backend/scripts/backup_db.py`)**: Runs `pg_dump` locally or via `docker exec cka-postgres pg_dump`, writing a custom archive (`-Fc`) timestamped file (`backup_<db>_<timestamp>.dump`). Requires `--output-dir` or `BACKUP_OUTPUT_DIR` setting with no default.
+    - **Restore Script (`backend/scripts/restore_db.py`)**: Restores a custom archive into a NEW database using `pg_restore` (local or Docker). Strictly blocks overwriting protected databases (`postgres`, `knowledge_assistant`, `template0`, `template1`) or any existing database, and automatically ensures pgvector extension initialization before restoration.
+    - **Documentation**: Documented exact backup and restore CLI commands in `docs/ui/BUILD_NOTES.md`.
+    - **Proving Tests**: `backend/tests/integration/test_backup_restore.py` (1/1 pass: spins up throwaway DB 1, seeds synthetic multi-tenant data + 1024-d vectors + feedback, backs up via pg_dump, restores into throwaway DB 2, asserts exact row count parity across all tables, vector similarity search parity returning the identical top-1 chunk, and cross-tenant RLS isolation blocking tenant B in the restored database).
+  - **Phase 5 Exit Gate**:
+    - [x] Security suite passes (zero cross-tenant leaks in `test_adversarial_cross_tenant_isolation.py`, zero injection bypasses in `test_adversarial_injection.py`).
+    - [x] Capacity curve drawn across 5, 10, 20, 50, and 100 virtual users (`evals/reports/capacity_curve.json`).
+    - [x] Presidio exception scrubbing active (`test_presidio_scrubber.py`).
+    - [x] Backup creation and automated restore verified (`test_backup_restore.py`).
   - **CI Hook Portability Fix**: Updated `.pre-commit-config.yaml` `boundary-invariants` hook to pass explicit paths for pure (no-DB) invariant tests (`test_architecture_boundaries.py`, `test_migration_invariants.py`, `test_phi_session_isolation.py`), allowing GitHub Actions CI to pass pre-commit before DB bootstrap.
   - **Task 4.1: Question-Time Vision Reading (Node 6 `vision_read`)** — **COMPLETED & VERIFIED**
     - **6 GB VRAM Image Pre-Scaling**: `ImageProcessor` port interface wired into `GraphPorts`; page images pre-scaled to max 1024px dimension and max 4 MB before vision generation.

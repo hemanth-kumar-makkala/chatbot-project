@@ -31,6 +31,7 @@ import httpx
 import pytest
 from alembic import command
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from tests.conftest import ThrowawayDatabase, make_test_password
 
 from app.db.models import (
     Assistant,
@@ -46,12 +47,12 @@ from app.db.models import (
 )
 from app.ports.storage import StorageKey
 from app.wiring import create_embedding_provider, create_storage_backend
-from tests.conftest import ThrowawayDatabase, make_test_password
 
 
 def _hash_session_token(raw_token: str) -> str:
     """Compute SHA-256 hex digest of a raw session token."""
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_DIR = PROJECT_ROOT / "backend"
@@ -207,7 +208,9 @@ class TestCapacityCurveReportContract:
 
             for step in steps:
                 missing = REQUIRED_STEP_KEYS - set(step.keys())
-                assert not missing, f"Step {step.get('users')} in {path_key} missing keys: {missing}"
+                assert not missing, (
+                    f"Step {step.get('users')} in {path_key} missing keys: {missing}"
+                )
                 assert step["total_requests"] > 0
                 assert 0.0 <= step["error_rate"] <= 1.0
                 assert step["p50_latency_ms"] > 0.0
@@ -243,6 +246,7 @@ async def test_run_locust_capacity_curve_on_desktop_gpu(
     text_emb, vision_emb = embeddings[0], embeddings[1]
     del embedder
     import gc
+
     import torch
 
     gc.collect()
@@ -497,7 +501,7 @@ async def test_run_locust_capacity_curve_on_desktop_gpu(
                     source="vision_upload",
                     text=vision_chunk_str,
                     model_id="qwen3-vl:4b",
-                    model_version="a1b29c246319",
+                    model_version="a1b29c246319",  # pragma: allowlist secret
                 )
             )
             await db.flush()
@@ -560,7 +564,9 @@ async def test_run_locust_capacity_curve_on_desktop_gpu(
         uvicorn_proc = None
         return code
 
-    async def _start_and_warmup_uvicorn(warmup_asst_id: str, warmup_token: str, warmup_q: str) -> None:
+    async def _start_and_warmup_uvicorn(
+        warmup_asst_id: str, warmup_token: str, warmup_q: str
+    ) -> None:
         nonlocal uvicorn_proc
         _stop_current_uvicorn()
         uvicorn_proc = subprocess.Popen(
@@ -708,7 +714,7 @@ async def test_run_locust_capacity_curve_on_desktop_gpu(
                 print(
                     f"[{path_name} | {users:3d} users] "
                     f"reqs={step_metrics['total_requests']} "
-                    f"err={step_metrics['error_rate']*100:.1f}% "
+                    f"err={step_metrics['error_rate'] * 100:.1f}% "
                     f"rps={step_metrics['throughput_rps']:.2f} "
                     f"p50={step_metrics['p50_latency_ms']:.0f}ms "
                     f"p95={step_metrics['p95_latency_ms']:.0f}ms "

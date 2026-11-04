@@ -30,17 +30,17 @@ Harden the system locally before any cloud staging or real data exposure by impl
 
 ## Numbered Tasks
 
-### Task 5.1: Input Guardrails & Injection Filtering (Node 1 `guard_input`)
+### Task 5.1: Input Guardrails & Injection Filtering (Node 1 `guard_input`) — COMPLETED & VERIFIED
 - **Description**: Implement Node 1 validating query length, rate limits per user/tenant, prompt-injection patterns, routing directly to Node 9 with refusal if violated.
 - **Tests to write first**:
   - `tests/unit/test_input_guards.py`: Assert malicious prompt injections and oversized payloads are blocked at Node 1.
 
-### Task 5.2: Adversarial Injection Test Suite
+### Task 5.2: Adversarial Injection Test Suite — COMPLETED & VERIFIED
 - **Description**: Build automated adversarial injection test suite executing synthetic documents containing hidden override instructions against retrieval and generation flows.
 - **Tests to write first**:
   - `tests/integration/test_adversarial_injection.py`: Assert injection success rate is exactly zero (system adheres to evidence gate).
 
-### Task 5.3: Adversarial Cross-Tenant Isolation Test Suite
+### Task 5.3: Adversarial Cross-Tenant Isolation Test Suite — COMPLETED & VERIFIED
 - **Description**: Implement comprehensive cross-tenant adversarial test suite executing simultaneous queries across mock tenants with identical document titles and patient records.
 - **Tests to write first**:
   - `tests/invariants/test_adversarial_cross_tenant_isolation.py`: Assert cross-tenant leak count is strictly zero (Invariants 2, 3, 15).
@@ -50,7 +50,7 @@ Harden the system locally before any cloud staging or real data exposure by impl
 - **Tests to write first**:
   - `tests/unit/test_presidio_scrubber.py`: Verify synthetic exception payloads containing PHI patterns are scrubbed before logging.
 
-### Task 5.5: Feedback Collection Mechanism
+### Task 5.5: Feedback Collection Mechanism — COMPLETED & VERIFIED
 - **Description**: Implement API route and UI buttons for message rating (thumbs up/down) with optional text reason, persisting to the `feedback` table.
 - **Tests to write first**:
   - `tests/integration/test_feedback_api.py`: Verify feedback submissions persist to database and associate correctly with `message_id`.
@@ -60,7 +60,7 @@ Harden the system locally before any cloud staging or real data exposure by impl
 - **Tests to write first**:
   - `tests/eval/test_locust_capacity_curve.py`: Execute load test runner, assert error rate remains below threshold, and generate capacity curve report in `evals/reports/`.
 
-### Task 5.7: Database Backup & Tested Restore Automation
+### Task 5.7: Database Backup & Tested Restore Automation — COMPLETED & VERIFIED
 - **Description**: Implement automated database backup script for PostgreSQL pgvector data and author an automated test that wipes and restores from backup, verifying vector index and tenant integrity.
 - **Tests to write first**:
   - `tests/integration/test_backup_restore.py`: Execute backup, purge database, restore from backup, and verify document and vector counts match exactly.
@@ -69,7 +69,7 @@ Harden the system locally before any cloud staging or real data exposure by impl
 - [x] Security suite passes (zero cross-tenant leaks, zero injection bypasses).
 - [x] Capacity curve drawn across 5, 10, 20, 50, and 100 virtual users.
 - [x] Presidio exception scrubbing active.
-- [ ] Backup creation and automated restore verified.
+- [x] Backup creation and automated restore verified.
 
 ## Risks
 - CPU throttling during 100-user local load testing on the desktop workstation.

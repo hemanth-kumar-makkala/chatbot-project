@@ -19,10 +19,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+import gevent
 from locust import HttpUser, between, events, task
 from locust.env import Environment
-
-import gevent
 
 ASSISTANT_ID: str = os.environ.get("LOCUST_ASSISTANT_ID", "")
 SESSION_TOKEN: str = os.environ.get("LOCUST_SESSION_TOKEN", "")
@@ -49,7 +48,9 @@ def _write_step_stats_snapshot(environment: Environment) -> None:
     p95_raw = total_stats.get_response_time_percentile(0.95) or total_stats.max_response_time
     default_timeout_ms = round(REQUEST_TIMEOUT_SECONDS * 1000.0, 2)
     p50 = round(float(p50_raw), 2) if p50_raw and float(p50_raw) > 0 else default_timeout_ms
-    p95 = round(float(p95_raw), 2) if p95_raw and float(p95_raw) > 0 else max(p50, default_timeout_ms)
+    p95 = (
+        round(float(p95_raw), 2) if p95_raw and float(p95_raw) > 0 else max(p50, default_timeout_ms)
+    )
     if p95 < p50:
         p95 = p50
 

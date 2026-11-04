@@ -585,6 +585,41 @@ export async function uploadSessionDocument(
   );
 }
 
+export interface FeedbackResponseData {
+  id: string;
+  message_id: string;
+  user_id: string;
+  rating: "up" | "down";
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function submitFeedback(
+  assistantId: string,
+  messageId: string,
+  rating: "up" | "down",
+  reason?: string
+): Promise<ApiResult<FeedbackResponseData>> {
+  const normId =
+    assistantId === "00000000-0000-0002-0000-000000000001"
+      ? DEV_DEFAULT_ASSISTANT_ID
+      : assistantId;
+
+  const cleanReason = reason && reason.trim() !== "" ? reason.trim() : undefined;
+
+  return apiFetch<FeedbackResponseData>(
+    `/v1/assistants/${encodeURIComponent(normId)}/messages/${encodeURIComponent(messageId)}/feedback`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        rating,
+        reason: cleanReason,
+      }),
+    }
+  );
+}
+
 /**
  * Safely resolves a login redirect URL (STATUS.md UI Backlog & Open-Redirect hardening).
  * Accepts strictly relative paths starting with a single '/' and not '//' or '/\'.

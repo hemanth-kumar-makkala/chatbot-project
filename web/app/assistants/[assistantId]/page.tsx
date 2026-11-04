@@ -18,6 +18,7 @@ import {
 import {
   askQuestion,
   getCurrentUser,
+  submitFeedback,
   uploadSessionDocument,
   type QuestionResponse,
   type SourceCitation,
@@ -196,9 +197,28 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setLiveExtractionError(null);
   }
 
-  function handleFeedbackClick(msgId: string, rating: "up" | "down") {
+  async function handleFeedbackClick(msgId: string, rating: "up" | "down") {
     if (isLiveAssistant) {
-      setLiveFeedbackWarningId(msgId);
+      if (rating === "up") {
+        setLiveFeedbackWarningId(null);
+        const res = await submitFeedback(assistantId, msgId, "up");
+        if (res.ok) {
+          setFeedbackMap((prev) => ({
+            ...prev,
+            [msgId]: { rating: "up", saved: true },
+          }));
+          if (activeReasonMsgId === msgId) {
+            setActiveReasonMsgId(null);
+          }
+        } else {
+          setLiveFeedbackWarningId(msgId);
+        }
+      } else {
+        // Thumbs down: open reason popover
+        setActiveReasonMsgId(msgId);
+        setSelectedReasonChoice("Inaccurate facts");
+        setReasonComments("");
+      }
       return;
     }
 
@@ -217,7 +237,33 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     }
   }
 
-  function handleSubmitReason(msgId: string) {
+  async function handleSubmitReason(msgId: string) {
+    const fullReason =
+      reasonComments.trim() !== ""
+        ? `${selectedReasonChoice}: ${reasonComments.trim()}`
+        : selectedReasonChoice;
+
+    if (isLiveAssistant) {
+      setLiveFeedbackWarningId(null);
+      const res = await submitFeedback(assistantId, msgId, "down", fullReason);
+      if (res.ok) {
+        setFeedbackMap((prev) => ({
+          ...prev,
+          [msgId]: {
+            rating: "down",
+            reasonChoice: selectedReasonChoice,
+            comments: reasonComments,
+            saved: true,
+          },
+        }));
+      } else {
+        setLiveFeedbackWarningId(msgId);
+      }
+      setActiveReasonMsgId(null);
+      setReasonComments("");
+      return;
+    }
+
     setFeedbackMap((prev) => ({
       ...prev,
       [msgId]: {
@@ -1052,7 +1098,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
                     {feedbackMap[m.id]?.saved && (
                       <span
-                        data-testid="feedback-demo-saved-note"
+                        data-testid={isLiveAssistant ? "feedback-live-saved-note" : "feedback-demo-saved-note"}
                         style={{
                           fontSize: "11px",
                           color: "var(--color-status-success-text)",
@@ -1061,14 +1107,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                           gap: "4px",
                         }}
                       >
-                        <DataSourceChip mode="demo" label="Demo" />
-                        <span>Saved for this demo session</span>
+                        {!isLiveAssistant && <DataSourceChip mode="demo" label="Demo" />}
+                        <span>{isLiveAssistant ? "Feedback recorded" : "Saved for this demo session"}</span>
                       </span>
                     )}
 
                     {liveFeedbackWarningId === m.id && (
                       <span
-                        data-testid="feedback-live-message"
+                        data-testid="feedback-live-error"
                         style={{
                           fontSize: "11px",
                           color: "var(--color-text-secondary)",
@@ -1077,8 +1123,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                           gap: "4px",
                         }}
                       >
-                        <DataSourceChip mode="demo" label="Demo" />
-                        <span>Feedback needs the feedback route (Phase 5 Task 5.5, not built yet)</span>
+                        <span>Failed to record feedback. Please try again.</span>
                       </span>
                     )}
                   </div>

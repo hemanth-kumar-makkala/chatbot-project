@@ -2891,3 +2891,63 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed.
   - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 0 failed.
   - `backend/tests/eval/test_locust_capacity_curve.py -m "models"`: 1 passed in 554.24s (throwaway uvicorn cleanly shut down in teardown).
+
+---
+
+## 2026-11-04 — Phase 5 Batch C: Task 5.5 (User Feedback Mechanism) and Task 5.7 (PostgreSQL Backup & Tested Restore Automation)
+
+- **1. Task 5.5 — User Feedback Collection Mechanism (`backend/app/api/routes/feedback.py`, `web/app/assistants/[assistantId]/page.tsx`)**:
+  - **Schema & Migration 0014**:
+    - Authored Alembic migration `0014_feedback_schema` (`backend/app/db/migrations/versions/0014_feedback_schema.py`) adding `feedback` table with columns `id`, `tenant_id`, `message_id`, `user_id`, `rating`, `reason`, `created_at`, `updated_at`.
+    - Added composite foreign key `fk_feedback_message_tenant (tenant_id, message_id) REFERENCES messages(tenant_id, id) ON DELETE CASCADE`.
+    - Added unique constraint `uq_feedback_message_user (message_id, user_id)` enforcing one rating per user per message.
+    - Added check constraint `ck_feedback_rating CHECK (rating IN ('up', 'down'))`.
+    - Enforced forced row-level security (`ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`), RLS policy `tenant_isolation_feedback USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)`, and granted privileges strictly to `app_user` (and never `retriever_user`).
+    - Verified migration upgrade, downgrade, re-upgrade, and cross-tenant RLS isolation on an isolated throwaway database in `backend/tests/integration/test_migration_0014.py` (1 passed in 0.70s).
+    - **STOP Enforced**: Unapplied to shared development database `cka-postgres`.
+  - **API Route (`backend/app/api/routes/feedback.py`)**:
+    - Implemented `POST /v1/assistants/{assistant_id}/messages/{message_id}/feedback` and `POST /v1/messages/{message_id}/feedback`.
+    - Enforced `MAX_FEEDBACK_REASON_LENGTH = 1000` named constant; reasons exceeding limit return HTTP 422 with `INVALID_ARGUMENT`.
+    - Enforced CSRF validation via `validate_csrf` header.
+    - Verified tenant scope and assistant ownership: messages belonging to a different tenant or another assistant return HTTP 404 (never leaking existence).
+    - Upsert semantics: subsequent ratings by the same user on the same message update the existing record (`rating`, `reason`, `updated_at`).
+    - **Zero-Text Operational Logging**: Reason text is strictly omitted from operational logs and audit events (Invariants 9 & 10). Operational logs record only `feedback_id`, `message_id`, `tenant_id`, `user_id`, `rating`, and `has_reason` boolean flag.
+  - **Live Web Chat UI Integration (`web/app/assistants/[assistantId]/page.tsx`, `web/lib/api.ts`)**:
+    - Extended `web/lib/api.ts` with `submitFeedback(assistantId, messageId, rating, reason)`.
+    - Connected thumbs up and thumbs down buttons in the chat message component. Thumbs down opens an accessible reason dialog with character counter (max 1000) and submit button.
+    - In live mode (real assistant ID), calls `submitFeedback` and renders `<span data-testid="feedback-live-saved-note">Feedback recorded</span>` without demo feedback chips.
+  - **Proving Tests**:
+    - `backend/tests/integration/test_feedback_api.py`: 3/3 passed (persistence, update on second rating, 404 on cross-tenant / other assistant message, 422 on length exceeded, CSRF enforcement, zero-reason logging).
+    - `backend/tests/integration/test_migration_0014.py`: 1/1 passed.
+
+- **2. Task 5.7 — Database Backup & Tested Restore Automation (`backend/scripts/backup_db.py`, `backend/scripts/restore_db.py`)**:
+  - **Backup Script (`backend/scripts/backup_db.py`)**:
+    - Executes PostgreSQL custom format (`-Fc`) dump using local `pg_dump` if on `PATH`, falling back to `docker exec cka-postgres pg_dump`.
+    - Enforces non-empty `--output-dir` CLI parameter or `BACKUP_OUTPUT_DIR` environment variable with no default.
+    - Produces timestamped archive `backup_<target_db>_<YYYYMMDDTHHMMSSZ>.dump`.
+  - **Restore Script (`backend/scripts/restore_db.py`)**:
+    - Enforces restoring strictly into a **NEW** throwaway database; fails immediately if target database already exists.
+    - Blocks attempts to overwrite protected databases (`postgres`, `knowledge_assistant`, `template0`, `template1`).
+    - Connects to administrative database `postgres` to issue `CREATE DATABASE`, connects to new database to ensure `CREATE EXTENSION IF NOT EXISTS vector`, and invokes `pg_restore` (locally or via Docker).
+  - **Build Notes Documentation (`docs/ui/BUILD_NOTES.md`)**:
+    - Documented exact PowerShell commands for backup and restore using both CLI arguments and environment variables.
+  - **Proving Test (`backend/tests/integration/test_backup_restore.py`)**:
+    - Spins up isolated throwaway database 1 with full schema.
+    - Ingests synthetic multi-tenant data across two tenants (tenants, users, memberships, documents, pages, page_readings, 1024-dimensional vector chunks, conversations, messages, feedback).
+    - Captures baseline row counts across all tables and executes vector similarity search.
+    - Runs `backup_database` generating a timestamped custom archive.
+    - Runs `restore_database` into fresh throwaway database 2.
+    - Asserts exact row count parity across all tables between source and restored databases.
+    - Asserts vector similarity search on restored database returns the exact top-1 chunk.
+    - Asserts cross-tenant RLS isolation in restored database: tenant B queries return 0 rows under tenant A context.
+    - Passed cleanly in 1.56s.
+
+- **3. Phase 5 Exit Gate Verification**:
+  - [x] Security suite passes (zero cross-tenant leaks in `test_adversarial_cross_tenant_isolation.py`, zero injection bypasses in `test_adversarial_injection.py`).
+  - [x] Capacity curve drawn across 5, 10, 20, 50, and 100 virtual users (`evals/reports/capacity_curve.json`).
+  - [x] Presidio exception scrubbing active (`test_presidio_scrubber.py`).
+  - [x] Backup creation and automated restore verified (`test_backup_restore.py`).
+
+- **Verification Summary**:
+  - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed cleanly (exit code 0).
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 852 passed, 1 skipped, 0 failed.

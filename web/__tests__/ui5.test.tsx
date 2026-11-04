@@ -12,6 +12,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getCurrentUser: vi.fn(),
     askQuestion: vi.fn(),
     logout: vi.fn(),
+    submitFeedback: vi.fn(),
   };
 });
 
@@ -96,7 +97,7 @@ describe("UI-5: Phase 5 UI - Feedback, Rate Limiting & Input Guards", () => {
       expect(thumbsDown).toBeDefined();
     });
 
-    it("live assistant thumbs up shows Demo chip and route not built message", async () => {
+    it("live assistant thumbs up calls submitFeedback and displays live saved note without demo chip", async () => {
       vi.mocked(api.askQuestion).mockResolvedValue({
         ok: true,
         status: 200,
@@ -108,6 +109,20 @@ describe("UI-5: Phase 5 UI - Feedback, Rate Limiting & Input Guards", () => {
           status: "answered",
           answer: "Prior auth requests must be submitted at least 5 business days in advance.",
           citations: ["chunk-1"],
+        },
+      });
+
+      vi.mocked(api.submitFeedback).mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: {
+          id: "fb-live-1",
+          message_id: "msg-live-1",
+          user_id: "user-1",
+          rating: "up",
+          reason: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         },
       });
 
@@ -127,11 +142,78 @@ describe("UI-5: Phase 5 UI - Feedback, Rate Limiting & Input Guards", () => {
         fireEvent.click(thumbsUp);
       });
 
-      const liveMsg = await screen.findByTestId("feedback-live-message");
-      expect(liveMsg.textContent).toContain(
-        "Feedback needs the feedback route (Phase 5 Task 5.5, not built yet)"
+      expect(api.submitFeedback).toHaveBeenCalledWith(liveAssistantId, "msg-live-1", "up");
+      const liveSavedNote = await screen.findByTestId("feedback-live-saved-note");
+      expect(liveSavedNote.textContent).toContain("Feedback recorded");
+      expect(screen.queryByText(/Saved for this demo session/i)).toBeNull();
+    });
+
+    it("live assistant thumbs down opens reason popover and calls submitFeedback with reason", async () => {
+      vi.mocked(api.askQuestion).mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: {
+          request_id: "req-live-2",
+          tenant_id: "ten-live",
+          conversation_id: "conv-live",
+          message_id: "msg-live-2",
+          status: "answered",
+          answer: "Answer to rate down.",
+          citations: ["chunk-2"],
+        },
+      });
+
+      vi.mocked(api.submitFeedback).mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: {
+          id: "fb-live-2",
+          message_id: "msg-live-2",
+          user_id: "user-1",
+          rating: "down",
+          reason: "Inaccurate facts: Missing clause 4",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      });
+
+      await act(async () => {
+        render(<ChatPage params={Promise.resolve({ assistantId: liveAssistantId })} />);
+      });
+
+      const input = screen.getByRole("textbox");
+      const sendBtn = screen.getByRole("button", { name: /Send/i });
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Another question" } });
+        fireEvent.click(sendBtn);
+      });
+
+      const thumbsDown = await screen.findByTestId("feedback-thumbs-down");
+      await act(async () => {
+        fireEvent.click(thumbsDown);
+      });
+
+      const popover = await screen.findByTestId("feedback-reason-popover");
+      expect(popover).toBeDefined();
+
+      const commentInput = screen.getByTestId("feedback-comments-input");
+      await act(async () => {
+        fireEvent.change(commentInput, { target: { value: "Missing clause 4" } });
+      });
+
+      const submitReasonBtn = screen.getByTestId("feedback-submit-reason");
+      await act(async () => {
+        fireEvent.click(submitReasonBtn);
+      });
+
+      expect(api.submitFeedback).toHaveBeenCalledWith(
+        liveAssistantId,
+        "msg-live-2",
+        "down",
+        "Inaccurate facts: Missing clause 4"
       );
-      expect(within(liveMsg).getByText(/Demo/i)).toBeDefined();
+      const liveSavedNote = await screen.findByTestId("feedback-live-saved-note");
+      expect(liveSavedNote.textContent).toContain("Feedback recorded");
     });
 
     it("demo assistant thumbs up records in memory with Demo chip and saved note", async () => {

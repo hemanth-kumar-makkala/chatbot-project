@@ -156,3 +156,46 @@ $env:API_ORIGIN="http://localhost:8000"; npm run build
   - 5-second polling that stops when all documents are in final states and pauses on page visibility hidden.
   - Retire confirmation dialog with focus trap and Escape handler.
   - Review drawer displaying flagged pages, page images, reading text, per-page Accept/Exclude/Retry actions, Promote Version action, 409 job-active message, and error sanitization hiding raw server text.
+
+---
+
+## 6. Database Backup and Tested Restore
+
+Two scripts in `backend/scripts/` handle full-database logical backup and non-destructive restore using PostgreSQL custom format (`-Fc`):
+
+- **Backup (`backend/scripts/backup_db.py`)**: Runs `pg_dump` (either local on `PATH` or via `docker exec cka-postgres pg_dump`), generating a timestamped file (`backup_<db>_<timestamp>.dump`). The output directory is a required setting (`--output-dir` or `BACKUP_OUTPUT_DIR`) with no default.
+- **Restore (`backend/scripts/restore_db.py`)**: Restores a `.dump` archive using `pg_restore` (local or via Docker). It strictly enforces that the target database must be a **NEW** database: it fails immediately if the database already exists or if it matches a protected database name (`postgres`, `knowledge_assistant`, `template0`, `template1`). It automatically initializes the `vector` extension and restores schema, multi-tenant tables, vectors, and feedback.
+
+### Exact Backup Commands
+
+**Local `pg_dump` on PATH or Docker execution:**
+```powershell
+cd backend
+$env:HF_HOME="$env:USERPROFILE\Downloads\Projects\cka-data\hf"
+$env:HF_HUB_OFFLINE="1"
+$env:TEMP="$env:USERPROFILE\Downloads\Projects\cka-data\tmp"
+$env:TMP=$env:TEMP
+
+# 1. Using CLI flag (--output-dir is required):
+uv run python scripts/backup_db.py --output-dir "$env:USERPROFILE\Downloads\Projects\cka-data\backups" --db knowledge_assistant
+
+# 2. Or using environment variable:
+$env:BACKUP_OUTPUT_DIR="$env:USERPROFILE\Downloads\Projects\cka-data\backups"
+uv run python scripts/backup_db.py --db knowledge_assistant
+```
+
+### Exact Restore Commands
+
+> **Important**: Restores must target a NEW throwaway or staging database name. Overwriting an existing database is blocked by script invariants.
+
+```powershell
+cd backend
+$env:HF_HOME="$env:USERPROFILE\Downloads\Projects\cka-data\hf"
+$env:HF_HUB_OFFLINE="1"
+$env:TEMP="$env:USERPROFILE\Downloads\Projects\cka-data\tmp"
+$env:TMP=$env:TEMP
+
+uv run python scripts/restore_db.py `
+  --dump-file "$env:USERPROFILE\Downloads\Projects\cka-data\backups\backup_knowledge_assistant_YYYYMMDDTHHMMSSZ.dump" `
+  --target-db "knowledge_assistant_restored_test"
+```

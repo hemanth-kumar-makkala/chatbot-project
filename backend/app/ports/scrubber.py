@@ -31,4 +31,3 @@ class ExceptionScrubber(ABC):
     @abstractmethod
     def scrub_exception(self, exc: BaseException) -> ScrubbedExceptionData:
         """Scrub PHI entities from an exception's message and formatted stack trace."""
-

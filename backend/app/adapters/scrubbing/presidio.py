@@ -251,4 +251,3 @@ class PresidioExceptionScrubber(ExceptionScrubber):
             scrubbed_traceback=scrubbed_tb,
             redacted_entity_counts=merged_counts,
         )
-

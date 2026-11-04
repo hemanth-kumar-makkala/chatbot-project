@@ -709,3 +709,42 @@ class ExtractionResult(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 Feedback Models (Task 5.5)
+# ---------------------------------------------------------------------------
+
+
+class Feedback(Base):
+    """User feedback rating (thumbs up/down) with optional reason tied to a message."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_feedback_tenant_id"),
+        UniqueConstraint("tenant_id", "message_id", "user_id", name="uq_feedback_message_user"),
+        ForeignKeyConstraint(
+            ["tenant_id", "message_id"],
+            ["messages.tenant_id", "messages.id"],
+            name="fk_feedback_message",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("rating IN ('up', 'down')", name="ck_feedback_rating"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    rating: Mapped[str] = mapped_column(String(10), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

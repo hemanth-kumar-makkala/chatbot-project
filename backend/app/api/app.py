@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
-from app.api.routes import auth, conversations, health, knowledge, questions
+from app.api.routes import auth, conversations, feedback, health, knowledge, questions
 from app.observability.logger import set_exception_scrubber
 from app.ports.errors import ConfigurationError
 from app.wiring import create_auth_provider, create_exception_scrubber
@@ -116,5 +116,6 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app.include_router(knowledge.router)
     app.include_router(questions.router)
     app.include_router(conversations.router)
+    app.include_router(feedback.router)
 
     return app
