@@ -6,7 +6,8 @@ Tenant B: Pinecrest Medical Group) seeded with:
 - Identical patient name: Alex Morgan
 - Different tenant-specific facts:
   * Tenant A: fax 555-0131, deductible $250.00, MRN MRN-TENANT-A-101, insurer Apex Health Insurance
-  * Tenant B: fax 555-0132, deductible $1500.00, MRN MRN-TENANT-B-909, insurer Beacon Mutual Healthcare
+  * Tenant B: fax 555-0132, deductible $1500.00, MRN MRN-TENANT-B-909,
+    insurer Beacon Mutual Healthcare
 - Identical file bytes uploaded in both tenants (same_policy.pdf) proving deduplication never
   crosses tenants (Invariant 15).
 
@@ -16,7 +17,7 @@ Runs simultaneous requests from both tenants via asyncio.gather and verifies 0 l
 2. citations
 3. source_file_route
 4. page_image_routes (knowledge review image, thumbnail, and session document page image)
-5. conversations (list, get messages, delete, and cross-tenant conversation_id on POST /v1/questions)
+5. conversations (list, get messages, delete, and cross-tenant conversation_id on /v1/questions)
 6. session_documents_and_extraction_results
 7. inventory_and_title_search
 8. feedback (message and audit event isolation by message_id)
@@ -124,9 +125,7 @@ class _EvidenceGroundedEchoModel(MockModelProvider):
         )
         if m_chunk:
             cid = m_chunk.group(1).strip()
-            block_lines = [
-                ln.strip() for ln in m_chunk.group(2).strip().splitlines() if ln.strip()
-            ]
+            block_lines = [ln.strip() for ln in m_chunk.group(2).strip().splitlines() if ln.strip()]
             line = block_lines[-1] if block_lines else m_chunk.group(2).strip()
             return ModelResponse(
                 content=line,
@@ -167,7 +166,6 @@ async def _run_adversarial_cross_tenant_suite(
     storage_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     api_settings = ApiSettings(
         cors_origins=["http://localhost:3000"],
         cookie_secure=False,
@@ -688,7 +686,9 @@ async def _run_adversarial_cross_tenant_suite(
                     "/v1/questions",
                     json={
                         "assistant_id": str(asst_a),
-                        "question_text": "What are Alex Morgan's chart ID, insurer, fax, and deductible?",
+                        "question_text": (
+                            "What are Alex Morgan's chart ID, insurer, fax, and deductible?"
+                        ),
                         "tenant_id": str(tenant_b),  # Forged tenant_id attempt
                     },
                     headers=headers_a,
@@ -697,7 +697,9 @@ async def _run_adversarial_cross_tenant_suite(
                     "/v1/questions",
                     json={
                         "assistant_id": str(asst_b),
-                        "question_text": "What are Alex Morgan's chart ID, insurer, fax, and deductible?",
+                        "question_text": (
+                            "What are Alex Morgan's chart ID, insurer, fax, and deductible?"
+                        ),
                         "tenant_id": str(tenant_a),  # Forged tenant_id attempt
                     },
                     headers=headers_b,
@@ -706,7 +708,9 @@ async def _run_adversarial_cross_tenant_suite(
                     "/v1/questions",
                     json={
                         "assistant_id": str(asst_a),
-                        "question_text": "What is the accepted plan deductible for Alex Morgan in the table?",
+                        "question_text": (
+                            "What is the accepted plan deductible for Alex Morgan in the table?"
+                        ),
                     },
                     headers=headers_a,
                 ),
@@ -714,7 +718,9 @@ async def _run_adversarial_cross_tenant_suite(
                     "/v1/questions",
                     json={
                         "assistant_id": str(asst_b),
-                        "question_text": "What is the accepted plan deductible for Alex Morgan in the table?",
+                        "question_text": (
+                            "What is the accepted plan deductible for Alex Morgan in the table?"
+                        ),
                     },
                     headers=headers_b,
                 ),
@@ -747,8 +753,20 @@ async def _run_adversarial_cross_tenant_suite(
             assert "$1500.00" in body_b_tbl["answer"]
 
             # Check Channel 2 (citations)
-            b_ids = {str(chunk_intake_b), str(chunk_policy_b), str(tbl_row_b), str(ver_intake_b), str(ver_plans_b)}
-            a_ids = {str(chunk_intake_a), str(chunk_policy_a), str(tbl_row_a), str(ver_intake_a), str(ver_plans_a)}
+            b_ids = {
+                str(chunk_intake_b),
+                str(chunk_policy_b),
+                str(tbl_row_b),
+                str(ver_intake_b),
+                str(ver_plans_b),
+            }
+            a_ids = {
+                str(chunk_intake_a),
+                str(chunk_policy_a),
+                str(tbl_row_a),
+                str(ver_intake_a),
+                str(ver_plans_a),
+            }
 
             for r_a in (body_a1, body_a_tbl):
                 if set(r_a.get("citations", [])) & b_ids:
@@ -787,10 +805,24 @@ async def _run_adversarial_cross_tenant_suite(
             # =========================================================================
             # Upload session fax in Tenant A and Tenant B simultaneously
             fax_a_bytes = helpers._create_multipage_digital_pdf(
-                [["SYNTHETIC TEST DOCUMENT", "Patient: Alex Morgan", "MRN-TENANT-A-101", "555-0131"]]
+                [
+                    [
+                        "SYNTHETIC TEST DOCUMENT",
+                        "Patient: Alex Morgan",
+                        "MRN-TENANT-A-101",
+                        "555-0131",
+                    ]
+                ]
             )
             fax_b_bytes = helpers._create_multipage_digital_pdf(
-                [["SYNTHETIC TEST DOCUMENT", "Patient: Alex Morgan", "MRN-TENANT-B-909", "555-0132"]]
+                [
+                    [
+                        "SYNTHETIC TEST DOCUMENT",
+                        "Patient: Alex Morgan",
+                        "MRN-TENANT-B-909",
+                        "555-0132",
+                    ]
+                ]
             )
             sdoc_resp_a, sdoc_resp_b = await asyncio.gather(
                 client_a.post(
@@ -829,8 +861,10 @@ async def _run_adversarial_cross_tenant_suite(
             async with tenant_session(ctx_a) as sess_a:
                 sdocs_in_a = (await sess_a.execute(select(SessionDocument.id))).scalars().all()
                 exts_in_a = (
-                    await sess_a.execute(select(ExtractionResult.session_document_id))
-                ).scalars().all()
+                    (await sess_a.execute(select(ExtractionResult.session_document_id)))
+                    .scalars()
+                    .all()
+                )
                 if UUID(sdoc_b_id) in sdocs_in_a or UUID(sdoc_b_id) in exts_in_a:
                     leak_counts["session_documents_and_extraction_results"] += 1
 
@@ -848,12 +882,8 @@ async def _run_adversarial_cross_tenant_suite(
                 client_b.get(
                     f"/v1/assistants/{asst_b}/knowledge/documents/{ver_intake_a}/pages/1/thumbnail"
                 ),
-                client_a.get(
-                    f"/v1/conversations/{conv_b_id}/documents/{sdoc_b_id}/pages/1/image"
-                ),
-                client_b.get(
-                    f"/v1/conversations/{conv_a_id}/documents/{sdoc_a_id}/pages/1/image"
-                ),
+                client_a.get(f"/v1/conversations/{conv_b_id}/documents/{sdoc_b_id}/pages/1/image"),
+                client_b.get(f"/v1/conversations/{conv_a_id}/documents/{sdoc_a_id}/pages/1/image"),
             )
             for ip in img_probes:
                 if ip.status_code != 404:
@@ -927,10 +957,14 @@ async def _run_adversarial_cross_tenant_suite(
                     await sess_a.execute(select(Message).where(Message.id == UUID(msg_b_id)))
                 ).scalar_one_or_none()
                 audit_b_in_a = (
-                    await sess_a.execute(
-                        select(AuditEvent).where(AuditEvent.tenant_id == tenant_b)
+                    (
+                        await sess_a.execute(
+                            select(AuditEvent).where(AuditEvent.tenant_id == tenant_b)
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 if msg_b_in_a is not None or len(audit_b_in_a) > 0:
                     leak_counts["feedback"] += 1
 
@@ -939,10 +973,14 @@ async def _run_adversarial_cross_tenant_suite(
                     await sess_b.execute(select(Message).where(Message.id == UUID(msg_a_id)))
                 ).scalar_one_or_none()
                 audit_a_in_b = (
-                    await sess_b.execute(
-                        select(AuditEvent).where(AuditEvent.tenant_id == tenant_a)
+                    (
+                        await sess_b.execute(
+                            select(AuditEvent).where(AuditEvent.tenant_id == tenant_a)
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 if msg_a_in_b is not None or len(audit_a_in_b) > 0:
                     leak_counts["feedback"] += 1
 

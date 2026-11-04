@@ -212,7 +212,11 @@ class AuditEvent(Base):
     """Immutable audit trail of compliance actions. Insert-only for application roles."""
 
     __tablename__ = "audit_events"
-    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_audit_events_tenant_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_audit_events_tenant_id"),
+        Index("ix_audit_events_tenant_event_created", "tenant_id", "event_type", "created_at"),
+        Index("ix_audit_events_user_event_created", "user_id", "event_type", "created_at"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(

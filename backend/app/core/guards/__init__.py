@@ -8,11 +8,15 @@ from app.core.guards.input_guards import (
     QUESTION_TOO_LONG_MESSAGE,
     TENANT_QUESTION_RATE_LIMIT_MAX_REQUESTS,
     USER_QUESTION_RATE_LIMIT_MAX_REQUESTS,
+    InputGuardDecision,
     check_question_length,
     detect_input_language,
     detect_prompt_injection,
+    detect_supported_language,
+    guard_question_input,
 )
 from app.core.guards.output_guards import (
+    DOCUMENT_INJECTION_RULES,
     MAX_TOKENS_EXACT,
     MAX_TOKENS_EXPLAIN,
     MAX_TOKENS_GENERAL,
@@ -20,12 +24,15 @@ from app.core.guards.output_guards import (
     MAX_TOKENS_TABLE,
     check_answer_token_ceiling,
     is_document_injection_sentence,
+    match_document_injection_rule,
     sanitize_evidence_text,
     validate_general_route_no_client_facts,
     verify_citations_tenant_scope,
 )
 
 __all__ = [
+    "DOCUMENT_INJECTION_RULES",
+    "InputGuardDecision",
     "MAX_QUESTION_LENGTH",
     "MAX_TOKENS_EXACT",
     "MAX_TOKENS_EXPLAIN",
@@ -42,7 +49,10 @@ __all__ = [
     "check_question_length",
     "detect_input_language",
     "detect_prompt_injection",
+    "detect_supported_language",
+    "guard_question_input",
     "is_document_injection_sentence",
+    "match_document_injection_rule",
     "sanitize_evidence_text",
     "validate_general_route_no_client_facts",
     "verify_citations_tenant_scope",

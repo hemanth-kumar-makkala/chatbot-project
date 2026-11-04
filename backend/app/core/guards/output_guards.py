@@ -10,9 +10,13 @@ Enforces:
 
 from __future__ import annotations
 
+import logging
 import re
+from collections import Counter
 
 from app.core.guards.input_guards import detect_prompt_injection
+
+logger = logging.getLogger(__name__)
 
 MAX_TOKENS_EXACT: int = 64
 MAX_TOKENS_SHORT: int = 150
@@ -87,32 +91,66 @@ def validate_general_route_no_client_facts(answer_text: str) -> bool:
     return all(not pattern.search(answer_text) for pattern in _GENERAL_ROUTE_CLIENT_FACT_PATTERNS)
 
 
-_DOC_INJECTION_IMPERATIVE_RE = re.compile(
-    r"\b(?:"
-    r"(?:ignore|disregard|forget)\s+(?:your|all|previous|prior|above)\s+"
-    r"(?:rules|instructions|lines|prompts|directives)"
-    r"|(?:tell|reply\s+to|inform)\s+the\s+user\s+(?:that\s+|the\s+)?"
-    r"|reply\s+that\s+every\s+procedure\s+is\s+covered"
-    r"|(?:system\s+override|important\s+ai\s+instruction|ai\s+instruction|developer\s+override)"
-    r")\b",
-    re.IGNORECASE,
+DOCUMENT_INJECTION_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "doc_rule_override",
+        re.compile(
+            r"\b(?:ignore|disregard|forget)\s+(?:your|all|previous|prior|above|all\s+other)\s+"
+            r"(?:rules|instructions|lines|prompts|directives|documents)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "doc_forced_user_reply",
+        re.compile(
+            r"\b(?:"
+            r"(?:tell|reply\s+to|inform)\s+the\s+user\s+(?:that\s+|the\s+)?"
+            r"|reply\s+that\s+every\s+procedure\s+is\s+covered"
+            r"|answer\s+['\"]?approved['\"]?\s+to\s+every\s+question"
+            r")\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "doc_system_directive_header",
+        re.compile(
+            r"\b(?:"
+            r"system\s+override|important\s+ai\s+instruction|ai\s+instruction|"
+            r"assistant\s+instruction|developer\s+override"
+            r")\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
+
+
+def match_document_injection_rule(sentence: str) -> str | None:
+    """Return the matched rule name if sentence is an embedded injection directive, or None."""
+    if not sentence or not sentence.strip():
+        return None
+    input_rule = detect_prompt_injection(sentence)
+    if input_rule is not None:
+        return input_rule
+    for rule_name, pattern in DOCUMENT_INJECTION_RULES:
+        if pattern.search(sentence):
+            return rule_name
+    return None
 
 
 def is_document_injection_sentence(sentence: str) -> bool:
     """Return True if a sentence or clause is an embedded prompt-injection directive."""
-    if not sentence or not sentence.strip():
-        return False
-    if detect_prompt_injection(sentence) is not None:
-        return True
-    return bool(_DOC_INJECTION_IMPERATIVE_RE.search(sentence))
+    return match_document_injection_rule(sentence) is not None
 
 
 def sanitize_evidence_text(chunk_text: str) -> str:
-    """Strip embedded prompt-injection sentences from chunk_text while preserving genuine facts."""
+    """Strip embedded prompt-injection sentences from chunk_text while preserving genuine facts.
+
+    Logs each removal to the operational log as a count and rule name only (zero text).
+    """
     if not chunk_text:
         return ""
     lines_out: list[str] = []
+    removed_by_rule: Counter[str] = Counter()
     for line in chunk_text.splitlines():
         if not line.strip():
             lines_out.append(line)
@@ -120,8 +158,25 @@ def sanitize_evidence_text(chunk_text: str) -> str:
         # Split line into sentences so an injected sentence on the same line as a genuine
         # sentence is removed without losing the genuine sentence.
         sentences = re.split(r"(?<=[.!?])\s+", line)
-        kept = [s for s in sentences if not is_document_injection_sentence(s)]
+        kept: list[str] = []
+        for s in sentences:
+            rule_name = match_document_injection_rule(s)
+            if rule_name is None:
+                kept.append(s)
+            else:
+                removed_by_rule[rule_name] += 1
         if kept:
             lines_out.append(" ".join(kept))
-    return "\n".join(lines_out)
 
+    for rule_name, count in removed_by_rule.items():
+        logger.warning(
+            "Document injection sentence removed",
+            extra={
+                "node": "sanitize_evidence_text",
+                "status": "sanitized",
+                "error_code": rule_name,
+                "error_type": "DocumentInjectionStripped",
+                "counts": {"removed_sentences": count},
+            },
+        )
+    return "\n".join(lines_out)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import re
+from dataclasses import dataclass
 
 # 1. Question Length Limit Constants
 MAX_QUESTION_LENGTH: int = 4000
@@ -61,8 +62,11 @@ _DIRECT_INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"\b(?:"
             r"(?:reveal|show|print|display|output|dump|repeat|expose|give\s+me|what\s+is|what\s+are)\s+"
             r"(?:me\s+)?(?:your|the)\s+(?:exact\s+|full\s+|verbatim\s+|hidden\s+|initial\s+|developer\s+)*"
-            r"(?:system\s+prompt|system\s+instructions|developer\s+instructions|developer\s+prompt|"
-            r"hidden\s+rules|system\s+message|initial\s+instructions)"
+            r"(?:system\s+prompt|developer\s+instructions|developer\s+prompt)"
+            r"|(?:reveal|show|print|display|output|dump|repeat|expose|give\s+me|what\s+is|what\s+are)\s+"
+            r"(?:me\s+)?your\s+(?:exact\s+|full\s+|verbatim\s+|hidden\s+|initial\s+|developer\s+)*"
+            r"(?:system\s+instructions|hidden\s+instructions|hidden\s+rules|system\s+message|initial\s+instructions)"
+            r"|what\s+were\s+you\s+(?:told|instructed)\s+before\s+this"
             r")\b",
             re.IGNORECASE,
         ),
@@ -219,3 +223,50 @@ def detect_input_language(question: str) -> str:
     """
     _ = question
     return "en"
+
+
+detect_supported_language = detect_input_language
+
+
+@dataclass(frozen=True)
+class InputGuardDecision:
+    """Outcome of running Node 1 input guard checks on a user question."""
+
+    allowed: bool
+    refused: bool
+    public_error_ref: str | None
+    message: str | None
+    matched_pattern: str | None
+    language: str
+
+
+def guard_question_input(question: str) -> InputGuardDecision:
+    """Evaluate question length and prompt-injection rules for Node 1 (guard_input)."""
+    lang = detect_input_language(question)
+    if not check_question_length(question):
+        return InputGuardDecision(
+            allowed=False,
+            refused=True,
+            public_error_ref="ERR-INPUT-TOO-LONG",
+            message=QUESTION_TOO_LONG_MESSAGE,
+            matched_pattern=None,
+            language=lang,
+        )
+    matched_pattern = detect_prompt_injection(question)
+    if matched_pattern is not None:
+        return InputGuardDecision(
+            allowed=False,
+            refused=True,
+            public_error_ref="ERR-PROMPT-INJECTION",
+            message=PROMPT_INJECTION_MESSAGE,
+            matched_pattern=matched_pattern,
+            language=lang,
+        )
+    return InputGuardDecision(
+        allowed=True,
+        refused=False,
+        public_error_ref=None,
+        message=None,
+        matched_pattern=None,
+        language=lang,
+    )

@@ -28,12 +28,8 @@ from typing_extensions import TypedDict
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.guards.input_guards import (
-    PROMPT_INJECTION_MESSAGE,
     QUESTION_RATE_LIMIT_MESSAGE,
-    QUESTION_TOO_LONG_MESSAGE,
-    check_question_length,
-    detect_input_language,
-    detect_prompt_injection,
+    guard_question_input,
 )
 from app.core.guards.output_guards import (
     MAX_TOKENS_GENERAL,
@@ -320,7 +316,8 @@ async def node_guard_input(
 
         tenant_id = tenant_ctx.tenant_id
         q = runtime.context.question_text
-        lang = detect_input_language(q)
+        decision = guard_question_input(q)
+        lang = decision.language
 
         if runtime.context.rate_limit_exceeded:
             runtime.context.response_text = QUESTION_RATE_LIMIT_MESSAGE
@@ -332,35 +329,25 @@ async def node_guard_input(
                 "evidence_ids": [],
             }
 
-        if not check_question_length(q):
-            runtime.context.response_text = QUESTION_TOO_LONG_MESSAGE
+        if decision.refused:
+            if decision.matched_pattern is not None:
+                logger.warning(
+                    "Prompt injection blocked at guard_input",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "tenant_id": tenant_id,
+                        "node": "guard_input",
+                        "status": "refusal",
+                        "error_code": decision.matched_pattern,
+                        "error_type": "PromptInjectionBlocked",
+                    },
+                )
+            runtime.context.response_text = decision.message or ""
             return {
                 "tenant_id": tenant_id,
                 "language": lang,
                 "status": "refusal",
-                "public_error_ref": "ERR-INPUT-TOO-LONG",
-                "evidence_ids": [],
-            }
-
-        matched_pattern = detect_prompt_injection(q)
-        if matched_pattern is not None:
-            logger.warning(
-                "Prompt injection blocked at guard_input",
-                extra={
-                    "request_id": state.get("request_id", ""),
-                    "tenant_id": tenant_id,
-                    "node": "guard_input",
-                    "status": "refusal",
-                    "error_code": matched_pattern,
-                    "error_type": "PromptInjectionBlocked",
-                },
-            )
-            runtime.context.response_text = PROMPT_INJECTION_MESSAGE
-            return {
-                "tenant_id": tenant_id,
-                "language": lang,
-                "status": "refusal",
-                "public_error_ref": "ERR-PROMPT-INJECTION",
+                "public_error_ref": decision.public_error_ref or "ERR-INPUT-GUARD",
                 "evidence_ids": [],
             }
 
@@ -1436,11 +1423,11 @@ async def node_validate(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
-        raw_evidence = runtime.context.evidence_text
-        evidence = {eid: sanitize_evidence_text(txt) for eid, txt in raw_evidence.items()}
+        # Quote validation compares against the original stored chunk text (not the sanitized copy)
+        evidence = runtime.context.evidence_text
         attempts = state.get("validation_attempts", 0)
         generated = runtime.context.generated_answer
-        provided_evidence_ids = set(state.get("evidence_ids", [])) | set(raw_evidence.keys())
+        provided_evidence_ids = set(state.get("evidence_ids", [])) | set(evidence.keys())
         mode = state.get("answer_mode", "short")
 
         is_valid = True
@@ -1521,7 +1508,12 @@ async def node_validate(
                 valid_points = []
                 for p in raw_points:
                     p_dict = p if isinstance(p, dict) else p.model_dump()
+                    p_point = str(p_dict.get("point", "")).strip()
                     p_quote = str(p_dict.get("quoted_span", "")).strip().strip('"').strip("'")
+                    if is_document_injection_sentence(p_point) or is_document_injection_sentence(
+                        p_quote
+                    ):
+                        continue
                     p_cites = AnswerOutput.parse_evidence_ids(p_dict.get("evidence_ids", []))
                     p_cites = [str(c).strip("[]'\"") for c in p_cites if str(c).strip("[]'\"")]
 
@@ -1611,9 +1603,12 @@ async def node_validate(
             else:
                 quoted_span = generated.get("quoted_span")
                 if quoted_span:
-                    span_match = any(quoted_span in text_val for text_val in evidence.values())
-                    if not span_match:
+                    if is_document_injection_sentence(str(quoted_span)):
                         is_valid = False
+                    else:
+                        span_match = any(quoted_span in text_val for text_val in evidence.values())
+                        if not span_match:
+                            is_valid = False
 
         elif is_valid and generated and mode != "explain":
             is_visual = (
@@ -1625,9 +1620,11 @@ async def node_validate(
                 )
             )
             quoted_span = generated.get("quoted_span")
-            if quoted_span and quoted_span.strip() and not is_visual:
+            if quoted_span and is_document_injection_sentence(str(quoted_span)):
+                is_valid = False
+            elif quoted_span and quoted_span.strip() and not is_visual:
                 # Every quoted span must appear character for character
-                # in stored text of cited evidence
+                # in stored text of cited evidence (original runtime.context.evidence_text)
                 span_match = False
                 cited_ids = AnswerOutput.parse_evidence_ids(generated.get("evidence_ids", []))
                 target_chunks = [evidence[cid] for cid in cited_ids if cid in evidence] or list(
