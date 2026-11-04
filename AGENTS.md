@@ -8,6 +8,7 @@ Architecture specification: `Client Knowledge Assistant Architecture and Build P
 Before any task, read `docs/STATUS.md` and the current phase file (`docs/phases/PHASE-X.md`).
 Mandatory: All commands must execute in the foreground according to `.agents/rules/execution.md` (no background execution).
 Before reporting any task done: run uv run pre-commit run --files <changed files>. Never run git add, commit, or push. Hemanth does that.
+Before reporting, the product owner stages new files with git add -A; pre-commit only checks tracked files, so list every new file you created so they can be staged.
 After any task, update `docs/STATUS.md` and append an entry to `docs/BUILD_LOG.md`.
 
 ## Process Ownership & Safety Rules

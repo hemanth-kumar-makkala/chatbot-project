@@ -13,36 +13,16 @@ Tests:
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from alembic import command
-from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import create_async_engine
-
-from app.db.models import (
-    Assistant,
-    AuditEvent,
-    Chunk,
-    Conversation,
-    Document,
-    DocumentVersion,
-    Feedback,
-    Membership,
-    Message,
-    Page,
-    PageReading,
-    Tenant,
-    User,
-)
-from app.db.session import tenant_session
-from app.ports.types import TenantContext, UserRole
 from scripts.backup_db import backup_database, is_pg_dump_available
 from scripts.restore_db import restore_database
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
 from tests.conftest import isolated_throwaway_database
 
 
@@ -98,7 +78,10 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
         async with engine_source.begin() as conn:
             # Tenants
             await conn.execute(
-                text("INSERT INTO tenants (id, name) VALUES (:t1, 'Tenant Alpha'), (:t2, 'Tenant Beta');"),
+                text(
+                    "INSERT INTO tenants (id, name) VALUES "
+                    "(:t1, 'Tenant Alpha'), (:t2, 'Tenant Beta');"
+                ),
                 {"t1": tid_a, "t2": tid_b},
             )
             # Users
@@ -124,7 +107,8 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
             # Assistants
             await conn.execute(
                 text(
-                    "INSERT INTO assistants (id, tenant_id, name, prompt_id, prompt_version) VALUES "
+                    "INSERT INTO assistants "
+                    "(id, tenant_id, name, prompt_id, prompt_version) VALUES "
                     "(:a1, :t1, 'Assistant Alpha', 'synth', '1.0'), "
                     "(:a2, :t2, 'Assistant Beta', 'synth', '1.0');"
                 ),
@@ -133,13 +117,15 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
             # Document & Version for Tenant A
             await conn.execute(
                 text(
-                    "INSERT INTO documents (id, tenant_id, title) VALUES (:did, :tid, 'Clinic Policy.pdf');"
+                    "INSERT INTO documents (id, tenant_id, title) "
+                    "VALUES (:did, :tid, 'Clinic Policy.pdf');"
                 ),
                 {"did": doc_a_id, "tid": tid_a},
             )
             await conn.execute(
                 text(
-                    "INSERT INTO document_versions (id, tenant_id, document_id, sha256, uploaded_by, status, file_extension) "
+                    "INSERT INTO document_versions "
+                    "(id, tenant_id, document_id, sha256, uploaded_by, status, file_extension) "
                     "VALUES (:vid, :tid, :did, 'abc123sha', :uid, 'ready', 'pdf');"
                 ),
                 {"vid": ver_a_id, "tid": tid_a, "did": doc_a_id, "uid": uid_a},
@@ -151,25 +137,36 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
             # Page & Reading
             await conn.execute(
                 text(
-                    "INSERT INTO pages (id, tenant_id, document_version_id, page_number, page_sha256, page_type, image_key, ocr_confidence) "
+                    "INSERT INTO pages (id, tenant_id, document_version_id, "
+                    "page_number, page_sha256, page_type, image_key, ocr_confidence) "
                     "VALUES (:pid, :tid, :vid, 1, 'pagesha1', 'digital_text', :img_key, 0.98);"
                 ),
-                {"pid": page_a_id, "tid": tid_a, "vid": ver_a_id, "img_key": f"{tid_a}/pages/p1.png"},
+                {
+                    "pid": page_a_id,
+                    "tid": tid_a,
+                    "vid": ver_a_id,
+                    "img_key": f"{tid_a}/pages/p1.png",
+                },
             )
             await conn.execute(
                 text(
-                    "INSERT INTO page_readings (id, tenant_id, page_id, source, text, model_id, model_version) "
-                    "VALUES (:prid, :tid, :pid, 'ocr', 'Prior authorization requires 5 business days.', 'docling_easyocr', 'v1');"
+                    "INSERT INTO page_readings "
+                    "(id, tenant_id, page_id, source, text, model_id, model_version) "
+                    "VALUES (:prid, :tid, :pid, 'ocr', "
+                    "'Prior authorization requires 5 business days.', 'docling_easyocr', 'v1');"
                 ),
                 {"prid": uuid4(), "tid": tid_a, "pid": page_a_id},
             )
             # Chunks with pgvector embeddings
             await conn.execute(
                 text(
-                    "INSERT INTO chunks (id, tenant_id, document_version_id, page_id, text, language, ts_config, is_active, evidence_type, embedding) "
+                    "INSERT INTO chunks (id, tenant_id, document_version_id, page_id, "
+                    "text, language, ts_config, is_active, evidence_type, embedding) "
                     "VALUES "
-                    "(:c1, :tid, :vid, :pid, 'Prior authorization clause 1', 'en', 'english', true, 'text', CAST(:emb1 AS vector)), "
-                    "(:c2, :tid, :vid, :pid, 'Prior authorization clause 2', 'en', 'english', true, 'text', CAST(:emb2 AS vector));"
+                    "(:c1, :tid, :vid, :pid, 'Prior authorization clause 1', "
+                    "'en', 'english', true, 'text', CAST(:emb1 AS vector)), "
+                    "(:c2, :tid, :vid, :pid, 'Prior authorization clause 2', "
+                    "'en', 'english', true, 'text', CAST(:emb2 AS vector));"
                 ),
                 {
                     "c1": chunk_a1_id,
@@ -192,7 +189,8 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
             await conn.execute(
                 text(
                     "INSERT INTO messages (id, tenant_id, conversation_id, role, content) "
-                    "VALUES (:mid, :tid, :cid, 'assistant', 'Submit prior authorization 5 days ahead.');"
+                    "VALUES (:mid, :tid, :cid, 'assistant', "
+                    "'Submit prior authorization 5 days ahead.');"
                 ),
                 {"mid": msg_a_id, "tid": tid_a, "cid": conv_a_id},
             )
@@ -274,9 +272,10 @@ async def test_database_backup_and_tested_restore_lifecycle(tmp_path: Path) -> N
                     restored_cnt: int = int(
                         (await conn.execute(text(f"SELECT COUNT(*) FROM {tbl};"))).scalar_one()
                     )
-                    assert (
-                        restored_cnt == expected_cnt
-                    ), f"Row count mismatch on table {tbl}: expected {expected_cnt}, got {restored_cnt}"
+                    assert restored_cnt == expected_cnt, (
+                        f"Row count mismatch on table {tbl}: "
+                        f"expected {expected_cnt}, got {restored_cnt}"
+                    )
 
             # 6. Verify vector similarity search returns identical results
             async with engine_restored.begin() as conn:

@@ -14,19 +14,17 @@ import logging
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from app.api.config import ApiSettings
 from app.api.deps import (
-    get_api_settings,
     get_auth_provider,
     get_current_session,
     get_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.db.models import Assistant, AuditEvent, Conversation, Feedback, Message
+from app.db.models import AuditEvent, Conversation, Feedback, Message
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
 from app.ports.types import SessionContext, TenantContext
@@ -113,9 +111,7 @@ async def submit_feedback(
         # 2. Direct message route: look up message across tenants and verify membership
         async with unscoped_session() as db_sess:
             raw_msg = (
-                await db_sess.execute(
-                    select(Message.tenant_id).where(Message.id == msg_uuid)
-                )
+                await db_sess.execute(select(Message.tenant_id).where(Message.id == msg_uuid))
             ).scalar_one_or_none()
             if not raw_msg:
                 raise HTTPException(
@@ -203,4 +199,3 @@ async def submit_feedback(
             created_at=fb_record.created_at.isoformat(),
             updated_at=fb_record.updated_at.isoformat(),
         )
-

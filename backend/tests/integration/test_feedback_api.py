@@ -154,7 +154,9 @@ async def test_feedback_submission_persistence_and_update(
                 assert fb_row.reason is None
 
             # 2. Second submission: Update same message to thumbs down with reason
-            secret_reason = "Confidential Reason: Policy page 4 is newer than page 2."
+            secret_reason = (  # pragma: allowlist secret
+                "Confidential Reason: Policy page 4 is newer than page 2."
+            )
             resp2 = await client.post(
                 f"/v1/assistants/{asst_a_id}/messages/{msg_a_id}/feedback",
                 cookies=cookies,
@@ -306,7 +308,7 @@ async def test_feedback_cross_tenant_isolation_returns_404(
             )
             assert resp1.status_code == 404
 
-            # Probe 2: Staff B targets Assistant B with Message A -> returns 404 (Message A not in Assistant B)
+            # Probe 2: Staff B targets Assistant B with Message A -> returns 404
             resp2 = await client.post(
                 f"/v1/assistants/{asst_b_id}/messages/{msg_a_id}/feedback",
                 cookies=cookies_b,

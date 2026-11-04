@@ -36,8 +36,7 @@ def _is_docker_postgres_available() -> bool:
     try:
         res = subprocess.run(
             ["docker", "exec", "cka-postgres", "pg_dump", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=5,
             check=False,
         )
@@ -129,7 +128,8 @@ def backup_database(
                 )
     else:
         raise RuntimeError(
-            "pg_dump is not available on PATH and docker container 'cka-postgres' is not accessible."
+            "pg_dump is not available on PATH and docker container 'cka-postgres' "
+            "is not accessible."
         )
 
     return dump_file
@@ -187,4 +187,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -33,8 +33,7 @@ def _is_docker_postgres_available() -> bool:
     try:
         res = subprocess.run(
             ["docker", "exec", "cka-postgres", "pg_restore", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=5,
             check=False,
         )
@@ -74,31 +73,33 @@ def restore_database(
     pg_pass = os.getenv("POSTGRES_PASSWORD", "")
 
     # 1. Connect to administrative maintenance database (postgres) to check and create target_db
-    conn_info = (
-        f"host={pg_host} port={pg_port} user={pg_user} password={pg_pass} dbname=postgres"
-    )
-    with psycopg.connect(conn_info, autocommit=True) as admin_conn:
-        with admin_conn.cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM pg_database WHERE datname = %s;",
-                (target_db,),
+    conn_info = f"host={pg_host} port={pg_port} user={pg_user} password={pg_pass} dbname=postgres"
+    with (
+        psycopg.connect(conn_info, autocommit=True) as admin_conn,
+        admin_conn.cursor() as cur,
+    ):
+        cur.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s;",
+            (target_db,),
+        )
+        if cur.fetchone() is not None:
+            raise ValueError(
+                f"Target database '{target_db}' already exists. Restores are strictly "
+                "permitted into a NEW database only, never over an existing one."
             )
-            if cur.fetchone() is not None:
-                raise ValueError(
-                    f"Target database '{target_db}' already exists. "
-                    "Restores are strictly permitted into a NEW database only, never over an existing one."
-                )
 
-            # Create the fresh target database
-            cur.execute(f'CREATE DATABASE "{target_db}";')
+        # Create the fresh target database
+        cur.execute(f'CREATE DATABASE "{target_db}";')
 
     # 2. Ensure pgvector extension exists on the newly created database
     target_conn_info = (
         f"host={pg_host} port={pg_port} user={pg_user} password={pg_pass} dbname={target_db}"
     )
-    with psycopg.connect(target_conn_info, autocommit=True) as target_conn:
-        with target_conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+    with (
+        psycopg.connect(target_conn_info, autocommit=True) as target_conn,
+        target_conn.cursor() as cur,
+    ):
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
     # 3. Execute pg_restore
     pg_restore_bin = shutil.which("pg_restore")
@@ -152,7 +153,8 @@ def restore_database(
                 )
     else:
         raise RuntimeError(
-            "pg_restore is not available on PATH and docker container 'cka-postgres' is not accessible."
+            "pg_restore is not available on PATH and docker container 'cka-postgres' "
+            "is not accessible."
         )
 
 
@@ -212,4 +214,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
