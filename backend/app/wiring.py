@@ -38,6 +38,7 @@ from app.ports.malware_scanner import MalwareScanner
 from app.ports.model_provider import ModelProvider
 from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
+from app.ports.scrubber import ExceptionScrubber
 from app.ports.storage import StorageBackend
 from app.ports.table_extractor import TableExtractor
 from app.ports.tracer import Tracer
@@ -46,6 +47,13 @@ from app.ports.types import TenantContext
 # Initialize prompt registry from YAML outside app.core
 with contextlib.suppress(Exception):
     set_prompt_registry(load_yaml_prompt_registry())
+
+# Register default CI/unit-test safety-net scrubber; create_app overrides per profile
+with contextlib.suppress(Exception):
+    from app.adapters.scrubbing.mock import MockExceptionScrubber as _DefaultMockScrubber
+    from app.observability.logger import set_exception_scrubber as _init_set_scrubber
+
+    _init_set_scrubber(_DefaultMockScrubber())
 
 
 def build_app_graph(
@@ -609,3 +617,32 @@ def create_reranker(profile: str) -> Reranker:
         "Reranker is wired only for desktop-gpu and home-gpu.",
         error_code="UNAUTHORIZED_RERANKER_PROFILE",
     )
+
+
+def create_exception_scrubber(profile: str) -> ExceptionScrubber:
+    """Create ExceptionScrubber adapter based on runtime profile (Phase 5 Task 5.4).
+
+    Profiles:
+    - mock: MockExceptionScrubber (for CI without spaCy model weights)
+    - office-cpu, desktop-gpu, home-gpu, dev-free-api, cloud: PresidioExceptionScrubber
+      (requires offline spaCy model 'en_core_web_sm'; raises ConfigurationError if missing)
+    - unknown profile: ConfigurationError
+    """
+    from app.ports.errors import ConfigurationError
+
+    if profile == "mock":
+        from app.adapters.scrubbing.mock import MockExceptionScrubber
+
+        return MockExceptionScrubber()
+
+    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
+    if profile not in allowed:
+        raise ConfigurationError(
+            f"Unknown or unauthorized profile '{profile}' for ExceptionScrubber. "
+            f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
+            error_code="UNAUTHORIZED_SCRUBBER_PROFILE",
+        )
+
+    from app.adapters.scrubbing.presidio import PresidioExceptionScrubber
+
+    return PresidioExceptionScrubber()

@@ -34,10 +34,7 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
                 str(r[0])
                 for r in (
                     await conn.execute(
-                        text(
-                            "SELECT indexname FROM pg_indexes "
-                            "WHERE tablename = 'audit_events';"
-                        )
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'audit_events';")
                     )
                 ).fetchall()
             }
@@ -63,13 +60,15 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
             post_indexes = {str(r[0]): str(r[1]) for r in post_rows}
 
             assert "ix_audit_events_tenant_event_created" in post_indexes
-            assert "(tenant_id, event_type, created_at)" in post_indexes[
-                "ix_audit_events_tenant_event_created"
-            ]
+            assert (
+                "(tenant_id, event_type, created_at)"
+                in post_indexes["ix_audit_events_tenant_event_created"]
+            )
             assert "ix_audit_events_user_event_created" in post_indexes
-            assert "(user_id, event_type, created_at)" in post_indexes[
-                "ix_audit_events_user_event_created"
-            ]
+            assert (
+                "(user_id, event_type, created_at)"
+                in post_indexes["ix_audit_events_user_event_created"]
+            )
 
             # Seed sample rows and disable seqscan so planner deterministically shows index usage
             await conn.execute(
@@ -118,10 +117,7 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
                 str(r[0])
                 for r in (
                     await conn.execute(
-                        text(
-                            "SELECT indexname FROM pg_indexes "
-                            "WHERE tablename = 'audit_events';"
-                        )
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'audit_events';")
                     )
                 ).fetchall()
             }
@@ -136,10 +132,7 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
                 str(r[0])
                 for r in (
                     await conn.execute(
-                        text(
-                            "SELECT indexname FROM pg_indexes "
-                            "WHERE tablename = 'audit_events';"
-                        )
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'audit_events';")
                     )
                 ).fetchall()
             }
@@ -147,4 +140,3 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
             assert "ix_audit_events_user_event_created" in reupgraded_indexes
 
         await test_engine.dispose()
-

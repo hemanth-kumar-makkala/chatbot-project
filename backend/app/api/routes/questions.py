@@ -1,5 +1,6 @@
 """Question and answer dispatch routes."""
 
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -33,7 +34,9 @@ from app.db.models import (
     TableData,
 )
 from app.db.session import tenant_session
+from app.observability.logger import scrub_exception_for_log
 from app.ports.auth import AuthProvider
+from app.ports.storage import StorageKey
 from app.ports.types import SessionContext
 from app.wiring import (
     build_app_graph,
@@ -42,6 +45,7 @@ from app.wiring import (
     create_production_ports,
     create_reranker,
     create_retriever,
+    create_storage_backend,
 )
 
 logger = logging.getLogger(__name__)
@@ -304,41 +308,85 @@ async def ask_question(
         )
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
 
-        # 4. Instantiate request-scoped runtime context and invoke engine
-        ports = get_engine_ports(settings=settings)
-
-        runtime_ctx = GraphRuntimeContext(
-            ports=ports,
-            tenant=tenant_ctx,
-            question_text=payload.question_text,
-            active_document_count=doc_count,
-        )
-        state: GraphState = {
-            "request_id": request_id,
-            "status": "pending",
-            "conversation_id": str(conv_uuid),
-        }
-        graph = get_compiled_graph()
-        try:
-            result = await graph.ainvoke(state, context=runtime_ctx)
-        except Exception as exc:
-            logger.error("Graph invocation error: %r", exc, exc_info=True)
-            err_ref = f"ERR-{uuid4().hex[:6].upper()}"
-            result = {
-                "request_id": request_id,
-                "status": "safe_failure",
-                "public_error_ref": err_ref,
-            }
-            runtime_ctx.response_text = (
-                "I encountered an issue processing your request. Please try again."
+        # 4. Load visual page metadata inside the pre-graph DB transaction
+        page_images: dict[str, bytes] = {}
+        page_ocr_confidences: dict[str, float] = {}
+        visual_stmt = (
+            select(Chunk.id, Page.image_key, Page.ocr_confidence)
+            .join(Page, (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id))
+            .where(
+                Chunk.tenant_id == tenant_uuid,
+                Chunk.is_active.is_(True),
+                Chunk.evidence_type == "visual",
             )
+        )
+        visual_rows = [
+            (str(vrow.id), vrow.image_key, vrow.ocr_confidence)
+            for vrow in (await db_session.execute(visual_stmt)).all()
+        ]
 
-        # 5. Save assistant answer message row
-        if runtime_ctx.response_text:
-            answer_text = runtime_ctx.response_text
-        else:
-            answer_text = "I am unable to answer this question based on validated clinic documents."
+    # Release DB connection before invoking model/GPU pipeline (matching ask_question_stream)
+    ports = get_engine_ports(settings=settings)
+    if visual_rows:
+        storage = create_storage_backend(profile=settings.profile, base_dir=settings.storage_dir)
+        for cid_str, image_key, ocr_conf in visual_rows:
+            if ocr_conf is not None:
+                page_ocr_confidences[cid_str] = float(ocr_conf)
+            if image_key:
+                rel_path = str(image_key)
+                prefix = f"{tenant_ctx.tenant_id}/"
+                if rel_path.startswith(prefix):
+                    rel_path = rel_path[len(prefix) :]
+                with contextlib.suppress(Exception):
+                    page_images[cid_str] = await storage.get(
+                        StorageKey(tenant_id=tenant_uuid, path=rel_path)
+                    )
 
+    runtime_ctx = GraphRuntimeContext(
+        ports=ports,
+        tenant=tenant_ctx,
+        question_text=payload.question_text,
+        active_document_count=doc_count,
+        page_images=page_images,
+        page_ocr_confidences=page_ocr_confidences,
+    )
+    state: GraphState = {
+        "request_id": request_id,
+        "status": "pending",
+        "conversation_id": str(conv_uuid),
+    }
+    graph = get_compiled_graph()
+    try:
+        result = await graph.ainvoke(state, context=runtime_ctx)
+    except Exception as exc:
+        scrubbed_exc = scrub_exception_for_log(exc)
+        logger.error(
+            "Graph invocation error: %s",
+            scrubbed_exc.scrubbed_message,
+            extra={
+                "node": "ask_question",
+                "status": "error",
+                "error_code": "ERR_GRAPH_INVOCATION",
+                "error_type": scrubbed_exc.error_type,
+            },
+        )
+        err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+        result = {
+            "request_id": request_id,
+            "status": "safe_failure",
+            "public_error_ref": err_ref,
+        }
+        runtime_ctx.response_text = (
+            "I encountered an issue processing your request. Please try again."
+        )
+
+    # 5. Save assistant answer message row and audit event in a short post-graph DB transaction
+    if runtime_ctx.response_text:
+        answer_text = runtime_ctx.response_text
+    else:
+        answer_text = "I am unable to answer this question based on validated clinic documents."
+
+    async with tenant_session(tenant_ctx) as db_session:
         asst_msg = Message(
             tenant_id=tenant_uuid,
             conversation_id=conv_uuid,
@@ -535,7 +583,17 @@ async def ask_question_stream(
                         }
                         yield f"event: status\ndata: {json.dumps(val_payload)}\n\n"
         except Exception as exc:
-            logger.error("Streaming graph invocation error: %r", exc, exc_info=True)
+            scrubbed_exc = scrub_exception_for_log(exc)
+            logger.error(
+                "Streaming graph invocation error: %s",
+                scrubbed_exc.scrubbed_message,
+                extra={
+                    "node": "ask_question_stream",
+                    "status": "error",
+                    "error_code": "ERR_STREAM_GRAPH_INVOCATION",
+                    "error_type": scrubbed_exc.error_type,
+                },
+            )
             err_ref = f"ERR-{uuid4().hex[:6].upper()}"
             err_payload = {
                 "public_error_ref": err_ref,

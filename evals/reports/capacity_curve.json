@@ -1,0 +1,134 @@
+{
+  "task": "5.6",
+  "profile": "desktop-gpu",
+  "recorded_at": "2026-11-04T13:05:40.645339+00:00",
+  "step_duration_seconds": 60,
+  "early_stop_error_rate_threshold": 0.5,
+  "hardware": {
+    "cpu": "Intel Core i7-12700F",
+    "ram_gb": 32,
+    "gpu": "NVIDIA GeForce RTX 3050 (6 GB VRAM)",
+    "model": "qwen3-vl:4b (build a1b29c246319)"
+  },
+  "text_path": {
+    "steps": [
+      {
+        "users": 5,
+        "duration_seconds": 60.76,
+        "total_requests": 86,
+        "failed_requests": 0,
+        "error_rate": 0.0,
+        "throughput_rps": 1.4678,
+        "p50_latency_ms": 1500.0,
+        "p95_latency_ms": 2100.0,
+        "stopped_early": false
+      },
+      {
+        "users": 10,
+        "duration_seconds": 60.94,
+        "total_requests": 90,
+        "failed_requests": 0,
+        "error_rate": 0.0,
+        "throughput_rps": 1.5187,
+        "p50_latency_ms": 4500.0,
+        "p95_latency_ms": 5200.0,
+        "stopped_early": false
+      },
+      {
+        "users": 20,
+        "duration_seconds": 61.01,
+        "total_requests": 81,
+        "failed_requests": 0,
+        "error_rate": 0.0,
+        "throughput_rps": 1.3959,
+        "p50_latency_ms": 11000.0,
+        "p95_latency_ms": 14000.0,
+        "stopped_early": false
+      },
+      {
+        "users": 50,
+        "duration_seconds": 31.5,
+        "total_requests": 50,
+        "failed_requests": 28,
+        "error_rate": 0.56,
+        "throughput_rps": 1.6631,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      },
+      {
+        "users": 100,
+        "duration_seconds": 31.21,
+        "total_requests": 100,
+        "failed_requests": 94,
+        "error_rate": 0.94,
+        "throughput_rps": 3.3242,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      }
+    ],
+    "breaking_point_users": 50
+  },
+  "vision_path": {
+    "steps": [
+      {
+        "users": 5,
+        "duration_seconds": 60.75,
+        "total_requests": 11,
+        "failed_requests": 0,
+        "error_rate": 0.0,
+        "throughput_rps": 0.1921,
+        "p50_latency_ms": 24000.0,
+        "p95_latency_ms": 25000.0,
+        "stopped_early": false
+      },
+      {
+        "users": 10,
+        "duration_seconds": 31.16,
+        "total_requests": 10,
+        "failed_requests": 10,
+        "error_rate": 1.0,
+        "throughput_rps": 0.3332,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      },
+      {
+        "users": 20,
+        "duration_seconds": 31.22,
+        "total_requests": 20,
+        "failed_requests": 20,
+        "error_rate": 1.0,
+        "throughput_rps": 0.6655,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      },
+      {
+        "users": 50,
+        "duration_seconds": 31.15,
+        "total_requests": 50,
+        "failed_requests": 50,
+        "error_rate": 1.0,
+        "throughput_rps": 1.6642,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      },
+      {
+        "users": 100,
+        "duration_seconds": 31.23,
+        "total_requests": 100,
+        "failed_requests": 100,
+        "error_rate": 1.0,
+        "throughput_rps": 3.3233,
+        "p50_latency_ms": 30000.0,
+        "p95_latency_ms": 30000.0,
+        "stopped_early": true
+      }
+    ],
+    "breaking_point_users": 10
+  },
+  "summary": "On the 6 GB RTX 3050 desktop-gpu workstation running Ollama qwen3-vl:4b, inference requests queue behind the single local GPU context. The text path handles 5 concurrent users cleanly before latency queueing pushes error/timeout rates past 50% at 50 concurrent users. The vision path performs both 1024px image vision reading (Node 6) and grounded answer generation (Node 7) on the same 6 GB GPU, saturating earlier with the >50% error rate breaking point reached at 10 concurrent users."
+}

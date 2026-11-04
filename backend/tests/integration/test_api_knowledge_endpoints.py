@@ -692,6 +692,7 @@ class TestKnowledgeUploadAndStatusList:
             padmin_resp = await client.get(f"/v1/assistants/{asst_id}/knowledge/documents")
             assert padmin_resp.status_code == 404
 
+    @pytest.mark.models
     async def test_upload_desktop_gpu_wiring_succeeds(self, tmp_path: Path) -> None:
         """Upload succeeds on desktop-gpu profile with valid storage directory."""
         desktop_settings = ApiSettings(

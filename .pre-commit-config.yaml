@@ -37,7 +37,14 @@ repos:
         always_run: true
       - id: boundary-invariants
         name: boundary-invariants
-        entry: uv --directory backend run python -m pytest tests/invariants
+        # Pure (no-database) invariant checks only. Database-backed invariant tests such as
+        # tests/invariants/test_adversarial_cross_tenant_isolation.py run in the normal pytest
+        # step after roles are bootstrapped and migrations applied.
+        entry: >-
+          uv --directory backend run python -m pytest
+          tests/invariants/test_architecture_boundaries.py
+          tests/invariants/test_migration_invariants.py
+          tests/invariants/test_phi_session_isolation.py
         language: system
         pass_filenames: false
         always_run: true

@@ -38,4 +38,3 @@ def downgrade() -> None:
     """Drop composite rate-limit indexes from audit_events."""
     op.drop_index("ix_audit_events_user_event_created", table_name="audit_events")
     op.drop_index("ix_audit_events_tenant_event_created", table_name="audit_events")
-

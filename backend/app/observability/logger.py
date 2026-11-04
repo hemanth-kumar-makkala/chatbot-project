@@ -20,9 +20,40 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from app.ports.errors import ConfigurationError
+from app.ports.scrubber import ExceptionScrubber, ScrubbedExceptionData
+
 # Context variables for request and tenant tracing across async calls
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 tenant_id_var: ContextVar[str] = ContextVar("tenant_id", default="")
+
+_active_scrubber: ExceptionScrubber | None = None
+
+
+def set_exception_scrubber(scrubber: ExceptionScrubber | None) -> None:
+    """Register the active ExceptionScrubber safety net for operational logging."""
+    global _active_scrubber
+    _active_scrubber = scrubber
+
+
+def get_exception_scrubber() -> ExceptionScrubber | None:
+    """Return the currently configured ExceptionScrubber, if any."""
+    return _active_scrubber
+
+
+def scrub_exception_for_log(exc: BaseException) -> ScrubbedExceptionData:
+    """Scrub an exception message and stack trace before writing any operational log line.
+
+    Never silently returns unscrubbed text: if no ExceptionScrubber has been configured,
+    raises ConfigurationError.
+    """
+    if _active_scrubber is None:
+        raise ConfigurationError(
+            "EXCEPTION_SCRUBBER_NOT_CONFIGURED: No ExceptionScrubber configured for logging.",
+            error_code="EXCEPTION_SCRUBBER_NOT_CONFIGURED",
+        )
+    return _active_scrubber.scrub_exception(exc)
+
 
 # Authoritative allowlist of permitted operational log keys
 ALLOWED_LOG_FIELDS: frozenset[str] = frozenset(
@@ -103,11 +134,17 @@ class OperationalJsonFormatter(logging.Formatter):
         if ten_id:
             log_data["tenant_id"] = str(ten_id)
 
-        # 3. Handle Exceptions: only error_type and error_code are allowed
+        # 3. Handle Exceptions: scrub exception message and stack trace via active
+        # ExceptionScrubber safety net (Invariant 10), then record only error_type.
         if record.exc_info and record.exc_info[0]:
+            if record.exc_info[1] is not None and _active_scrubber is not None:
+                _ = _active_scrubber.scrub_exception(record.exc_info[1])
+            record.exc_text = None
             log_data["error_type"] = record.exc_info[0].__name__
             if "status" not in log_data:
                 log_data["status"] = "error"
+        elif record.exc_text and _active_scrubber is not None:
+            record.exc_text = _active_scrubber.scrub_text(record.exc_text)
 
         # 4. Extract allowlisted extra fields; reject and count unallowlisted ones
         for key, val in record.__dict__.items():

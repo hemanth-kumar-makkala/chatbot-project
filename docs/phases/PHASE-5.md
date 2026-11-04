@@ -45,7 +45,7 @@ Harden the system locally before any cloud staging or real data exposure by impl
 - **Tests to write first**:
   - `tests/invariants/test_adversarial_cross_tenant_isolation.py`: Assert cross-tenant leak count is strictly zero (Invariants 2, 3, 15).
 
-### Task 5.4: Presidio Exception Telemetry Scrubber
+### Task 5.4: Presidio Exception Telemetry Scrubber — COMPLETED & VERIFIED
 - **Description**: Integrate Microsoft Presidio analyzer in the error handling layer to scrub exception traces before emitting operational log lines.
 - **Tests to write first**:
   - `tests/unit/test_presidio_scrubber.py`: Verify synthetic exception payloads containing PHI patterns are scrubbed before logging.
@@ -55,7 +55,7 @@ Harden the system locally before any cloud staging or real data exposure by impl
 - **Tests to write first**:
   - `tests/integration/test_feedback_api.py`: Verify feedback submissions persist to database and associate correctly with `message_id`.
 
-### Task 5.6: Capacity & Load Curve Profiling via Locust
+### Task 5.6: Capacity & Load Curve Profiling via Locust — COMPLETED & VERIFIED
 - **Description**: Configure Locust load test scripts simulating 5, 10, 20, 50, and 100 concurrent users to measure p50 and p95 latencies for text and vision paths.
 - **Tests to write first**:
   - `tests/eval/test_locust_capacity_curve.py`: Execute load test runner, assert error rate remains below threshold, and generate capacity curve report in `evals/reports/`.
@@ -66,9 +66,9 @@ Harden the system locally before any cloud staging or real data exposure by impl
   - `tests/integration/test_backup_restore.py`: Execute backup, purge database, restore from backup, and verify document and vector counts match exactly.
 
 ## Exit Gate (from Spec)
-- [ ] Security suite passes (zero cross-tenant leaks, zero injection bypasses).
-- [ ] Capacity curve drawn across 5, 10, 20, 50, and 100 virtual users.
-- [ ] Presidio exception scrubbing active.
+- [x] Security suite passes (zero cross-tenant leaks, zero injection bypasses).
+- [x] Capacity curve drawn across 5, 10, 20, 50, and 100 virtual users.
+- [x] Presidio exception scrubbing active.
 - [ ] Backup creation and automated restore verified.
 
 ## Risks

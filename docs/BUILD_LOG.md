@@ -2845,3 +2845,49 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification**:
   - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed.
   - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 0 failed.
+
+---
+
+## 2026-11-04 — Phase 5 Batch B: CI Hook Fix, Task 5.4 (Presidio Exception Telemetry Scrubber), and Task 5.6 (Locust Capacity Curve Profiling)
+
+- **1. CI Pre-Commit Hook Portability Fix (`.pre-commit-config.yaml`)**:
+  - GitHub CI executes `pre-commit run --all-files` before running the `Bootstrap database roles` action. The previous `boundary-invariants` hook executed all files under `tests/invariants/`, including the new database-backed `test_adversarial_cross_tenant_isolation.py` (which requires PostgreSQL roles and migrations).
+  - Updated `.pre-commit-config.yaml` to pass explicit paths for pure (no-DB) invariant tests: `tests/invariants/test_architecture_boundaries.py`, `tests/invariants/test_migration_invariants.py`, and `tests/invariants/test_phi_session_isolation.py`. The database-backed test continues to run in the database-backed test step.
+- **2. Task 5.4 — Presidio Exception Telemetry Scrubber (`backend/app/adapters/scrubbing/`, `backend/app/observability/logger.py`)**:
+  - **Port Interface**: Defined `TelemetryScrubber` in `backend/app/ports/scrubber.py` declaring `scrub(text: str) -> str`.
+  - **Presidio Adapter (`backend/app/adapters/scrubbing/presidio.py`)**:
+    - Integrated `presidio-analyzer` and `presidio-anonymizer` with explicitly pinned `en_core_web_sm` spaCy model and `tldextract` bundled offline suffix list.
+    - Added offline execution safeguard: monkeypatched socket connections during scrubber unit tests prove zero network calls are attempted.
+    - Startup enforcement: On real runtime profiles (`desktop-gpu`, `home-gpu`, `gcp-staging`, `production`), the app fails fast at startup with typed `ConfigurationError("SPACY_MODEL_MISSING")` if `en_core_web_sm` is unavailable.
+    - Zero-overhead mock: The `mock` profile injects `MockTelemetryScrubber` (`backend/app/adapters/scrubbing/mock.py`), allowing CI and mock pipelines to run without downloading spaCy models.
+  - **Error Handling & Logger Integration**:
+    - Configured `configure_telemetry_scrubber` and `scrub_exception_for_log` in `backend/app/observability/logger.py`.
+    - Wired into `backend/app/wiring.py`, `backend/app/api/app.py`, and `backend/app/api/routes/questions.py` to scrub exception messages, stack traces, and query error telemetry before operational log lines are written (Invariant 10 allowlist logger remains primary).
+  - **Proving Tests**: `backend/tests/unit/test_presidio_scrubber.py` (6/6 passed, covering mock scrubber, real offline Presidio scrubbing with socket isolation, SSN/email/phone/name redaction, and startup fail-fast behavior).
+- **3. Task 5.6 — Locust Capacity Curve Profiling (`backend/scripts/locustfile.py`, `evals/reports/capacity_curve.json`)**:
+  - **Load Testing Scripts**:
+    - `backend/scripts/locustfile.py`: Headless Locust user scenarios for both `TextStaffUser` and `VisionStaffUser`. Implemented step-level statistics snapshotting and early-stop triggers when error rates exceed 50%.
+    - `backend/scripts/locust_target_app.py`: Standalone target server with WindowsSelectorEventLoop policy and proper shutdown lifecycle.
+    - `backend/tests/eval/test_locust_capacity_curve.py`: Headless load test harness running 60-second steps across 5, 10, 20, 50, and 100 concurrent virtual users against an isolated throwaway PostgreSQL database with real Docling, BGE-M3, and Ollama `qwen3-vl:4b`.
+  - **Capacity Curve Benchmark Results (`evals/reports/capacity_curve.json`)**:
+    - **Text Path**:
+      - 5 users: 86 reqs, 0.0% err, 1.47 RPS, p50=1500ms, p95=2100ms
+      - 10 users: 90 reqs, 0.0% err, 1.52 RPS, p50=4500ms, p95=5200ms
+      - 20 users: 81 reqs, 0.0% err, 1.40 RPS, p50=11000ms, p95=14000ms
+      - 50 users: 50 reqs, 56.0% err, 1.66 RPS, p50=30000ms, p95=30000ms (stopped early: breaking point)
+      - 100 users: 100 reqs, 94.0% err, 3.32 RPS, p50=30000ms, p95=30000ms (stopped early)
+      - Breaking point: **50 concurrent users**.
+    - **Vision Path**:
+      - 5 users: 11 reqs, 0.0% err, 0.19 RPS, p50=24000ms, p95=25000ms
+      - 10 users: 10 reqs, 100.0% err, 0.33 RPS, p50=30000ms, p95=30000ms (stopped early: breaking point)
+      - 20 users: 20 reqs, 100.0% err, 0.67 RPS, p50=30000ms, p95=30000ms (stopped early)
+      - 50 users: 50 reqs, 100.0% err, 1.66 RPS, p50=30000ms, p95=30000ms (stopped early)
+      - 100 users: 100 reqs, 100.0% err, 3.32 RPS, p50=30000ms, p95=30000ms (stopped early)
+      - Breaking point: **10 concurrent users**.
+  - **Hardware & Capacity Assessment**:
+    - Hardware: Intel Core i7-12700F, 32 GB RAM, NVIDIA GeForce RTX 3050 (6 GB VRAM), Ollama `qwen3-vl:4b` (build `a1b29c246319`).
+    - Assessment: On a single 6 GB GPU workstation, model inference is serialized behind the single Ollama context. The text path handles up to ~20 concurrent users before queue delays hit the 30-second client timeout ceiling. The vision path, requiring dual GPU phases (1024px visual transcription in Node 6 followed by grounded generation in Node 7), saturates immediately beyond 5 concurrent users, reaching the >50% failure breaking point at 10 users.
+- **Verification**:
+  - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed.
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 0 failed.
+  - `backend/tests/eval/test_locust_capacity_curve.py -m "models"`: 1 passed in 554.24s (throwaway uvicorn cleanly shut down in teardown).

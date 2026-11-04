@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
 from app.api.routes import auth, conversations, health, knowledge, questions
+from app.observability.logger import set_exception_scrubber
 from app.ports.errors import ConfigurationError
-from app.wiring import create_auth_provider
+from app.wiring import create_auth_provider, create_exception_scrubber
 
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
@@ -87,6 +88,9 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     )
 
     # Attach shared state
+    scrubber = create_exception_scrubber(app_settings.profile)
+    set_exception_scrubber(scrubber)
+    app.state.exception_scrubber = scrubber
     app.state.settings = app_settings
     app.state.rate_limiter = LoginRateLimiter(
         max_attempts=app_settings.login_rate_limit_max_attempts,
