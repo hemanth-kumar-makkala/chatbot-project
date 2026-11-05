@@ -389,13 +389,18 @@ class PostgresRetriever(Retriever):
         async with self._session_factory(tenant_ctx) as session:
             title_conditions = []
             row_conditions = []
+            score_terms = []
             sql_params: dict[str, Any] = {"tenant_id": tid, "limit": limit}
 
-            for idx, token in enumerate(tokens[:5]):
+            for idx, token in enumerate(tokens[:8]):
                 param_name = f"t_{idx}"
                 sql_params[param_name] = f"%{token}%"
                 title_conditions.append(f"d.title ILIKE :{param_name}")
                 row_conditions.append(f"td.row_data::text ILIKE :{param_name}")
+                score_terms.append(
+                    f"(CASE WHEN d.title ILIKE :{param_name} THEN 3 ELSE 0 END + "
+                    f"CASE WHEN td.row_data::text ILIKE :{param_name} THEN 1 ELSE 0 END)"
+                )
 
             where_clauses = []
             if title_conditions or row_conditions:
@@ -403,6 +408,11 @@ class PostgresRetriever(Retriever):
                 where_clauses.append(f"AND ({combined_or})")
 
             filter_sql = " ".join(where_clauses)
+            order_sql = (
+                f"ORDER BY ({' + '.join(score_terms)}) DESC, td.row_index ASC"
+                if score_terms
+                else "ORDER BY td.row_index ASC"
+            )
             stmt = text(
                 f"""
                 SELECT
@@ -419,7 +429,7 @@ class PostgresRetriever(Retriever):
                   AND d.active_version_id = dv.id
                   AND d.is_retired = false
                   {filter_sql}
-                ORDER BY td.row_index ASC
+                {order_sql}
                 LIMIT :limit;
                 """
             )
@@ -428,7 +438,20 @@ class PostgresRetriever(Retriever):
 
             if not rows and any(
                 k in clean_query.lower()
-                for k in ("table", "sheet", "plan", "insurance", "accepted plan", "fee schedule")
+                for k in (
+                    "table",
+                    "sheet",
+                    "plan",
+                    "insurance",
+                    "accepted plan",
+                    "fee schedule",
+                    "turnaround",
+                    "sla",
+                    "copay",
+                    "deductible",
+                    "tier",
+                    "payer",
+                )
             ):
                 fallback_stmt = text(
                     """

@@ -25,6 +25,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from typing_extensions import TypedDict
 
+from app.core.conflict import (
+    format_version_conflict_answer,
+    resolve_document_version_order,
+)
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.guards.input_guards import (
@@ -48,6 +52,15 @@ from app.core.prompts import (
     format_conflict_prompt,
     format_general_prompt,
     format_router_prompt,
+)
+from app.core.rewrite import (
+    rewrite_followup_question,
+)
+from app.core.safety_lock import (
+    CloudModelSafetyLockError,
+    is_cloud_model,
+    is_vision_model,
+    verify_cloud_model_safety_lock,
 )
 from app.ports.errors import (
     MalformedOutput,
@@ -190,6 +203,7 @@ class GraphPorts:
     reranker: Reranker | None = None
     tracer: Tracer | None = None
     image_processor: ImageProcessor | None = None
+    chat_model: str = "qwen3-vl:4b"
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
     is_mock_profile: bool = False
     mock_vision_mode: str = "ok"  # "ok" or "fail"
@@ -201,6 +215,7 @@ class GraphPorts:
     mock_forced_route: str | None = None
     mock_forced_answer_mode: str | None = None
     mock_titles: list[str] = field(default_factory=list)
+    mock_rewritten_question: str | None = None
     force_non_retryable_error: bool = False
     force_infinite_loop: bool = False
 
@@ -219,6 +234,9 @@ class GraphRuntimeContext:
         )
     )
     question_text: str = ""
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
+    original_question: str | None = None
+    rewritten_question: str | None = None
     evidence_text: dict[str, str] = field(default_factory=dict)
     raw_document_bytes: bytes = b""
     page_image_bytes: bytes = b""
@@ -231,6 +249,8 @@ class GraphRuntimeContext:
     candidate_evidence_types: dict[str, str] = field(default_factory=dict)
     generated_answer: dict[str, Any] = field(default_factory=dict)
     active_document_count: int | None = None
+    active_document_titles: list[str] = field(default_factory=list)
+    chat_model: str = "qwen3-vl:4b"
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
     evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
     rate_limit_exceeded: bool = False
@@ -351,6 +371,35 @@ async def node_guard_input(
                 "evidence_ids": [],
             }
 
+        # Cloud Model Safety Lock: cloud models may ONLY be used with synthetic golden documents
+        effective_chat_model = runtime.context.chat_model or ports.chat_model
+        if is_cloud_model(effective_chat_model):
+            try:
+                verify_cloud_model_safety_lock(
+                    model_name=effective_chat_model,
+                    active_document_titles=runtime.context.active_document_titles,
+                )
+            except CloudModelSafetyLockError as lock_err:
+                logger.warning(
+                    "Cloud model safety lock triggered at guard_input: %s",
+                    str(lock_err),
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "tenant_id": tenant_id,
+                        "node": "guard_input",
+                        "status": "refusal",
+                        "error_code": "ERR-CLOUD-SAFETY-LOCK",
+                    },
+                )
+                runtime.context.response_text = str(lock_err)
+                return {
+                    "tenant_id": tenant_id,
+                    "language": lang,
+                    "status": "refusal",
+                    "public_error_ref": "ERR-CLOUD-SAFETY-LOCK",
+                    "evidence_ids": [],
+                }
+
         # Invariant: status is initialized by guard_input, never trusting caller-supplied status.
         # Invariant: tenant_id comes only from runtime context's TenantContext.
         return {
@@ -360,6 +409,52 @@ async def node_guard_input(
         }
 
     return await _execute_with_telemetry("guard_input", 1, state, runtime, _action)
+
+
+async def node_rewrite(
+    state: GraphState,
+    runtime: Runtime[GraphRuntimeContext],
+) -> dict[str, Any]:
+    """Node 1b: Rewrite follow-up question using conversation history into standalone query."""
+
+    async def _action() -> dict[str, Any]:
+        ctx = runtime.context
+        orig_q = ctx.question_text
+        history = ctx.conversation_history
+        ports = ctx.ports
+
+        rewrite_res = await rewrite_followup_question(orig_q, history, ports)
+
+        if rewrite_res.needs_clarification:
+            clarifying = (
+                rewrite_res.clarifying_question
+                or "Could you please clarify which document or procedure you are referring to?"
+            )
+            logger.info("Question rewrite requires clarification: original='%s'", orig_q)
+            ctx.response_text = clarifying
+            return {
+                "status": "clarify",
+                "route": "clarify",
+                "response_message_id": str(uuid4()),
+            }
+
+        rewritten_q = rewrite_res.rewritten_question or orig_q
+        logger.info(
+            "Question rewrite: original='%s', rewritten='%s'",
+            orig_q,
+            rewritten_q,
+        )
+        ctx.original_question = orig_q
+        ctx.rewritten_question = rewritten_q
+        ctx.question_text = rewritten_q
+
+        return {
+            "status": "in_progress",
+            "original_question": orig_q,
+            "rewritten_question": rewritten_q,
+        }
+
+    return await _execute_with_telemetry("rewrite", 1, state, runtime, _action)
 
 
 async def node_route(
@@ -498,6 +593,12 @@ async def node_route(
                 "accepted plans",
                 "insurance plan",
                 "plans accepted",
+                "turnaround",
+                "turnaround time",
+                "turnaround times",
+                "sla",
+                "standard sla",
+                "urgent sla",
             )
         ):
             computed_mode = "table"
@@ -607,6 +708,13 @@ async def node_retrieve(
                     "accepted plans",
                     "insurance plan",
                     "plans accepted",
+                    "turnaround",
+                    "turnaround time",
+                    "turnaround times",
+                    "sla",
+                    "standard sla",
+                    "urgent sla",
+                    "fee schedule",
                 )
             ):
                 try:
@@ -621,6 +729,7 @@ async def node_retrieve(
                             evidence_ids.append(tc.id)
                         ctx.candidate_evidence_types[tc.id] = "table"
                         ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
+                        ctx.evidence_tenant_ids[tc.id] = str(ctx.tenant.tenant_id)
                         row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
                         prefix = (
                             f"[Document: {tc.document_title}, "
@@ -680,11 +789,17 @@ async def node_rerank(
             ctx.candidate_scores.update({res.candidate_id: res.score for res in results})
             # Ensure table candidates maintain reliable score (>= 0.0)
             for eid in evidence_ids:
-                if (
-                    ctx.candidate_evidence_types.get(eid) == "table"
-                    and eid not in ctx.candidate_scores
-                ):
+                if ctx.candidate_evidence_types.get(eid) == "table":
                     ctx.candidate_scores[eid] = 1.0
+            if state.get("answer_mode") == "table":
+                # In table mode, prioritize table candidates
+                table_ids = [
+                    eid for eid in ordered_ids if ctx.candidate_evidence_types.get(eid) == "table"
+                ]
+                other_ids = [
+                    eid for eid in ordered_ids if ctx.candidate_evidence_types.get(eid) != "table"
+                ]
+                ordered_ids = table_ids + other_ids
             return {"evidence_ids": ordered_ids}
         except Exception:
             # Spec Failure Handling: "Reranker fails -> Merged results unranked, then evidence gate"
@@ -864,6 +979,63 @@ async def node_assess_evidence(
                                 d2_name = (
                                     _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
                                 )
+
+                                # Task 2: Check document version order
+                                v_order = resolve_document_version_order(
+                                    d1_name,
+                                    evidence_dict[c1_match],
+                                    d2_name,
+                                    evidence_dict[c2_match],
+                                )
+                                if v_order is not None:
+                                    newer_idx, older_idx = v_order
+                                    if newer_idx == 1:
+                                        newer_doc, newer_quote, newer_val, newer_cid = (
+                                            d1_name,
+                                            q1_final,
+                                            v1,
+                                            c1_match,
+                                        )
+                                        older_doc, older_quote, older_val, older_cid = (
+                                            d2_name,
+                                            q2_final,
+                                            v2,
+                                            c2_match,
+                                        )
+                                    else:
+                                        newer_doc, newer_quote, newer_val, newer_cid = (
+                                            d2_name,
+                                            q2_final,
+                                            v2,
+                                            c2_match,
+                                        )
+                                        older_doc, older_quote, older_val, older_cid = (
+                                            d1_name,
+                                            q1_final,
+                                            v1,
+                                            c1_match,
+                                        )
+
+                                    ctx.response_text = format_version_conflict_answer(
+                                        newer_doc=newer_doc,
+                                        newer_quote=newer_quote,
+                                        newer_val=newer_val,
+                                        older_doc=older_doc,
+                                        older_quote=older_quote,
+                                        older_val=older_val,
+                                    )
+                                    ctx.generated_answer = {
+                                        "mode": "short",
+                                        "answer": ctx.response_text,
+                                        "evidence_ids": [newer_cid, older_cid],
+                                    }
+                                    return {
+                                        "evidence_state": "RESOLVED_CONFLICT",
+                                        "status": "answered",
+                                        "needs_vision": False,
+                                        "evidence_ids": [newer_cid, older_cid],
+                                    }
+
                                 ctx.response_text = (
                                     f"Two documents disagree:\n"
                                     f'- {v1} ({d1_name}): "{q1_final}"\n'
@@ -895,6 +1067,16 @@ async def node_assess_evidence(
                 "needs_vision": False,
             }
         if computed_ev_state == "VISUAL_REQUIRED":
+            effective_model = ctx.chat_model or ports.chat_model
+            if not is_vision_model(effective_model) and (
+                ports.is_mock_profile or ports.model_provider is None
+            ):
+                logger.info(
+                    "Chat model '%s' has no vision; "
+                    "skipping question-time vision reading and using OCR evidence.",
+                    effective_model,
+                )
+                return {"evidence_state": "RELIABLE_TEXT", "needs_vision": False}
             return {"evidence_state": "VISUAL_REQUIRED", "needs_vision": True}
         return {"evidence_state": "RELIABLE_TEXT", "needs_vision": False}
 
@@ -1131,23 +1313,51 @@ async def node_generate(
                                 if c_str in avail_table:
                                     mapped_ids.append(c_str)
                                 else:
-                                    matched_by_idx = next(
-                                        (
-                                            tid
-                                            for tid, tc in avail_table.items()
-                                            if c_str
-                                            in (
-                                                str(tc.row_index),
-                                                f"row_{tc.row_index}",
-                                                f"row-{tc.row_index}",
-                                            )
-                                        ),
-                                        None,
-                                    )
-                                    if matched_by_idx:
-                                        mapped_ids.append(matched_by_idx)
+                                    # Match by row index, prioritizing rows in used_evidence
+                                    matching_used = [
+                                        tid
+                                        for tid in used_evidence
+                                        if tid in avail_table
+                                        and c_str
+                                        in (
+                                            str(avail_table[tid].row_index),
+                                            f"row_{avail_table[tid].row_index}",
+                                            f"row-{avail_table[tid].row_index}",
+                                        )
+                                    ]
+                                    if matching_used:
+                                        q_lower = ctx.question_text.lower()
+                                        matching_used.sort(
+                                            key=lambda tid: (
+                                                1
+                                                if any(
+                                                    w in avail_table[tid].document_title.lower()
+                                                    for w in q_lower.split()
+                                                    if len(w) > 3
+                                                )
+                                                else 0
+                                            ),
+                                            reverse=True,
+                                        )
+                                        mapped_ids.append(matching_used[0])
                                     else:
-                                        mapped_ids.append(c_str)
+                                        matched_by_idx = next(
+                                            (
+                                                tid
+                                                for tid, tc in avail_table.items()
+                                                if c_str
+                                                in (
+                                                    str(tc.row_index),
+                                                    f"row_{tc.row_index}",
+                                                    f"row-{tc.row_index}",
+                                                )
+                                            ),
+                                            None,
+                                        )
+                                        if matched_by_idx:
+                                            mapped_ids.append(matched_by_idx)
+                                        else:
+                                            mapped_ids.append(c_str)
                             selected_ids = mapped_ids
                 except Exception:
                     logger.warning(
@@ -1683,43 +1893,56 @@ async def node_validate(
                         import re
 
                         row_blocks = re.findall(
-                            r"\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[Sheet:|\s*;|$)",
+                            r"(?:\[Document:\s*[^,]+,\s*)?\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[(?:Document:|Sheet:)|\s*;|$)",
                             ans_text,
                         )
                         if row_blocks:
                             for sheet_name, row_idx_str, row_content in row_blocks:
                                 row_idx = int(row_idx_str)
-                                matching_tc = next(
-                                    (
-                                        tc
-                                        for tc in tbl_candidates.values()
-                                        if tc.sheet_name == sheet_name.strip()
-                                        and tc.row_index == row_idx
-                                    ),
-                                    None,
-                                )
-                                if not matching_tc:
+                                matching_tcs = [
+                                    tc
+                                    for tc in tbl_candidates.values()
+                                    if tc.sheet_name == sheet_name.strip()
+                                    and tc.row_index == row_idx
+                                ]
+                                if not matching_tcs:
                                     is_valid = False
                                     break
+
+                                # Prioritize candidates that are in cited_ids
+                                matching_tcs.sort(key=lambda tc: 0 if tc.id in cited_ids else 1)
+
                                 pairs = [p.strip() for p in row_content.split(", ") if ":" in p]
                                 if pairs:
-                                    for pair in pairs:
-                                        col_name, shown_val = pair.split(":", 1)
-                                        col_name = col_name.strip()
-                                        shown_val = shown_val.strip()
-                                        stored_val = str(
-                                            matching_tc.cells.get(col_name, "")
-                                        ).strip()
-                                        if shown_val != stored_val:
-                                            is_valid = False
+                                    # Find if any candidate row matches all pairs byte-for-byte
+                                    candidate_matched = False
+                                    for tc in matching_tcs:
+                                        all_pairs_match = True
+                                        for pair in pairs:
+                                            col_name, shown_val = pair.split(":", 1)
+                                            col_name = col_name.strip()
+                                            shown_val = shown_val.strip()
+                                            stored_val = str(tc.cells.get(col_name, "")).strip()
+                                            if shown_val != stored_val:
+                                                all_pairs_match = False
+                                                break
+                                        if all_pairs_match:
+                                            candidate_matched = True
                                             break
+                                    if not candidate_matched:
+                                        is_valid = False
+                                        break
                                 else:
                                     # Free-form text within row block:
-                                    # verify that claimed values exist in row
+                                    # verify that claimed values exist in at least one
+                                    # matching candidate
                                     found_val = any(
-                                        str(v).strip().lower() in row_content.lower()
-                                        for v in matching_tc.cells.values()
-                                        if len(str(v).strip()) >= 3
+                                        any(
+                                            str(v).strip().lower() in row_content.lower()
+                                            for v in tc.cells.values()
+                                            if len(str(v).strip()) >= 3
+                                        )
+                                        for tc in matching_tcs
                                     )
                                     if not found_val:
                                         is_valid = False
@@ -1730,9 +1953,9 @@ async def node_validate(
                             # Natural language table answer
                             found_stored_val = False
                             for cid in cited_ids:
-                                tc = tbl_candidates.get(cid)
-                                if tc:
-                                    for val in tc.cells.values():
+                                cand = tbl_candidates.get(cid)
+                                if cand is not None:
+                                    for val in cand.cells.values():
                                         v_str = str(val).strip()
                                         if len(v_str) >= 3 and v_str.lower() in ans_text.lower():
                                             found_stored_val = True
@@ -2018,6 +2241,12 @@ async def node_validate_fields(
 def _route_from_guard(state: GraphState) -> str:
     if state.get("status") == "refusal":
         return "respond"
+    return "rewrite"
+
+
+def _route_from_rewrite(state: GraphState) -> str:
+    if state.get("status") == "clarify":
+        return "respond"
     return "route"
 
 
@@ -2083,8 +2312,9 @@ def build_knowledge_graph() -> StateGraph[GraphState, GraphRuntimeContext, Any, 
         GraphState, context_schema=GraphRuntimeContext
     )
 
-    # 9 Main Nodes
+    # Main Nodes
     builder.add_node("guard_input", node_guard_input)
+    builder.add_node("rewrite", node_rewrite)
     builder.add_node("route", node_route)
     builder.add_node("retrieve", node_retrieve)
     builder.add_node("rerank", node_rerank)
@@ -2104,6 +2334,11 @@ def build_knowledge_graph() -> StateGraph[GraphState, GraphRuntimeContext, Any, 
     builder.add_conditional_edges(
         "guard_input",
         _route_from_guard,
+        {"rewrite": "rewrite", "respond": "respond"},
+    )
+    builder.add_conditional_edges(
+        "rewrite",
+        _route_from_rewrite,
         {"route": "route", "respond": "respond"},
     )
 

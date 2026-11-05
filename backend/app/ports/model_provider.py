@@ -63,3 +63,40 @@ class ModelProvider(ABC):
     ) -> ExtractedFields:
         """Extract structured fields from a document page image."""
         ...
+
+
+def is_cloud_model(model_name: str | None, is_cloud_override: bool = False) -> bool:
+    """Check if model name or tag indicates a remote/cloud hosted model."""
+    if is_cloud_override:
+        return True
+    if not model_name:
+        return False
+    tag = model_name.strip().lower()
+    return (
+        ":cloud" in tag
+        or "-cloud" in tag
+        or tag.startswith("cloud/")
+        or tag.startswith("hosted/")
+        or "/cloud" in tag
+        or tag.endswith(":cloud")
+        or tag.endswith("-cloud")
+    )
+
+
+def is_vision_model(model_name: str | None) -> bool:
+    """Check if model name or tag supports multimodal visual document reading."""
+    if not model_name:
+        return False
+    tag = model_name.strip().lower()
+    return any(
+        v in tag
+        for v in (
+            "-vl",
+            ":vl",
+            "vl:",
+            "vl-",
+            "vision",
+            "multimodal",
+            "omni",
+        )
+    )

@@ -86,6 +86,7 @@ DOCS_TO_INGEST = [
     "prior_auth_guide.pdf",
     "fee_schedule.pdf",
     "accepted_plans.csv",
+    "pa_turnaround_times.xlsx",
 ]
 
 GOLDEN_QS_PATH = PROJECT_ROOT / "evals" / "golden" / "questions.json"
@@ -110,50 +111,31 @@ def _check_q1(ans: str, state: str, src: str) -> bool:
 
 
 def _check_q2(ans: str, state: str, src: str) -> bool:
-    """Q2: What is the front desk intake fax number? (CONF-001)."""
-    gold = GOLDEN_QS["CONF-001"]
-    has_conf_vals = all(v in ans for v in gold["conflict_values"])
-    has_v1_quote = (
-        "Front desk intake fax number is 555-0101" in ans
-        or "Outside referrals must be sent directly to this intake fax line" in ans
-    )
-    has_v2_quote = (
-        "Front desk intake fax number is 555-0102" in ans
-        or "Outside referrals must be sent directly to this revised intake fax line" in ans
-    )
-    # Stricter check: if v2 quote cites the intake fax line, it must contain "revised"
-    for line in ans.splitlines():
-        if (
-            "front_desk_policy_v2.pdf" in line
-            and "intake fax line" in line
-            and "revised" not in line
-        ):
-            return False
+    """Q2: What is the front desk intake fax number? (CONF-001 / Task 2 resolved conflict)."""
+    has_conf_vals = "555-0101" in ans and "555-0102" in ans
+    names_files = "front_desk_policy_v2.pdf" in ans and "front_desk_policy_v1.pdf" in ans
     clean_src = (
         "front_desk_policy_v2.pdf" in src
         and "front_desk_policy_v1.pdf" in src
         and "fee_schedule" not in src
         and "prior_auth" not in src
     )
-    return state == "CONFLICTING" and has_conf_vals and has_v1_quote and has_v2_quote and clean_src
+    is_valid_state = state in ("RESOLVED_CONFLICT", "CONFLICTING")
+    return is_valid_state and has_conf_vals and names_files and clean_src
 
 
 def _check_q3(ans: str, state: str, src: str) -> bool:
-    """Q3: How early must patients arrive for a routine visit? (CONF-005)."""
+    """Q3: How early must patients arrive for a routine visit? (CONF-005 / Task 2 resolved conflict)."""
     has_conf_vals = "15" in ans and "20" in ans
-    has_v1_quote = (
-        "Routine appointment arrival window is 15 minutes prior to scheduled visit" in ans
-    )
-    has_v2_quote = (
-        "Routine appointment arrival window is 20 minutes prior to scheduled visit" in ans
-    )
+    names_files = "front_desk_policy_v2.pdf" in ans and "front_desk_policy_v1.pdf" in ans
     clean_src = (
         "front_desk_policy_v2.pdf" in src
         and "front_desk_policy_v1.pdf" in src
         and "fee_schedule" not in src
         and "prior_auth" not in src
     )
-    return state == "CONFLICTING" and has_conf_vals and has_v1_quote and has_v2_quote and clean_src
+    is_valid_state = state in ("RESOLVED_CONFLICT", "CONFLICTING")
+    return is_valid_state and has_conf_vals and names_files and clean_src
 
 
 def _check_q4(ans: str, state: str, src: str) -> bool:
@@ -237,6 +219,13 @@ def _check_q11(ans: str, state: str, src: str) -> bool:
     return is_refusal and no_src
 
 
+def _check_q12(ans: str, state: str, src: str) -> bool:
+    """Q12: Standard SLA for Apex Health Insurance diagnostic imaging (pa_turnaround_times.xlsx)."""
+    has_ans = "48 hours" in ans.lower() or "48" in ans
+    has_src = "pa_turnaround_times.xlsx" in src
+    return has_ans and has_src and "couldn't confirm" not in ans.lower()
+
+
 QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "Q1",
@@ -303,6 +292,12 @@ QUESTIONS: list[dict[str, Any]] = [
         "question": "What is the discounted parking rate for patients in the medical plaza garage?",
         "expected_mode": "short",
         "check": _check_q11,
+    },
+    {
+        "id": "Q12",
+        "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+        "expected_mode": "table",
+        "check": _check_q12,
     },
 ]
 
@@ -486,7 +481,9 @@ async def main() -> None:
                         cookies = dict(login_resp.cookies)
                         csrf_token = cookies.get("csrf_token", "")
 
-                        print("\n--> Asking 11 questions on real desktop-gpu pipeline...")
+                        print(
+                            f"\n--> Asking {len(QUESTIONS)} questions on real desktop-gpu pipeline..."
+                        )
                         for idx, item in enumerate(QUESTIONS, 1):
                             q_text = item["question"]
                             t0 = time.monotonic()
@@ -546,7 +543,7 @@ async def main() -> None:
                                 }
                             )
                             print(
-                                f"[{idx}/11] ({elapsed}s) Mode: {ans_mode} | State: {ev_state} | Correct: {is_correct}"
+                                f"[{idx}/{len(QUESTIONS)}] ({elapsed}s) Mode: {ans_mode} | State: {ev_state} | Correct: {is_correct}"
                             )
                             print(f"      Q: {q_text}")
                             print(f"      A: {answer[:120]}...")

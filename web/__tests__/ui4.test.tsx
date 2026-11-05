@@ -86,7 +86,7 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
   });
 
   describe("1. Session Upload in Chat (Task 4.3, Invariant 7)", () => {
-    it("live assistant shows Demo chip and route not built message on attach button click", async () => {
+    it("live assistant triggers live file input on attach button click without stale notice", async () => {
       await act(async () => {
         render(<ChatPage params={Promise.resolve({ assistantId: liveAssistantId })} />);
       });
@@ -94,18 +94,15 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       const attachBtn = await screen.findByTestId("chat-attach-button");
       expect(attachBtn).toBeDefined();
 
+      const fileInput = await screen.findByTestId("live-file-input");
+      const clickSpy = vi.spyOn(fileInput, "click");
+
       await act(async () => {
         fireEvent.click(attachBtn);
       });
 
-      const liveMessage = await screen.findByTestId("session-upload-live-message");
-      expect(liveMessage.textContent).toContain(
-        "Session upload needs the session document route (Phase 4 Task 4.3, not built yet)"
-      );
-
-      // Verify Demo chip presence within the message container
-      const demoChip = within(liveMessage).getByText(/Demo/i);
-      expect(demoChip).toBeDefined();
+      expect(clickSpy).toHaveBeenCalled();
+      expect(screen.queryByTestId("session-upload-live-message")).not.toBeInTheDocument();
     });
 
     it("demo assistant offers golden fax document picker on attach button click", async () => {

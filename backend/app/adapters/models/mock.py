@@ -113,6 +113,8 @@ class MockModelProvider(ModelProvider):
                     structured[field_name] = 1
                 elif annotation is float:
                     structured[field_name] = 0.95
+                elif field_name == "needs_clarification":
+                    structured[field_name] = False
                 elif annotation is bool:
                     structured[field_name] = True
                 elif field_name == "evidence_ids":

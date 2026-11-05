@@ -42,7 +42,11 @@ from app.ports.errors import (
     TransientIngestionError,
 )
 from app.ports.image_processor import ImageProcessor
-from app.ports.model_provider import ModelProvider
+from app.ports.model_provider import (
+    ModelProvider,
+    is_cloud_model,
+    is_vision_model,
+)
 from app.ports.types import (
     ChatMessage,
     ExtractedFields,
@@ -247,6 +251,7 @@ class OllamaModelProvider(ModelProvider):
         http_client: httpx.AsyncClient | None = None,
         image_processor: ImageProcessor | None = None,
         timeout_seconds: float = 120.0,
+        chat_model: str | None = None,
     ) -> None:
         if base_url is not None:
             cleaned_url = base_url.strip()
@@ -273,6 +278,19 @@ class OllamaModelProvider(ModelProvider):
         self._profile = profile
         self._models = _load_profile_models(profile=profile, config_path=config_path)
 
+        # Allow configured chat_model setting or CHAT_MODEL env var to override
+        # chat and generation roles
+        configured_chat_model = chat_model or os.getenv("CHAT_MODEL")
+        if configured_chat_model and configured_chat_model.strip():
+            cm = configured_chat_model.strip()
+            self._models["answer"] = cm
+            self._models["router"] = cm
+            self._models["judge"] = cm
+            self._models["extract"] = cm
+            if is_vision_model(cm):
+                self._models["vision"] = cm
+            # Note: If cm has no vision, vision role retains profile model (e.g. qwen3-vl:4b)
+
         if image_processor is not None:
             self._image_processor = image_processor
         else:
@@ -286,6 +304,11 @@ class OllamaModelProvider(ModelProvider):
         """Fetch model digest from /api/tags, cached per provider instance."""
         if model_name in self._model_digests:
             return self._model_digests[model_name]
+
+        if is_cloud_model(model_name):
+            digest_val = f"cloud:{model_name}"
+            self._model_digests[model_name] = digest_val
+            return digest_val
 
         url = self._base_url + "/api/tags"
         try:
@@ -477,7 +500,15 @@ class OllamaModelProvider(ModelProvider):
         model_name = self._models[role_str]
         model_id = model_name
 
-        chat_messages = [{"role": m.role, "content": m.content} for m in messages]
+        if "qwen" in model_name.lower():
+            chat_messages = [{"role": m.role, "content": m.content} for m in messages]
+        else:
+            # Prefill </think> is tailored for qwen-vl; filter it for other models (e.g. beam:cloud)
+            chat_messages = [
+                {"role": m.role, "content": m.content}
+                for m in messages
+                if not (m.role == "assistant" and m.content.strip() == "</think>")
+            ]
 
         payload: dict[str, Any] = {
             "model": model_name,
@@ -493,6 +524,11 @@ class OllamaModelProvider(ModelProvider):
             payload["options"]["num_predict"] = max_tokens
         if schema is not None:
             payload["format"] = schema.model_json_schema()
+
+        headers: dict[str, str] = {}
+        api_key = os.getenv("OLLAMA_API_KEY")
+        if api_key and api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
 
         url = self._base_url + "/api/chat"
 
@@ -512,7 +548,7 @@ class OllamaModelProvider(ModelProvider):
             model_version = await self._get_model_digest(model_name=model_name, client=client)
             for attempt in range(max_attempts):
                 try:
-                    response = await client.post(url, json=payload)
+                    response = await client.post(url, json=payload, headers=headers)
                     break
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
                     last_transient_exc = exc

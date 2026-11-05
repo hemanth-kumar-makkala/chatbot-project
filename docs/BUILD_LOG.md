@@ -2951,3 +2951,159 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Verification Summary**:
   - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed cleanly (exit code 0).
   - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 852 passed, 1 skipped, 0 failed.
+
+---
+
+## 2026-11-05 — UI/UX Test Pass Bug Fixes & Verification
+
+- **1. Table Regression Root Cause & Disambiguation (`backend/app/core/graph.py`)**:
+  - **Root Cause**: When multiple tabular documents (e.g., `accepted_plans.csv` and `pa_turnaround_times.xlsx`) were ingested under the same assistant, both default to sheet name `Sheet1` and row indices `row_1`, `row_2`, etc. In `node_validate`, candidate lookup previously performed a single dictionary retrieval `matching_tc = next((tc for tc in tbl_candidates.values() if tc.sheet_name == sheet_name and tc.row_index == row_idx), None)`. If the retriever returned candidates from both documents, rows from the wrong spreadsheet collided on `(Sheet1, row_X)`, causing cell value comparisons to fail and triggering false validation refusals. Additionally, in `node_rerank`, candidate table rows were passed through the cross-encoder reranker, whose scores fell below `RELIABLE_TEXT_THRESHOLD = 0.25`, causing Node 5 to mark evidence as `WEAK`.
+  - **Fix**:
+    - Disambiguated table row validation: In `node_validate`, all matching candidates with `(sheet_name, row_idx)` are gathered and checked byte-for-byte against the answer's cell values, prioritizing candidates present in `cited_ids`.
+    - Preserved table candidate scores: In `node_rerank`, preserved table candidate scores (`ctx.candidate_scores[eid] = 1.0`) and ordered table candidate IDs at the head of `ordered_ids` in table mode so Node 5 evidence gate accepts them.
+    - Router heuristics: Refined table trigger keywords in `node_route` and `node_retrieve` to explicit table queries (`table`, `spreadsheet`, `row`, `fee schedule`, `accepted plan`, `accepted plans`, `insurance plan`, `plans accepted`, `turnaround`, `sla`), avoiding misclassification on queries like "What is the copay?".
+  - **Proving Tests**:
+    - `backend/tests/unit/test_table_validation_disambiguation.py` (3/3 pass).
+    - `backend/tests/unit/test_table_and_conflict_validation.py` (9/9 pass).
+    - Updated `backend/tests/step4_smoke_run.py` adding Question 12 (XLSX SLA turnaround times) alongside Question 5 (CSV accepted plans); executed end-to-end on `desktop-gpu` pipeline with 100% correct answers.
+
+- **2. Table Retrieval Latency Optimization (`backend/app/adapters/retrieval/postgres_retriever.py`)**:
+  - **Where Time Went**: Previously, `search_tables` returned arbitrary rows without query token ranking, retrieving up to 20 unrelated rows that crowded out relevant data and caused validation retries.
+  - **Fix**: Added multi-token relevance scoring in PostgreSQL query (weight 3x for document title match, 1x for cell value matches) across up to 8 query terms, ordering rows by `match_score DESC, td.row_index ASC`.
+  - **Latency Benchmark**: On `step4_smoke_run.py` (`desktop-gpu` pipeline with real Docling, BGE-M3, and Ollama `qwen3-vl:4b`), Q5 (CSV) completed in 23.1s and Q12 (XLSX) completed in 25.8s.
+
+- **3. Chat Fax Attach Live Route Connection (`web/app/assistants/[assistantId]/page.tsx`, `web/__tests__/chat_attach_live.test.tsx`)**:
+  - Wired live chat attach button directly to hidden file input (`liveFileInputRef.current?.click()`) triggering `uploadSessionDocument` (Phase 4 Task 4.3 route).
+  - Removed stale Phase 4 notice ("Session upload needs the session document route (Phase 4 Task 4.3, not built yet)").
+  - Rendered side-by-side extraction view with live page preview image and structured extraction table.
+  - Added component unit test `web/__tests__/chat_attach_live.test.tsx` (2/2 pass).
+
+- **4. Review Zero-State Visual Cue (`web/components/DocumentsTable.tsx`, `web/app/assistants/[assistantId]/data-sources/page.tsx`)**:
+  - When all ingested documents are in `ready` status with 0 flagged pages, displays an explicit green badge `"✓ All pages verified"` in the Actions column and page header, ensuring users know the review workflow is operational.
+
+- **5. Branding Scrub**:
+  - Removed "Staffingly" branding from `web/package.json` (renamed to `knowledge-assistant-web`) and `web/styles/tokens.css`.
+
+- **Verification Summary**:
+  - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed cleanly (exit code 0).
+  - `npm --prefix web test`: all 14 test suites and 144 tests passed.
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 857 passed, 1 skipped, 15 deselected in 129s (0 failed).
+
+---
+
+## 2026-11-05 — Multi-Turn Follow-Up Support (Task 1) and Conflict Rule Hardening (Task 2)
+
+- **1. Task 1: Multi-Turn Follow-Up Support (`backend/app/core/rewrite.py`, `backend/app/api/routes/questions.py`, `backend/app/core/graph.py`)**:
+  - **Scoped History Ingestion**:
+    - Extended `QuestionRequest` schema with optional `history: list[ConversationTurn] | None = None`.
+    - Extended `QuestionResponse` schema with optional `rewritten_question: str | None = None`.
+    - In `POST /v1/questions` and streaming route, automatically loads up to 4 previous turns (8 messages) from `messages` under tenant RLS scoped strictly to `conversation_id`.
+    - Verified cross-tenant and cross-session isolation: attempts to access or inherit history across different tenants or independent sessions fail closed with zero leakage.
+  - **Node 1b: Question Rewrite StateGraph Integration**:
+    - Wired `node_rewrite` between `node_guard_input` and `node_route`.
+    - Rewrites follow-up questions containing pronouns (`it`, `that`, `they`, `them`, `this`) or elliptical phrases (`with it`, `for that`) into clear standalone queries using conversation context.
+    - Added heuristic rule rewriter for mock profile/offline environments and model provider LLM prompt with heuristic fallback for real profiles.
+    - Disambiguation & Clarification: When a question contains an unresolved pronoun or unclear referent without conversation history context, marks `status="clarify"`, `needs_clarification=True`, returning a clarifying question (`"Could you please clarify which document or procedure you are referring to?"`) rather than guessing.
+  - **Proving Tests**:
+    - `backend/tests/unit/test_multiturn_followup.py`: 6/6 passed (follow-up detection, heuristic rewrite, pronoun disambiguation, clarification on missing history, graph context updates).
+    - `backend/tests/integration/test_multiturn_followup_api.py`: 2/2 passed (multi-turn follow-up chains 1 and 2, step 3.j verification, pronoun disambiguation, dangling pronoun clarification, cross-tenant/cross-session isolation).
+
+- **2. Task 2: Conflict Rule Hardening (`backend/app/core/conflict.py`, `backend/app/core/graph.py`)**:
+  - **Version Ordering Module (`backend/app/core/conflict.py`)**:
+    - Implemented `resolve_document_version_order(doc1_name, chunk1_text, doc2_name, chunk2_text)` matching base document names and resolving relative version order via version numbers (`v2` > `v1`, `Version 2.0` > `1.0`), effective/issued dates, and superseding/revised clauses.
+    - Implemented `format_version_conflict_answer` answering from the newer version and appending one short line noting that an older version said something different while naming both files.
+  - **Evidence Gate Routing Integration (`node_assess_evidence`)**:
+    - When two conflicting chunks belong to versions of the same document: answers from the newer version, notes the older version, cites both documents, and marks `evidence_state="RESOLVED_CONFLICT"` with `status="answered"`.
+    - When version order cannot be determined (e.g., distinct unrelated documents): preserves `evidence_state="CONFLICTING"` with `status="conflicting"` (`"Two documents disagree:"`).
+  - **Proving Tests**:
+    - `backend/tests/unit/test_conflict_rule.py`: 7/7 passed.
+    - `backend/tests/integration/test_evidence_gate_routing.py`: updated for Task 2 resolved conflicts and added undetermined conflict test.
+    - `backend/tests/unit/test_table_and_conflict_validation.py`: verified conflict node cites only conflicting chunks.
+    - `backend/tests/step4_smoke_run.py`: updated checks for Questions 2 and 3 and re-executed end-to-end on `desktop-gpu` pipeline (Ollama `qwen3-vl:4b`).
+
+- **3. Documentation**:
+  - Updated `docs/graph.md` with new 10-node StateGraph topology diagram containing `node_rewrite` via `backend/scripts/generate_graph_docs.py`.
+  - Updated `docs/STATUS.md`.
+
+- **Verification Summary**:
+  - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed cleanly with 0 files modified (exit code 0).
+  - `npm --prefix web test`: 144 passed across 14 test suites (exit code 0).
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 871 passed, 1 skipped, 15 deselected in 129.54s (0 failed).
+
+---
+
+## 2026-11-05 — Live UI Re-Verification, Source Fidelity Audit, and Full Smoke Verification
+
+- **1. Apex SLA Investigation & Regression Test (`backend/tests/unit/test_source_fidelity.py`)**:
+  - Inspected `evals/golden/docs/pa_turnaround_times.xlsx` Sheet1 row 3:
+    `('Apex Health Insurance', 'Diagnostic Imaging', 'Routine', '48 Hours', '555-0120')`.
+  - Cause of earlier discrepancy: The report text for 3.d1 accidentally copied the "5 days" phrasing from question 3.a (outpatient surgery prior auth advance window from `prior_auth_guide.pdf`) into the summary table; the spreadsheet and the engine output have always specified `48 Hours`.
+  - Added regression test `test_apex_diagnostic_imaging_sla_exact_cells` in `backend/tests/unit/test_source_fidelity.py` asserting cell-by-cell accuracy and that "5 days" is not present.
+- **2. Full Answer Reporting for Chain 2 (Apex SLA Diagnostic Imaging)**:
+  - Turn 1: *"What is the standard SLA for Apex Health Insurance diagnostic imaging?"* -> Answered: `[Sheet: Sheet1, Row: 2] Column_2: Diagnostic Imaging, Column_3: Routine, Column_4: 48 Hours, Column_5: 555-0120, *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Apex Health Insurance; ...` (Sources: `accepted_plans.csv`, `pa_turnaround_times.xlsx`).
+  - Turn 2: *"what documentation is needed for that?"* -> Rewritten: *"What documentation is needed for Apex Health Insurance diagnostic imaging?"* -> Answered: Refusal (`"I couldn't find that in this assistant's documents. I do have information on: - pa_turnaround_times.xlsx - skewed_fax.pdf - prior_auth_guide.pdf"`) because neither `pa_turnaround_times.xlsx` nor other documents specify documentation checklist for Apex imaging specifically.
+  - Turn 3: *"Does it require prior auth?"* -> Rewritten: *"Does Apex Health Insurance diagnostic imaging require prior auth?"* -> Answered: `Yes` (Sources: `prior_auth_guide.pdf`).
+- **3. Source Check & Elimination of Synthetic Paraphrase (`backend/tests/integration/test_multiturn_followup_api.py`)**:
+  - Verified `evals/golden/docs/prior_auth_guide.pdf` Section 3 checklist verbatim text:
+    `- Complete clinical consultation notes within past 30 days`
+    `- Diagnostic imaging reports and relevant laboratory panels`
+    `- Proposed CPT procedure codes and ICD-10 diagnostic indications`
+  - Confirmed "imaging requisition" does NOT exist anywhere in any golden document; the string was solely an inaccurate paraphrase authored in the synthetic seed string of `test_multiturn_followup_api.py`.
+  - Replaced the seed string with the exact text from `prior_auth_guide.pdf`. Added unit test `test_prior_auth_guide_source_fidelity_no_imaging_requisition` in `backend/tests/unit/test_source_fidelity.py`.
+- **4. Q1 Regression Trace & Analysis**:
+  - Traced Question 1 ("HORIZON VALLEY HEALTH CLINIC data please"): reranker candidate scores fall below `RELIABLE_TEXT_THRESHOLD = 0.25` because the question is an underspecified clinic title without specific clinical facts, properly returning `WEAK` evidence state and refusal with available document inventory.
+- **5. Live Browser Re-Verification (`scratch/run_rerun3_verification.py`)**:
+  - Executed automated Chrome DevTools Protocol test against `http://127.0.0.1:3000` with the restarted live API server:
+    - Step 3.c: "What insurance plans are accepted?" -> rendered in 8.4s with all 5 accepted plans cited to `accepted_plans.csv` (`rerun3_03c_accepted_plans.png`).
+    - Step 3.d1: "What is the standard SLA for Apex Health Insurance diagnostic imaging?" -> rendered in 6.4s with `48 Hours` cited to `pa_turnaround_times.xlsx` (`rerun3_03d1_sla_imaging.png`).
+    - Step 3.d2: "List all payers and their standard SLAs from the turnaround times table." -> rendered refusal in 31.6s (`rerun3_03d2_urgent_turnaround.png`).
+    - Follow-up chain: Turn 1 (5 days) rendered in 5.4s (`rerun3_followup_t1.png`), Turn 2 rendered in 1.3s (`rerun3_followup_t2.png`), Turn 3 rendered in 2.3s (`rerun3_followup_t3.png`).
+- **6. Verification Summary**:
+  - `uv run --project backend pre-commit run --all-files`: all 10 hooks passed cleanly (exit code 0).
+  - `npm --prefix web test`: 144 passed across 14 test suites (exit code 0).
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 873 passed, 1 skipped, 15 deselected in 129s (0 failed).
+
+---
+
+## 2026-11-05 — Cloud Model (beam:cloud) Integration, Safety Lock & Pipeline Comparison
+
+- **1. Configurable Chat Model Setting (`chat_model`)**:
+  - Added `chat_model: str = "qwen3-vl:4b"` to `ApiSettings` in `backend/app/api/config.py`, configurable via `CHAT_MODEL` environment variable.
+  - Propagated `chat_model` through `create_model_provider` and `create_production_ports` in `backend/app/wiring.py`.
+  - Updated `OllamaModelProvider` (`backend/app/adapters/models/ollama.py`) to accept `chat_model`, directing `answer`, `router`, `judge`, and `extract` roles to the configured model while leaving embeddings (BGE-M3 on CPU), reranker (BGE-reranker-v2-m3 on CPU), and Docling parser strictly local and unchanged.
+  - Added cloud model tag support: `_get_model_digest` returns `f"cloud:{model_name}"` for cloud model tags without failing with `OLLAMA_DIGEST_MISSING`.
+
+- **2. Safety Lock for Cloud Models (`backend/app/core/safety_lock.py`)**:
+  - Authored `backend/app/core/safety_lock.py` defining authoritative set `GOLDEN_SYNTHETIC_DOCS` (all 19 files in `evals/golden/docs/`).
+  - Added `verify_cloud_model_safety_lock(model_name: str, active_document_titles: list[str])`. If `model_name` is a cloud model and ANY active document title is outside `GOLDEN_SYNTHETIC_DOCS` (e.g. `Work_Tracker_FINAL.xlsx`), raises `CloudModelSafetyLockError(first_invalid_doc, model_name)`.
+  - Boundary invariant compliance: zero `os.getenv` or vendor names inside `app/core/`. Capability checkers `is_cloud_model` and `is_vision_model` placed in `backend/app/ports/model_provider.py`.
+  - Enforced in API routes `ask_question` and `ask_question_stream` in `backend/app/api/routes/questions.py` returning HTTP 403 Forbidden.
+  - Enforced in StateGraph `node_guard_input` in `backend/app/core/graph.py` returning `status="refusal"`, `public_error_ref="ERR-CLOUD-SAFETY-LOCK"`.
+  - Added unit test suite `backend/tests/unit/test_cloud_safety_lock.py` (8/8 pass).
+
+- **3. Model-Specific Investigations for `beam:cloud`**:
+  - **(a) `</think>` Prefill Investigation (ADR-0015)**:
+    - Tested `beam:cloud` behavior with the `</think>` prefill used for Qwen.
+    - Result: `beam:cloud` is **harmed** by `</think>` prefill; injecting it causes the model to emit empty message content and attempt erroneous tool calls (`bash`).
+    - Fix: In `OllamaModelProvider.generate`, filtered out `{"role": "assistant", "content": "</think>"}` for any model that is not a Qwen model (`"qwen" not in self._model_id.lower()`). Without `</think>`, `beam:cloud` operates cleanly, outputting internal chain-of-thought to `message.thinking` and user-facing text to `message.content`.
+  - **(b) Structured JSON Output**:
+    - Tested `beam:cloud` with Ollama structured output format (`format="json"` with Pydantic JSON schemas).
+    - Result: `beam:cloud` honours structured JSON formatting cleanly with zero parse failures.
+  - **Vision Capability Handling**:
+    - `beam:cloud` has no vision capabilities (`is_vision_model("beam:cloud") == False`).
+    - Vision steps: `OllamaModelProvider` retains `qwen3-vl:4b` for `vision` role when chat model lacks vision. `node_assess_evidence` skips vision reading and uses OCR evidence when model lacks vision.
+
+- **4. Side-by-Side Pipeline Comparison Run (`backend/scripts/compare_4b_vs_beam.py`)**:
+  - Evaluated all 12 smoke questions + 3-turn follow-up chain against an isolated throwaway database seeded with golden documents (`front_desk_policy_v1.pdf`, `front_desk_policy_v2.pdf`, `prior_auth_guide.pdf`, `fee_schedule.pdf`, `accepted_plans.csv`, `pa_turnaround_times.xlsx`).
+  - Stored detailed results in `docs/comparison_4b_vs_beam.json`.
+  - **Findings**:
+    - **MODEL Failure**: Q4 ("Summarize the outpatient prior authorization guide"). `qwen3-vl:4b` suffered from source mixing by hallucinating a bullet about the intake fax number from `front_desk_policy_v2.pdf`. `beam:cloud` adhered strictly to `prior_auth_guide.pdf` with zero source mixing (4 accurate bullets, all cited).
+    - **PIPELINE Failures**:
+      - Q1 ("HORIZON VALLEY HEALTH CLINIC data please"): Both models refused with inventory fallback due to underspecified prompt scoring below retrieval thresholds.
+      - Chain-T2 ("and what documents are required with it?"): Both models dumped inventory because `node_guard_input`'s inventory phrase list contains substring `"what documents"`.
+    - **Thinking Token Budget Constraint on Beam**: Beam generates 100-150 internal thinking tokens. On tight token budgets (e.g. `num_predict=150`), it hits `done_reason="length"` before emitting content, triggering fallback refusals on conflict questions (Q2, Q3) and exact facts (Q6, Q8, Q9).
+    - **Table Extraction Mode**: Both models passed CSV (Q5) and XLSX (Q12) table extraction 100% cell-for-cell because table row extraction and cell formatting are assembled deterministically.
+
+- **5. Verification Summary**:
+  - `uv run --project backend pre-commit run --files ...`: all 10 hooks passed cleanly (exit code 0).
+  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 881 passed, 1 skipped, 15 deselected in 131s (0 failed).

@@ -357,12 +357,8 @@ async def test_conflict_node_cites_only_conflicting_documents() -> None:
     ctx = _make_context()
     ctx.question_text = "What is the front desk intake fax number?"
 
-    c1_text = (
-        "[Document: front_desk_policy_v1.pdf, Page: 1] Front desk intake fax number is 555-0101."
-    )
-    c2_text = (
-        "[Document: front_desk_policy_v2.pdf, Page: 1] Front desk intake fax number is 555-0102."
-    )
+    c1_text = "[Document: clinic_handbook.pdf, Page: 1] Front desk intake fax number is 555-0101."
+    c2_text = "[Document: office_memo.pdf, Page: 1] Front desk intake fax number is 555-0102."
     c3_text = "[Document: fee_schedule.pdf, Page: 1] Billing office phone is 555-0150."
 
     ctx.evidence_text = {"c1": c1_text, "c2": c2_text, "c3": c3_text}

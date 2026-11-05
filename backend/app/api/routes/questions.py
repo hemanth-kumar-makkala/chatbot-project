@@ -22,6 +22,11 @@ from app.api.deps import (
 )
 from app.api.rate_limiter import check_question_rate_limit
 from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState
+from app.core.safety_lock import (
+    CloudModelSafetyLockError,
+    is_cloud_model,
+    verify_cloud_model_safety_lock,
+)
 from app.db.models import (
     Assistant,
     AuditEvent,
@@ -66,14 +71,17 @@ def get_compiled_graph():
 
 def get_engine_ports(settings: ApiSettings) -> GraphPorts:
     """Retrieve or construct profile-scoped GraphPorts instance."""
-    profile = settings.profile
-    if profile in _ports_cache:
-        return _ports_cache[profile]
+    if settings.profile in _ports_cache:
+        return _ports_cache[settings.profile]
+    cache_key = f"{settings.profile}:{settings.chat_model}"
+    if cache_key in _ports_cache:
+        return _ports_cache[cache_key]
 
+    profile = settings.profile
     if profile == "mock":
         ports = create_mock_ports()
     else:
-        model_provider = create_model_provider(profile)
+        model_provider = create_model_provider(profile, chat_model=settings.chat_model)
         retriever = create_retriever(profile)
         reranker = None
         if profile in ("desktop-gpu", "home-gpu"):
@@ -82,16 +90,23 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             model_provider=model_provider,
             retriever=retriever,
             reranker=reranker,
+            chat_model=settings.chat_model,
         )
 
-    _ports_cache[profile] = ports
+    _ports_cache[cache_key] = ports
     return ports
+
+
+class ConversationTurn(BaseModel):
+    role: str
+    content: str
 
 
 class QuestionRequest(BaseModel):
     assistant_id: str
     question_text: str
     conversation_id: UUID | None = None
+    history: list[ConversationTurn] | None = None
     # Forged tenant_id if supplied by caller is intentionally ignored by the endpoint
     tenant_id: str | None = Field(
         default=None, description="Ignored by server; derived from assistant"
@@ -132,6 +147,7 @@ class QuestionResponse(BaseModel):
     sources: list[SourceCitation] = []
     conflict_sources: list[SourceCitation] = []
     public_error_ref: str | None = None
+    rewritten_question: str | None = None
 
 
 async def _resolve_sources(
@@ -268,7 +284,8 @@ async def ask_question(
             window_seconds=settings.question_rate_limit_window_seconds,
         )
 
-        # 1. Resolve or create conversation
+        # 1. Resolve or create conversation and load scoped conversation history
+        history_turns: list[dict[str, str]] = []
         if payload.conversation_id:
             conv_check = await db_session.execute(
                 select(Conversation.id).where(
@@ -279,6 +296,19 @@ async def ask_question(
             if conv_check.scalar_one_or_none() is None:
                 raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
             conv_uuid = payload.conversation_id
+
+            # Load history turns (last 4 turns = 8 messages) scoped strictly to tenant and session
+            prev_msg_stmt = (
+                select(Message.role, Message.content)
+                .where(
+                    Message.tenant_id == tenant_uuid,
+                    Message.conversation_id == conv_uuid,
+                )
+                .order_by(Message.created_at.desc())
+                .limit(8)
+            )
+            prev_msgs = (await db_session.execute(prev_msg_stmt)).all()
+            history_turns = [{"role": r.role, "content": r.content} for r in reversed(prev_msgs)]
         else:
             conv = Conversation(
                 tenant_id=tenant_uuid,
@@ -289,6 +319,9 @@ async def ask_question(
             db_session.add(conv)
             await db_session.flush()
             conv_uuid = conv.id
+
+        if not history_turns and payload.history:
+            history_turns = [{"role": t.role, "content": t.content} for t in payload.history[-8:]]
 
         # 2. Save user message row
         user_msg = Message(
@@ -307,6 +340,22 @@ async def ask_question(
             Document.active_version_id.is_not(None),
         )
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
+        active_docs_stmt = select(Document.title).where(
+            Document.tenant_id == tenant_uuid,
+            Document.is_retired.is_(False),
+            Document.active_version_id.is_not(None),
+        )
+        active_doc_titles = [row[0] for row in (await db_session.execute(active_docs_stmt)).all()]
+
+        # Safety lock check for cloud models
+        if is_cloud_model(settings.chat_model):
+            try:
+                verify_cloud_model_safety_lock(
+                    model_name=settings.chat_model,
+                    active_document_titles=active_doc_titles,
+                )
+            except CloudModelSafetyLockError as lock_err:
+                raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
 
         # 4. Load visual page metadata inside the pre-graph DB transaction
         page_images: dict[str, bytes] = {}
@@ -346,7 +395,10 @@ async def ask_question(
         ports=ports,
         tenant=tenant_ctx,
         question_text=payload.question_text,
+        conversation_history=history_turns,
         active_document_count=doc_count,
+        active_document_titles=active_doc_titles,
+        chat_model=settings.chat_model,
         page_images=page_images,
         page_ocr_confidences=page_ocr_confidences,
     )
@@ -448,6 +500,7 @@ async def ask_question(
             sources=sources_list,
             conflict_sources=conflict_sources_list,
             public_error_ref=public_ref,
+            rewritten_question=result.get("rewritten_question") or runtime_ctx.rewritten_question,
         )
 
 
@@ -488,6 +541,7 @@ async def ask_question_stream(
         )
         asst_name = (await db_session.execute(asst_stmt)).scalar_one_or_none() or "Assistant"
 
+        history_turns: list[dict[str, str]] = []
         if payload.conversation_id:
             conv_check = await db_session.execute(
                 select(Conversation.id).where(
@@ -498,6 +552,18 @@ async def ask_question_stream(
             if conv_check.scalar_one_or_none() is None:
                 raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
             conv_uuid = payload.conversation_id
+
+            prev_msg_stmt = (
+                select(Message.role, Message.content)
+                .where(
+                    Message.tenant_id == tenant_uuid,
+                    Message.conversation_id == conv_uuid,
+                )
+                .order_by(Message.created_at.desc())
+                .limit(8)
+            )
+            prev_msgs = (await db_session.execute(prev_msg_stmt)).all()
+            history_turns = [{"role": r.role, "content": r.content} for r in reversed(prev_msgs)]
         else:
             conv = Conversation(
                 tenant_id=tenant_uuid,
@@ -508,6 +574,9 @@ async def ask_question_stream(
             db_session.add(conv)
             await db_session.flush()
             conv_uuid = conv.id
+
+        if not history_turns and payload.history:
+            history_turns = [{"role": t.role, "content": t.content} for t in payload.history[-8:]]
 
         user_msg = Message(
             tenant_id=tenant_uuid,
@@ -524,6 +593,23 @@ async def ask_question_stream(
             Document.active_version_id.is_not(None),
         )
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
+        active_docs_stmt = select(Document.title).where(
+            Document.tenant_id == tenant_uuid,
+            Document.is_retired.is_(False),
+            Document.active_version_id.is_not(None),
+        )
+        active_doc_titles = [row[0] for row in (await db_session.execute(active_docs_stmt)).all()]
+
+        # Safety lock check for cloud models
+        settings = get_api_settings(request)
+        if is_cloud_model(settings.chat_model):
+            try:
+                verify_cloud_model_safety_lock(
+                    model_name=settings.chat_model,
+                    active_document_titles=active_doc_titles,
+                )
+            except CloudModelSafetyLockError as lock_err:
+                raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
 
     async def event_generator() -> AsyncIterator[str]:
         settings = get_api_settings(request)
@@ -533,7 +619,10 @@ async def ask_question_stream(
             ports=ports,
             tenant=tenant_ctx,
             question_text=payload.question_text,
+            conversation_history=history_turns,
             active_document_count=doc_count,
+            active_document_titles=active_doc_titles,
+            chat_model=settings.chat_model,
         )
         state: GraphState = {
             "request_id": request_id,

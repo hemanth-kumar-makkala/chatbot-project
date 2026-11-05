@@ -14,6 +14,7 @@ config:
 graph TD;
 	__start__(<p>__start__</p>)
 	guard_input(guard_input)
+	rewrite(rewrite)
 	route(route)
 	retrieve(retrieve)
 	rerank(rerank)
@@ -32,9 +33,11 @@ graph TD;
 	extraction_subgraph --> respond;
 	generate --> validate;
 	guard_input -.-> respond;
-	guard_input -.-> route;
+	guard_input -.-> rewrite;
 	rerank --> assess_evidence;
 	retrieve --> rerank;
+	rewrite -.-> respond;
+	rewrite -.-> route;
 	route -.-> extraction_subgraph;
 	route -.-> generate;
 	route -.-> respond;

@@ -76,6 +76,7 @@ def create_production_ports(
     reranker: Reranker | None = None,
     tracer: Tracer | None = None,
     image_processor: ImageProcessor | None = None,
+    chat_model: str = "qwen3-vl:4b",
 ) -> GraphPorts:
     """Create production GraphPorts with is_mock_profile=False and simulation triggers disabled."""
     from app.adapters.images.pillow import PillowImageProcessor
@@ -86,6 +87,7 @@ def create_production_ports(
         reranker=reranker,
         tracer=tracer,
         image_processor=image_processor or PillowImageProcessor(),
+        chat_model=chat_model,
         is_mock_profile=False,
         mock_evidence_state=None,
         mock_forced_route=None,
@@ -513,7 +515,7 @@ def create_version_activation_service(
     return VersionActivationService(repository=repo)
 
 
-def create_model_provider(profile: str) -> ModelProvider:
+def create_model_provider(profile: str, chat_model: str | None = None) -> ModelProvider:
     """Create ModelProvider adapter based on runtime profile.
 
     Profiles:
@@ -534,7 +536,7 @@ def create_model_provider(profile: str) -> ModelProvider:
     if profile in ("desktop-gpu", "home-gpu"):
         from app.adapters.models.ollama import OllamaModelProvider
 
-        return OllamaModelProvider(profile=profile)
+        return OllamaModelProvider(profile=profile, chat_model=chat_model)
 
     if profile in ("office-cpu", "dev-free-api", "cloud"):
         raise ConfigurationError(

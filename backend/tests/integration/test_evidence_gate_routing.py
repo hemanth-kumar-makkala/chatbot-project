@@ -366,6 +366,79 @@ class TestEvidenceGateRouting:
         graph = build_knowledge_graph().compile()
         result = await graph.ainvoke(state, context=ctx)
 
+        assert result["evidence_state"] == "RESOLVED_CONFLICT"
+        assert result["status"] == "answered"
+        assert model.generate_call_count == 0  # Node 7 generate NEVER called
+        assert "555-0102" in ctx.response_text
+        assert "555-0101" in ctx.response_text
+        assert "front_desk_policy_v2.pdf" in ctx.response_text
+        assert "front_desk_policy_v1.pdf" in ctx.response_text
+        assert set(result["evidence_ids"]) == {c1_id, c2_id}
+
+    @pytest.mark.asyncio
+    async def test_conflicting_evidence_undetermined_versions_preserves_conflicting_state(
+        self, base_state: GraphState, tenant_ctx: TenantContext
+    ) -> None:
+        """When 2 distinct documents conflict and version order cannot be determined:
+        - evidence_state is CONFLICTING
+        - Node 7 generate is NEVER called
+        - Routes to Node 9 respond
+        - Response returns 'Two documents disagree:' with each value, quoted span and citation.
+        """
+        c1_id = "00000000-0000-0000-0001-000000000001"
+        c2_id = "00000000-0000-0000-0002-000000000002"
+        v1_text = (
+            "[Document: clinic_handbook.pdf, Page: 1]\n\nFront desk intake fax number is 555-0101."
+        )
+        v2_text = (
+            "[Document: office_memo.pdf, Page: 1]\n\nFront desk intake fax number is 555-0102."
+        )
+
+        conflict_payload = {
+            "has_conflict": True,
+            "value1": "555-0101",
+            "quote1": "Front desk intake fax number is 555-0101.",
+            "doc1_id": c1_id,
+            "value2": "555-0102",
+            "quote2": "Front desk intake fax number is 555-0102.",
+            "doc2_id": c2_id,
+        }
+        model = CountingModelProvider(conflict_detected=True, conflict_payload=conflict_payload)
+
+        candidates = [
+            EvidenceId(
+                chunk_id=c1_id,
+                page_id="p1",
+                document_version_id="ver-1",
+                evidence_type=EvidenceType.TEXT,
+            ),
+            EvidenceId(
+                chunk_id=c2_id,
+                page_id="p2",
+                document_version_id="ver-2",
+                evidence_type=EvidenceType.TEXT,
+            ),
+        ]
+        retriever = StubRetriever(
+            candidates=candidates,
+            texts={c1_id: v1_text, c2_id: v2_text},
+        )
+        ports = GraphPorts(model_provider=model, retriever=retriever)
+        ctx = GraphRuntimeContext(
+            ports=ports,
+            tenant=tenant_ctx,
+            question_text="What is the front desk intake fax number?",
+            evidence_text={c1_id: v1_text, c2_id: v2_text},
+            candidate_scores={c1_id: 0.92, c2_id: 0.91},
+            candidate_evidence_types={c1_id: "text", c2_id: "text"},
+            active_document_count=2,
+        )
+        state = dict(base_state)
+        state["evidence_ids"] = [c1_id, c2_id]
+
+        graph = build_knowledge_graph().compile()
+        result = await graph.ainvoke(state, context=ctx)
+
         assert result["evidence_state"] == "CONFLICTING"
         assert result["status"] == "conflicting"
         assert model.generate_call_count == 0  # Node 7 generate NEVER called

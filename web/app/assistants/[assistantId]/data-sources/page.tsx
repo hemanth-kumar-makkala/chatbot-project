@@ -388,15 +388,41 @@ export default function DataSourcesPage({ params }: DataSourcesPageProps) {
             }}
           >
             <div>
-              <h2
-                style={{
-                  fontSize: "var(--font-size-lg)",
-                  fontWeight: 600,
-                  color: "var(--color-text-primary)",
-                }}
-              >
-                Documents
-              </h2>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-3)" }}>
+                <h2
+                  style={{
+                    fontSize: "var(--font-size-lg)",
+                    fontWeight: 600,
+                    color: "var(--color-text-primary)",
+                  }}
+                >
+                  Documents
+                </h2>
+                {documents.length > 0 &&
+                  documents.every(
+                    (d) =>
+                      d.status.toLowerCase() !== "reading" &&
+                      d.status.toLowerCase() !== "queued" &&
+                      d.flagged_pages_count === 0
+                  ) && (
+                    <span
+                      data-testid="all-pages-verified-badge"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: "2px 8px",
+                        borderRadius: "var(--radius-full)",
+                        backgroundColor: "var(--color-status-success-bg)",
+                        color: "var(--color-status-success-text)",
+                        fontSize: "var(--font-size-xs)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ✓ All pages verified
+                    </span>
+                  )}
+              </div>
               <div
                 style={{
                   fontSize: "var(--font-size-xs)",

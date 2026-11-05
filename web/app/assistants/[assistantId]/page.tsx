@@ -70,7 +70,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   // Session upload & extraction state (Invariant 7)
   const [attachedDoc, setAttachedDoc] = useState<AttachedDocument | null>(null);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
-  const [liveAttachWarningOpen, setLiveAttachWarningOpen] = useState(false);
   const [arbitraryFileError, setArbitraryFileError] = useState<string | null>(null);
   const [liveExtractionError, setLiveExtractionError] = useState<string | null>(null);
   const liveFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -124,7 +123,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setLiveAttachWarningOpen(false);
     setLiveExtractionError(null);
 
     const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
@@ -191,7 +189,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setDemoStatusLines([]);
     setActiveReasonMsgId(null);
     setLiveFeedbackWarningId(null);
-    setLiveAttachWarningOpen(false);
     setLiveSourceWarning(false);
     setArbitraryFileError(null);
     setLiveExtractionError(null);
@@ -522,9 +519,11 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               <img
                 data-testid="extraction-page-image"
                 src={
-                  attachedDoc?.path && attachedDoc.path.startsWith("/")
-                    ? attachedDoc.path
-                    : `/demo/pages/${stem}-p${pageNum}.png`
+                  firstSource?.version_id && firstSource.version_id.startsWith("/")
+                    ? firstSource.version_id
+                    : attachedDoc?.path && attachedDoc.path.startsWith("/")
+                      ? attachedDoc.path
+                      : `/demo/pages/${stem}-p${pageNum}.png`
                 }
                 alt={`${docTitle} Page ${pageNum} preview`}
                 onClick={() => handleOpenSource(docTitle, pageNum)}
@@ -1326,7 +1325,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               onClick={() => {
                 if (isLiveAssistant) {
                   liveFileInputRef.current?.click();
-                  setLiveAttachWarningOpen(true);
                 } else {
                   setAttachPickerOpen(true);
                 }
@@ -1388,23 +1386,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               Send
             </button>
           </form>
-
-          {liveAttachWarningOpen && (
-            <div
-              data-testid="session-upload-live-message"
-              style={{
-                marginTop: "4px",
-                fontSize: "11px",
-                color: "var(--color-text-secondary)",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              <DataSourceChip mode="demo" label="Demo" />
-              <span>Session upload needs the session document route (Phase 4 Task 4.3, not built yet)</span>
-            </div>
-          )}
 
           {liveExtractionError && (
             <div

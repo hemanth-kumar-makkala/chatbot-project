@@ -175,8 +175,8 @@ export function DocumentsTable({
                         {formatDate(doc.uploaded_at)}
                       </td>
                       <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
-                        <div style={{ display: "inline-flex", gap: "var(--spacing-2)" }}>
-                          {canReview && (
+                        <div style={{ display: "inline-flex", gap: "var(--spacing-2)", alignItems: "center" }}>
+                          {canReview ? (
                             <button
                               type="button"
                               data-testid={`review-btn-${doc.document_id}`}
@@ -193,7 +193,24 @@ export function DocumentsTable({
                             >
                               Review
                             </button>
-                          )}
+                          ) : doc.status.toLowerCase() === "ready" ? (
+                            <span
+                              data-testid={`verified-badge-${doc.document_id}`}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "4px 8px",
+                                fontSize: "var(--font-size-xs)",
+                                color: "var(--color-status-success-text)",
+                                backgroundColor: "var(--color-status-success-bg)",
+                                borderRadius: "var(--radius-sm)",
+                                fontWeight: 500,
+                              }}
+                            >
+                              ✓ All pages verified
+                            </span>
+                          ) : null}
 
                           {!isRetired ? (
                             <button

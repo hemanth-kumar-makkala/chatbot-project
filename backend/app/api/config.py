@@ -43,6 +43,14 @@ def _default_session_upload_retention_hours() -> int | None:
     return None
 
 
+def _default_chat_model() -> str:
+    """Chat and generation model name setting, default qwen3-vl:4b."""
+    val = os.getenv("CHAT_MODEL")
+    if val is not None and val.strip():
+        return val.strip()
+    return "qwen3-vl:4b"
+
+
 class ApiSettings(BaseModel):
     """Configuration settings for the FastAPI application."""
 
@@ -84,6 +92,10 @@ class ApiSettings(BaseModel):
     session_upload_retention_hours: int | None = Field(
         default_factory=_default_session_upload_retention_hours,
         description="Retention window for chat session uploads in hours. Required; no default.",
+    )
+    chat_model: str = Field(
+        default_factory=_default_chat_model,
+        description="Chat and answer generation model name (default: qwen3-vl:4b).",
     )
 
     def __init__(self, **data: Any) -> None:
