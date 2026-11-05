@@ -28,7 +28,12 @@ from app.ports.types import TenantContext, UserRole
 def test_is_followup_question_detection():
     """Detects pronouns and follow-up conjunctions."""
     assert is_followup_question("and what documents are required with it?") is True
-    assert is_followup_question("What is the standard SLA for Apex Health Insurance diagnostic imaging?") is False
+    assert (
+        is_followup_question(
+            "What is the standard SLA for Apex Health Insurance diagnostic imaging?"
+        )
+        is False
+    )
     assert is_followup_question("How recent must they be?") is True
     assert is_followup_question("What documentation is needed for that?") is True
     assert is_followup_question("What insurance plans are accepted?") is False
@@ -41,7 +46,10 @@ def test_heuristic_rewrite_resolves_prior_auth_followup():
             "role": "user",
             "content": "How many business days in advance must outpatient surgery prior auths be submitted?",
         },
-        {"role": "assistant", "content": "Outpatient surgery prior auths must be submitted at least 5 business days in advance."},
+        {
+            "role": "assistant",
+            "content": "Outpatient surgery prior auths must be submitted at least 5 business days in advance.",
+        },
     ]
     res = heuristic_rewrite("and what documents are required with it?", history)
     assert res.is_followup is True
@@ -130,4 +138,3 @@ async def test_node_rewrite_triggers_clarification_on_unclear_reference():
     assert res["status"] == "clarify"
     assert res["route"] == "clarify"
     assert "clarify" in ctx.response_text.lower()
-

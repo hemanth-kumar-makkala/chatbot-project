@@ -88,7 +88,9 @@ def _extract_recent_topic(history: list[dict[str, str]]) -> str | None:
             return "outpatient prior authorizations"
         if re.search(r"prior\s+auth(?:orization)?\s+guide", content, re.IGNORECASE):
             return "the outpatient prior authorization guide"
-        if re.search(r"apex\s+health(?:\s+insurance)?(?:\s+diagnostic\s+imaging)?", content, re.IGNORECASE):
+        if re.search(
+            r"apex\s+health(?:\s+insurance)?(?:\s+diagnostic\s+imaging)?", content, re.IGNORECASE
+        ):
             return "Apex Health Insurance diagnostic imaging"
         if re.search(r"front\s+desk\s+(?:intake\s+)?fax", content, re.IGNORECASE):
             return "the front desk intake fax line"
@@ -257,6 +259,8 @@ async def rewrite_followup_question(
                     clarifying_question=so.get("clarifying_question"),
                 )
         except Exception:
-            logger.warning("Model rewrite call failed; falling back to heuristic rewrite", exc_info=True)
+            logger.warning(
+                "Model rewrite call failed; falling back to heuristic rewrite", exc_info=True
+            )
 
     return heuristic_rewrite(question, history)

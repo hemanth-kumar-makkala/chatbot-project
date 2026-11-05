@@ -55,4 +55,3 @@ def test_prior_auth_guide_source_fidelity_no_imaging_requisition() -> None:
 
     # Must not contain "imaging requisition" (which was an inaccurate test paraphrase)
     assert "imaging requisition" not in full_text.lower()
-

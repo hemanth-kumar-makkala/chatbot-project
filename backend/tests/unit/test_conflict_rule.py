@@ -102,8 +102,12 @@ async def test_node_assess_evidence_resolves_version_conflict():
         question_text="What is the front desk intake fax number?",
         active_document_count=2,
     )
-    c1_text = "[Document: front_desk_policy_v1.pdf, Page: 1] Front desk intake fax number is 555-0101."
-    c2_text = "[Document: front_desk_policy_v2.pdf, Page: 1] Front desk intake fax number is 555-0102."
+    c1_text = (
+        "[Document: front_desk_policy_v1.pdf, Page: 1] Front desk intake fax number is 555-0101."
+    )
+    c2_text = (
+        "[Document: front_desk_policy_v2.pdf, Page: 1] Front desk intake fax number is 555-0102."
+    )
     ctx.evidence_text = {"c1": c1_text, "c2": c2_text}
     ctx.candidate_scores = {"c1": 0.95, "c2": 0.94}
 
@@ -185,4 +189,3 @@ async def test_node_assess_evidence_keeps_conflicting_when_order_undetermined():
     assert res["status"] == "conflicting"
     assert res["evidence_state"] == "CONFLICTING"
     assert "Two documents disagree" in ctx.response_text
-

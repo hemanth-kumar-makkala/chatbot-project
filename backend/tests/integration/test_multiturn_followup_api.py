@@ -18,7 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.app import create_app
 from app.api.config import ApiSettings
-from app.db.models import Assistant, Chunk, Conversation, Document, DocumentVersion, Page, Tenant
+from app.db.models import Assistant, Chunk, Document, DocumentVersion, Page, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.types import TenantContext, UserRole
 from tests.integration.test_api_knowledge_step2 import (
@@ -55,7 +55,9 @@ def test_app(api_settings: ApiSettings):
 
 
 @pytest.mark.asyncio
-async def test_multiturn_followup_chains_and_clarification(test_app, api_settings, tmp_path: Path) -> None:
+async def test_multiturn_followup_chains_and_clarification(
+    test_app, api_settings, tmp_path: Path
+) -> None:
     """Test 3-turn follow-up chains, pronoun rewriting, and clarification without history."""
     api_settings.profile = "mock"
     api_settings.storage_dir = str(tmp_path)
@@ -184,7 +186,9 @@ async def test_multiturn_followup_chains_and_clarification(test_app, api_setting
             t2_data = t2_resp.json()
             assert t2_data["status"] == "answered"
             assert "rewritten_question" in t2_data
-            assert "outpatient surgery prior authorizations" in t2_data["rewritten_question"].lower()
+            assert (
+                "outpatient surgery prior authorizations" in t2_data["rewritten_question"].lower()
+            )
             assert "with it" not in t2_data["rewritten_question"].lower()
 
             # Turn 3: Follow-up using 'they'
@@ -246,7 +250,10 @@ async def test_multiturn_followup_chains_and_clarification(test_app, api_setting
             )
             assert chain2_t2.status_code == 200
             c2_t2_data = chain2_t2.json()
-            assert "apex health insurance diagnostic imaging" in c2_t2_data["rewritten_question"].lower()
+            assert (
+                "apex health insurance diagnostic imaging"
+                in c2_t2_data["rewritten_question"].lower()
+            )
 
             # Turn 3
             chain2_t3 = await client.post(
@@ -261,11 +268,16 @@ async def test_multiturn_followup_chains_and_clarification(test_app, api_setting
             )
             assert chain2_t3.status_code == 200
             c2_t3_data = chain2_t3.json()
-            assert "apex health insurance diagnostic imaging" in c2_t3_data["rewritten_question"].lower()
+            assert (
+                "apex health insurance diagnostic imaging"
+                in c2_t3_data["rewritten_question"].lower()
+            )
 
 
 @pytest.mark.asyncio
-async def test_multiturn_cross_tenant_and_cross_session_isolation(test_app, api_settings, tmp_path: Path) -> None:
+async def test_multiturn_cross_tenant_and_cross_session_isolation(
+    test_app, api_settings, tmp_path: Path
+) -> None:
     """Prove history cannot leak across tenants or across independent sessions."""
     api_settings.profile = "mock"
     api_settings.storage_dir = str(tmp_path)
@@ -284,12 +296,22 @@ async def test_multiturn_cross_tenant_and_cross_session_isolation(test_app, api_
         user_a, email_a, pass_a = await _create_user_with_role(tenant_a, "staff")
         user_b, email_b, pass_b = await _create_user_with_role(tenant_b, "staff")
 
-        ctx_a = TenantContext(tenant_id=str(tenant_a), user_id=str(user_a.id), role=UserRole.STAFF, session_id="s_a")
-        ctx_b = TenantContext(tenant_id=str(tenant_b), user_id=str(user_b.id), role=UserRole.STAFF, session_id="s_b")
+        ctx_a = TenantContext(
+            tenant_id=str(tenant_a), user_id=str(user_a.id), role=UserRole.STAFF, session_id="s_a"
+        )
+        ctx_b = TenantContext(
+            tenant_id=str(tenant_b), user_id=str(user_b.id), role=UserRole.STAFF, session_id="s_b"
+        )
 
         async with tenant_session(ctx_a) as session:
             session.add(
-                Assistant(id=asst_a, tenant_id=tenant_a, name="Asst A", prompt_id="p1", prompt_version="1.0")
+                Assistant(
+                    id=asst_a,
+                    tenant_id=tenant_a,
+                    name="Asst A",
+                    prompt_id="p1",
+                    prompt_version="1.0",
+                )
             )
             doc_a = Document(
                 id=uuid4(),
@@ -314,7 +336,13 @@ async def test_multiturn_cross_tenant_and_cross_session_isolation(test_app, api_
 
         async with tenant_session(ctx_b) as session:
             session.add(
-                Assistant(id=asst_b, tenant_id=tenant_b, name="Asst B", prompt_id="p1", prompt_version="1.0")
+                Assistant(
+                    id=asst_b,
+                    tenant_id=tenant_b,
+                    name="Asst B",
+                    prompt_id="p1",
+                    prompt_version="1.0",
+                )
             )
             doc_b = Document(
                 id=uuid4(),

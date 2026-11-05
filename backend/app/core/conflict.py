@@ -117,9 +117,7 @@ def resolve_document_version_order(
 
     # 1. Base name similarity check
     base_match = (
-        m1.base_name == m2.base_name
-        or m1.base_name in m2.base_name
-        or m2.base_name in m1.base_name
+        m1.base_name == m2.base_name or m1.base_name in m2.base_name or m2.base_name in m1.base_name
     )
     if not base_match:
         # Also check first header line from chunks
@@ -172,4 +170,3 @@ def format_version_conflict_answer(
         f"while the newer version ({newer_doc}) specifies {newer_val}."
     )
     return f"{clean_newer}\n{note_line}"
-

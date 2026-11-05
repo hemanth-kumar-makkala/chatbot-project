@@ -219,4 +219,3 @@ async def test_invented_row_id_with_multi_tables_still_rejected() -> None:
 
     res = await node_validate(state, _make_runtime(ctx))
     assert res["status"] in ("retry", "refusal"), "Invented row ID must be rejected"
-
