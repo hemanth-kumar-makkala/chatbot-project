@@ -1,44 +1,1551 @@
 {
-  "run_status": "incomplete_terminal_timeout",
-  "reason": "The comparison runner was attempted after tests and pre-commit passed, but the terminal execution limit expired at 420 seconds before output or completed measurements were captured. Runtime dotenv loading and migrations on the runner's own throwaway database were allowed; .env was not manually read.",
-  "part_a": {
-    "status": "implemented",
-    "focused_tests": {
-      "command": "HERMES_SKIP_DOTENV=1 APP_PROFILE=mock uv run python -m pytest --confcutdir=tests/unit tests/unit/test_cloud_safety_lock.py tests/unit/test_table_ingestion.py tests/unit/test_table_retrieval.py tests/unit/test_inventory_and_prefix_rejection.py tests/unit/test_comparison_grading.py tests/unit/test_env_utils.py tests/unit/test_conflict_rule.py tests/unit/test_multiturn_followup.py tests/unit/test_table_validation_disambiguation.py -q",
-      "result": "58 passed"
+  "timestamp": "2026-11-06T16:08:00.313793+00:00",
+  "run_status": "complete",
+  "answer_models": [
+    "qwen3-vl:4b",
+    "beam:cloud",
+    "nvidia:mistralai/mistral-large-4-1t-a52b"
+  ],
+  "vision_models": [
+    "qwen3-vl:4b",
+    "nvidia:mistralai/mistral-large-4-1t-a52b"
+  ],
+  "per_model_summary": {
+    "qwen3-vl:4b": {
+      "model_tag": "qwen3-vl:4b",
+      "label": "qwen3-vl:4b (Local 4B)",
+      "total": 15,
+      "correct": 13,
+      "accuracy_pct": 86.67,
+      "refusals": 3,
+      "invalid_json": 0,
+      "avg_seconds": 14.51
+    },
+    "beam:cloud": {
+      "model_tag": "beam:cloud",
+      "label": "beam:cloud (Ollama Cloud)",
+      "total": 15,
+      "correct": 14,
+      "accuracy_pct": 93.33,
+      "refusals": 3,
+      "invalid_json": 0,
+      "avg_seconds": 19.14
+    },
+    "nvidia:mistralai/mistral-large-4-1t-a52b": {
+      "model_tag": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "label": "NVIDIA mistralai/mistral-large-4-1t-a52b",
+      "total": 15,
+      "correct": 7,
+      "accuracy_pct": 46.67,
+      "refusals": 10,
+      "invalid_json": 0,
+      "avg_seconds": 202.65
     }
   },
-  "part_b": {
-    "status": "implementation_complete_comparison_not_executed",
-    "implementation_status": "Independent answer/vision model settings, NVIDIA/Inception OpenAI-compatible providers, cloud-safety coverage for both selections, and per-model/per-role token limits are implemented.",
-    "answer_models_requested": [
-      "qwen3-vl:4b",
-      "beam:cloud",
-      "NVIDIA mistralai/mistral-large-4-1t-a52b"
-    ],
-    "vision_models_requested": [
-      "qwen3-vl:4b",
-      "NVIDIA mistralai/mistral-large-4-1t-a52b"
-    ],
-    "answer_models_executed": [],
-    "vision_models_executed": [],
-    "skipped_unfilled_model_placeholders": [
-      "NVIDIA [MINIMAX ID]",
-      "Inception [MERCURY NAME]"
-    ],
-    "new_model_measurements": [],
-    "answer_grid": null,
-    "vision_grid": null,
-    "failed_answer_texts": [],
-    "blockers": [
-      "No comparison requests were sent because the existing runner reads .env and executes Alembic upgrades, both forbidden by the project rules."
-    ]
+  "answer_grid": [
+    {
+      "id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "category": "ALL-FAIL",
+      "qwen_4b": {
+        "correct": false,
+        "seconds": 21.95,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": false,
+        "seconds": 14.98,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 43.44,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.89,
+        "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 16.48,
+        "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 315.99,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.47,
+        "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 18.88,
+        "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 190.58,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": false,
+        "seconds": 22.62,
+        "answer": "- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 34.08,
+        "answer": "- All participating providers must submit prior authorization requests through the provider portal or via secure electro",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 303.73,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf",
+          "fee_schedule.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q5",
+      "question": "What insurance plans are accepted?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 22.33,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 25.86,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 164.94,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      }
+    },
+    {
+      "id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.53,
+        "answer": "January 1, 2026",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 14.66,
+        "answer": "January 1, 2026",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 230.03,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q7",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 12.78,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 19.62,
+        "answer": "5 business days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 183.42,
+        "answer": "5 business days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q8",
+      "question": "How recent must clinical consultation notes be when submitting an auth request?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.41,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 17.38,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 113.86,
+        "answer": "within the past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 11.05,
+        "answer": "Policy 2026-PA-01",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 17.31,
+        "answer": "2026-PA-01",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 159.67,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q10",
+      "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.05,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 14.7,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 53.11,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q11",
+      "question": "What is the discounted parking rate for patients in the medical plaza garage?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 9.7,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 11.08,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 41.92,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q12",
+      "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 17.77,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 23.11,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 224.14,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      }
+    },
+    {
+      "id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 12.88,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 16.88,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 278.55,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.12,
+        "answer": "Complete clinical consultation notes within past 30 days, diagnostic imaging reports and relevant laboratory panels, pro",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 19.8,
+        "answer": "Complete clinical consultation notes within the past 30 days; diagnostic imaging reports and relevant laboratory panels;",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 320.38,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Chain-T3",
+      "question": "how recent must they be?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 15.05,
+        "answer": "Complete clinical consultation notes within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 22.28,
+        "answer": "Clinical consultation notes must be within the past 30 days; the evidence does not specify a recency requirement for dia",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 415.92,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    }
+  ],
+  "all_fail_count": 1,
+  "some_fail_count": 7,
+  "all_pass_count": 7,
+  "all_fail": [
+    {
+      "id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "category": "ALL-FAIL",
+      "qwen_4b": {
+        "correct": false,
+        "seconds": 21.95,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": false,
+        "seconds": 14.98,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 43.44,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    }
+  ],
+  "some_fail": [
+    {
+      "id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.89,
+        "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 16.48,
+        "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 315.99,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.47,
+        "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 18.88,
+        "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+        "state": "RESOLVED_CONFLICT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 190.58,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": false,
+        "seconds": 22.62,
+        "answer": "- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 34.08,
+        "answer": "- All participating providers must submit prior authorization requests through the provider portal or via secure electro",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 303.73,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v1.pdf",
+          "front_desk_policy_v2.pdf",
+          "fee_schedule.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.53,
+        "answer": "January 1, 2026",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 14.66,
+        "answer": "January 1, 2026",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 230.03,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 11.05,
+        "answer": "Policy 2026-PA-01",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 17.31,
+        "answer": "2026-PA-01",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 159.67,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": []
+      }
+    },
+    {
+      "id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 12.88,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 16.88,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 278.55,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "category": "SOME-FAIL",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 13.12,
+        "answer": "Complete clinical consultation notes within past 30 days, diagnostic imaging reports and relevant laboratory panels, pro",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 19.8,
+        "answer": "Complete clinical consultation notes within the past 30 days; diagnostic imaging reports and relevant laboratory panels;",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": false,
+        "seconds": 320.38,
+        "answer": "I couldn't confirm that from the documents.",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "front_desk_policy_v2.pdf",
+          "prior_auth_guide.pdf"
+        ]
+      }
+    }
+  ],
+  "all_pass": [
+    {
+      "id": "Q5",
+      "question": "What insurance plans are accepted?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 22.33,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 25.86,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 164.94,
+        "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "accepted_plans.csv"
+        ]
+      }
+    },
+    {
+      "id": "Q7",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 12.78,
+        "answer": "5",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 19.62,
+        "answer": "5 business days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 183.42,
+        "answer": "5 business days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q8",
+      "question": "How recent must clinical consultation notes be when submitting an auth request?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.41,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 17.38,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 113.86,
+        "answer": "within the past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    },
+    {
+      "id": "Q10",
+      "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 10.05,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 14.7,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 53.11,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q11",
+      "question": "What is the discounted parking rate for patients in the medical plaza garage?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 9.7,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 11.08,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 41.92,
+        "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+        "state": "WEAK",
+        "sources": []
+      }
+    },
+    {
+      "id": "Q12",
+      "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 17.77,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 23.11,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 224.14,
+        "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "pa_turnaround_times.xlsx"
+        ]
+      }
+    },
+    {
+      "id": "Chain-T3",
+      "question": "how recent must they be?",
+      "category": "ALL-PASS",
+      "qwen_4b": {
+        "correct": true,
+        "seconds": 15.05,
+        "answer": "Complete clinical consultation notes within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "beam_cloud": {
+        "correct": true,
+        "seconds": 22.28,
+        "answer": "Clinical consultation notes must be within the past 30 days; the evidence does not specify a recency requirement for dia",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      },
+      "nvidia_mistral": {
+        "correct": true,
+        "seconds": 415.92,
+        "answer": "within past 30 days",
+        "state": "RELIABLE_TEXT",
+        "sources": [
+          "prior_auth_guide.pdf"
+        ]
+      }
+    }
+  ],
+  "vision_grid": {
+    "qwen3-vl:4b": {
+      "model_id": "qwen3-vl:4b",
+      "model_label": "qwen3-vl:4b (Local 4B)",
+      "correct": 20,
+      "correctly_blank": 3,
+      "missed": 2,
+      "false_fill": 0,
+      "total_fields": 25,
+      "accuracy_pct": 92.0,
+      "false_fill_rate_pct": 0.0,
+      "average_seconds": 40.18,
+      "records": [
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Casey Bennett",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Casey Bennett",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "authorized_medication",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Amoxicillin 500mg",
+          "extracted_state": "CONFLICTING",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "authorization_date",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "2026-02-14",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "2026-02-14",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "chart_number",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRN-1102-K",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "MRN-1102-K",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "INVALID",
+          "expected_value": "1982736451",
+          "extracted_state": "INVALID",
+          "extracted_value": "1982736451",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Alex Morgan",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Alex Morgan",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "attending_physician",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Dr. Evelyn Reed",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescription_dosage",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Take 1 capsule by mouth three times daily for 10 days.",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Take 1 capsule by mouth three times daily for 10 days.",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "chart_number",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRN-4412-A",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "MRN-4412-A",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "authorized_medication",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Amoxicillin 500mg",
+          "extracted_state": "CONFLICTING",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "authorization_date",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "2026-02-14",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "2026-02-14",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "refill_count",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "0",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "0",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "clinic_phone",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "555-0145",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "555-0145",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescriber_signature",
+          "expected_state": "UNREADABLE",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "NOT_PRESENT",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Jordan Taylor",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Jordan Taylor",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "procedure_ordered",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRI lumbar spine",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "MRI lumbar spine",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "appointment_date",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "2026-03-01",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "2026-03-01",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "facility_location",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Imaging Suite B",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Imaging Suite B",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "referring_phone",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "555-0170",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "555-0170",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "clinical_justification",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "chronic lower back pain with radiculopathy",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "chronic lower back pain with radiculopathy",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "pain_scale_score",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "7/10",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "7/10",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "ordering_physician",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Dr. Evelyn Reed",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "prescriber_signature",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Dr. Evelyn Reed",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "NOT_PRESENT",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        }
+      ]
+    },
+    "nvidia:mistralai/mistral-large-4-1t-a52b": {
+      "model_id": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "model_label": "NVIDIA mistralai/mistral-large-4-1t-a52b",
+      "correct": 17,
+      "correctly_blank": 3,
+      "missed": 4,
+      "false_fill": 1,
+      "total_fields": 25,
+      "accuracy_pct": 80.0,
+      "false_fill_rate_pct": 4.0,
+      "average_seconds": 191.36,
+      "records": [
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Casey Bennett",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "Casey Bennett",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "authorized_medication",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Amoxicillin 500mg",
+          "extracted_state": "CONFLICTING",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "authorization_date",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "2026-02-14",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "2026-02-14",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "chart_number",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRN-1102-K",
+          "extracted_state": "FILLED_HIGH",
+          "extracted_value": "MRN-1102-K",
+          "outcome": "correct"
+        },
+        {
+          "document": "invalid_npi_fax.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "INVALID",
+          "expected_value": "1982736451",
+          "extracted_state": "INVALID",
+          "extracted_value": "1982736451",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Alex Morgan",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Alex Morgan",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "attending_physician",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Dr. Evelyn Reed",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescription_dosage",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Take 1 capsule by mouth three times daily for 10 days.",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Take 1 capsule by mouth three times daily for 10 days.",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "chart_number",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRN-4412-A",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "MRN-4412-A",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "authorized_medication",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Amoxicillin 500mg",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Amoxicillin 5oOmg",
+          "outcome": "false_fill"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "authorization_date",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "2026-02-14",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "2026-02-14",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "refill_count",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "0",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "0",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "clinic_phone",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "555-0145",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "555-0145",
+          "outcome": "correct"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescriber_signature",
+          "expected_state": "UNREADABLE",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        },
+        {
+          "document": "skewed_fax.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "NOT_PRESENT",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "patient_name",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "Jordan Taylor",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Jordan Taylor",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "procedure_ordered",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "MRI lumbar spine",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "MRI lumbar spine",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "appointment_date",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "2026-03-01",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "2026-03-01",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "facility_location",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Imaging Suite B",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "Imaging Suite B",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "referring_phone",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "555-0170",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "555-0170",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "clinical_justification",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "chronic lower back pain with radiculopathy",
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "pain_scale_score",
+          "expected_state": "FILLED_HIGH",
+          "expected_value": "7/10",
+          "extracted_state": "FILLED_MEDIUM",
+          "extracted_value": "7/10",
+          "outcome": "correct"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "ordering_physician",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "prescriber_signature",
+          "expected_state": "FILLED_MEDIUM",
+          "expected_value": "Dr. Evelyn Reed",
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "missed"
+        },
+        {
+          "document": "faint_fax_2page.pdf",
+          "field": "prescriber_npi",
+          "expected_state": "NOT_PRESENT",
+          "expected_value": null,
+          "extracted_state": "NOT_PRESENT",
+          "extracted_value": null,
+          "outcome": "correctly_blank"
+        }
+      ]
+    }
   },
-  "verification": {
-    "focused_migration_free_unit_set": "passed (exit code 0)",
-    "full_not_models_suite": "905 passed, 1 skipped, 0 failed, 0 errors; exit 0",
-    "first_failure_root_cause": "Stale table-rendering test parsed the old [Sheet: ..., Row: ...] output after implementation switched to a Markdown table. HERMES_SKIP_DOTENV guard was unrelated and removed.",
-    "comparison_attempt": "terminal timed out at 420 seconds; no completed output or measurements captured",
-    "pre_commit_all_files": "passed; all configured hooks"
-  }
+  "failed_answer_texts": [
+    {
+      "question_id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "model": "qwen3-vl:4b",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "reason": "State: WEAK, Sources: []"
+    },
+    {
+      "question_id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "model": "beam:cloud",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "reason": "State: WEAK, Sources: []"
+    },
+    {
+      "question_id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "reason": "State: WEAK, Sources: []"
+    },
+    {
+      "question_id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: []"
+    },
+    {
+      "question_id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']"
+    },
+    {
+      "question_id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "model": "qwen3-vl:4b",
+      "answer": "- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal",
+      "reason": "State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'prior_auth_guide.pdf']"
+    },
+    {
+      "question_id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'front_desk_policy_v2.pdf', 'fee_schedule.pdf', 'prior_auth_guide.pdf']"
+    },
+    {
+      "question_id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: []"
+    },
+    {
+      "question_id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: []"
+    },
+    {
+      "question_id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: ['front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']"
+    },
+    {
+      "question_id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
+      "answer": "I couldn't confirm that from the documents.",
+      "reason": "State: RELIABLE_TEXT, Sources: ['front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']"
+    }
+  ]
 }

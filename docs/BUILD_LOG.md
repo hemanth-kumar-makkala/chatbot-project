@@ -3161,3 +3161,40 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run --project backend pre-commit run --all-files`: all configured hooks passed.
   - Comparison runner was attempted after both gates passed. The terminal tool timed out at 420 seconds before completed output or measurements were captured. The existing runner hard-codes the Qwen/Beam answer comparison and does not yet execute the requested NVIDIA/vision matrix; the report records no inferred measurements.
 - **Files changed**: `backend/app/db/env_utils.py`; `backend/tests/unit/test_env_utils.py`; `backend/tests/unit/test_table_and_conflict_validation.py`; `backend/app/adapters/models/openai_compatible.py`; `backend/tests/unit/test_openai_compatible_provider.py`; `backend/tests/unit/test_model_settings.py`; `backend/tests/unit/test_model_provider_router.py`; `docs/STATUS.md`; `docs/reports/2026-11-05-model-comparison.md`; `docs/reports/2026-11-05-model-comparison.json`; `docs/BUILD_LOG.md`.
+
+---
+
+## 2026-11-06 — Full Model Matrix Comparison & Evaluation Execution
+
+- **Goal**: Measure and evaluate the complete matrix of local, cloud, and hosted models across answer generation and multimodal vision extraction roles under an isolated throwaway PostgreSQL database with SHA-256 safety lock, strict grading, and per-model token limits.
+- **Components Evaluated**:
+  - **Answer Models (15 questions each: 12 full smoke questions + 3-turn follow-up chain)**:
+    - `qwen3-vl:4b`: 13/15 correct (86.67%), 3 refusals, 0 invalid JSON, 14.51s avg latency.
+    - `beam:cloud`: 14/15 correct (93.33%), 3 refusals, 0 invalid JSON, 19.14s avg latency.
+    - `nvidia:mistralai/mistral-large-4-1t-a52b`: 7/15 correct (46.67%), 10 refusals, 0 invalid JSON, 202.65s avg latency.
+  - **Vision Models (25 ground-truth fields across `invalid_npi_fax.pdf`, `skewed_fax.pdf`, and `faint_fax_2page.pdf`)**:
+    - `qwen3-vl:4b`: 20 correct, 3 correctly blank, 2 missed, 0 false fills (92.0% accuracy, 0.0% false fill rate, 40.18s avg latency).
+    - `nvidia:mistralai/mistral-large-4-1t-a52b`: 17 correct, 3 correctly blank, 4 missed, 1 false fill (`Amoxicillin 5oOmg`) (80.0% accuracy, 4.0% false fill rate, 191.36s avg latency).
+- **Key Findings & Fixes**:
+  - **NVIDIA Adapter Compatibility**: Stripped trailing `</think>` assistant prefill messages in `OpenAICompatibleModelProvider.generate` to resolve HTTP 400 Bad Request errors on Mistral hosted endpoints.
+  - **Runner Enhancements (`backend/scripts/compare_4b_vs_beam.py`)**: Added intermediate answer caching (`docs/reports/cache_answer_results.json`), increased vision HTTP timeout to 300s, max tokens to 2048, and rate-limited NVIDIA queries with 1.5s delay to adhere to the <= 40 RPM quota.
+  - **Model vs. Pipeline Failure Separation**:
+    - `Q1` (vague entity-less query) failed across all models due to hybrid retrieval scoring below `RELIABLE_TEXT_THRESHOLD = 0.25`, cleanly falling back to inventory (Pipeline failure).
+    - `Q4` was a model failure on `qwen3-vl:4b` (source mixing with front desk intake fax number), while `beam:cloud` answered with zero source mixing.
+    - `nvidia:mistralai/mistral-large-4-1t-a52b` passed structured table queries (Q5, Q12), negative queries (Q10, Q11), and short factual queries (Q7, Q8, Chain-T3). On open synthesis queries, its verbosity exceeded strict token ceilings (`MAX_TOKENS_SHORT = 150`), triggering validation retries and falling back to safe refusal.
+    - In vision extraction, local `qwen3-vl:4b` significantly outperformed NVIDIA in both accuracy (92% vs 80%) and safety (0.0% vs 4.0% false fill rate) at ~5x faster latency (~40s vs ~191s).
+- **Artifacts Generated**:
+  - `docs/reports/2026-11-05-model-comparison.md` (authoritative Markdown report)
+  - `docs/reports/2026-11-05-model-comparison.json` (authoritative JSON report)
+  - `docs/reports/cache_answer_results.json` (intermediate answer telemetry cache)
+- **Verification**:
+  - `uv run --project backend pre-commit run --all-files`: all hooks passed with exit code 0.
+  - `APP_PROFILE=mock uv --directory backend run pytest -m "not models" -q`: 100% passed (0 failed, 1 skipped) with exit code 0.
+- **Files Modified / Created**:
+  - `backend/app/adapters/models/openai_compatible.py`
+  - `backend/scripts/compare_4b_vs_beam.py`
+  - `docs/reports/2026-11-05-model-comparison.md`
+  - `docs/reports/2026-11-05-model-comparison.json`
+  - `docs/reports/cache_answer_results.json`
+  - `docs/STATUS.md`
+  - `docs/BUILD_LOG.md`

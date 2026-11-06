@@ -146,8 +146,13 @@ class OpenAICompatibleModelProvider(ModelProvider):
         schema: type[BaseModel] | None = None,
         max_tokens: int | None = None,
     ) -> ModelResponse:
+        filtered_messages = [
+            {"role": message.role, "content": message.content}
+            for message in messages
+            if not (message.role == "assistant" and message.content == "</think>")
+        ]
         content, usage, structured = await self._complete(
-            [{"role": message.role, "content": message.content} for message in messages],
+            filtered_messages,
             schema=schema,
             max_tokens=max_tokens,
             role=role,

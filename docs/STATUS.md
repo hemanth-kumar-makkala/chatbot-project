@@ -441,11 +441,13 @@
   - Completed: Review policy with MECE coverage for all 4 page types, Migration 0005 applied to shared database (`0005_readings_table_cites`), database seeding test fixtures decoupled to `tests/fixtures/database_seeding.py`, parser profile matrix routing (`mock` -> `MockDocumentParser`, `office-cpu`/`desktop-gpu`/`home-gpu`/`dev-free-api` -> `DoclingDocumentParser`, `cloud` -> `DoclingDocumentParser` with offline/pinned models enforced), and adapter offline configuration (`EasyOCR` download disabled, model directory set, `HF_HUB_OFFLINE=1`).
 
 ## Next Phase & Task
-- **Completed (Part A):** Table-source selection, CSV/XLSX banner header detection, code-built readable table output, inventory intent routing, strict Q5 grading, and content-hash cloud safety lock.
-- **Completed (Part B implementation):** Per-model token limits for `beam:cloud` and NVIDIA/Inception hosted selectors; OpenAI-compatible NVIDIA/Inception adapter wiring; independent `ANSWER_MODEL` and `VISION_MODEL`; cloud safety checks both selected models. Existing Qwen3-VL 4B limits remain unchanged.
-- **Comparison status:** The requested comparison runner was attempted after the full test suite and pre-commit passed, but the browser/terminal execution limit expired at 420 seconds before output or completed measurements were captured. The existing runner covers only `qwen3-vl:4b` vs `beam:cloud`; it does not yet implement the requested NVIDIA answer/vision matrix.
-- **Root cause / verification:** The `HERMES_SKIP_DOTENV` guard incorrectly disabled runtime dotenv loading and has been removed. The first full-suite failure was instead a stale table test expecting the former `[Sheet: ..., Row: ...]` format after the renderer changed to Markdown. Full suite: 905 passed, 1 skipped, 0 failed, 0 errors, exit 0. Pre-commit `--all-files`: all hooks passed.
-- **Next task:** Extend the comparison runner to measure all requested answer/vision selections and persist a complete, real report. The current comparison result is incomplete; no measurements are claimed.
+- **Completed (Full Model Matrix Benchmark)**:
+  - Extended and completed `backend/scripts/compare_4b_vs_beam.py` covering the full matrix:
+    - **Answer Models**: `qwen3-vl:4b` (13/15, 86.67%), `beam:cloud` (14/15, 93.33%), `nvidia:mistralai/mistral-large-4-1t-a52b` (7/15, 46.67%).
+    - **Vision Models**: `qwen3-vl:4b` (20 correct, 3 correctly blank, 2 missed, 0 false fills, 92.0% accuracy, 0.0% false fill rate, 40.18s avg latency); `nvidia:mistralai/mistral-large-4-1t-a52b` (17 correct, 3 correctly blank, 4 missed, 1 false fill, 80.0% accuracy, 4.0% false fill rate, 191.36s avg latency).
+  - Persisted complete benchmark reports: `docs/reports/2026-11-05-model-comparison.md` and `docs/reports/2026-11-05-model-comparison.json`.
+  - Filtered `<think>` prefill messages in `OpenAICompatibleModelProvider` to avoid HTTP 400 Bad Request on Mistral hosted endpoints.
+  - Implemented intermediate progress caching (`docs/reports/cache_answer_results.json`) and per-page timeout hardening (300s) on multimodal vision calls.
 - **Next roadmap phase:** Phase 6 — Cloud staging on GCP; next planned roadmap task is Task 6.1, GCP infrastructure provisioning and BAA compliance check (`docs/phases/PHASE-6.md`).
 - **Test infrastructure note:** `load_dotenv` may load application settings at runtime; tests may use fixtures that load settings and migrate only their isolated throwaway databases. Do not read `.env` manually.
 

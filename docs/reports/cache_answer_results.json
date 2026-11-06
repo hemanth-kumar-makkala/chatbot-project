@@ -1,0 +1,626 @@
+{
+  "qwen3-vl:4b": [
+    {
+      "id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "explain",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 21.95,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+      "answer_mode": "short",
+      "evidence_state": "RESOLVED_CONFLICT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "seconds": 13.89,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+      "answer_mode": "short",
+      "evidence_state": "RESOLVED_CONFLICT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "seconds": 13.47,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "answer": "- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal",
+      "answer_mode": "explain",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 22.62,
+      "correct": false,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q5",
+      "question": "What insurance plans are accepted?",
+      "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "accepted_plans.csv"
+      ],
+      "seconds": 22.33,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "answer": "January 1, 2026",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 10.53,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q7",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "5",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 12.78,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q8",
+      "question": "How recent must clinical consultation notes be when submitting an auth request?",
+      "answer": "within past 30 days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 10.41,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "answer": "Policy 2026-PA-01",
+      "answer_mode": "exact",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 11.05,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q10",
+      "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 10.05,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q11",
+      "question": "What is the discounted parking rate for patients in the medical plaza garage?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 9.7,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q12",
+      "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+      "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "pa_turnaround_times.xlsx"
+      ],
+      "seconds": 17.77,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "5",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 12.88,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "answer": "Complete clinical consultation notes within past 30 days, diagnostic imaging reports and relevant laboratory panels, pro",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 13.12,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T3",
+      "question": "how recent must they be?",
+      "answer": "Complete clinical consultation notes within past 30 days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 15.05,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    }
+  ],
+  "beam:cloud": [
+    {
+      "id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "explain",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 14.98,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "answer": "Front desk intake fax number is 555-0102.\nNote: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n",
+      "answer_mode": "short",
+      "evidence_state": "RESOLVED_CONFLICT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "seconds": 16.48,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "answer": "Routine appointment arrival window is 20 minutes prior to scheduled visit.\nNote: An older version (front_desk_policy_v1.",
+      "answer_mode": "short",
+      "evidence_state": "RESOLVED_CONFLICT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf"
+      ],
+      "seconds": 18.88,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "answer": "- All participating providers must submit prior authorization requests through the provider portal or via secure electro",
+      "answer_mode": "explain",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 34.08,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q5",
+      "question": "What insurance plans are accepted?",
+      "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "accepted_plans.csv"
+      ],
+      "seconds": 25.86,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "answer": "January 1, 2026",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 14.66,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q7",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "5 business days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 19.62,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q8",
+      "question": "How recent must clinical consultation notes be when submitting an auth request?",
+      "answer": "within past 30 days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 17.38,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "answer": "2026-PA-01",
+      "answer_mode": "exact",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 17.31,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q10",
+      "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 14.7,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q11",
+      "question": "What is the discounted parking rate for patients in the medical plaza garage?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 11.08,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q12",
+      "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+      "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "pa_turnaround_times.xlsx"
+      ],
+      "seconds": 23.11,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "5",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 16.88,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "answer": "Complete clinical consultation notes within the past 30 days; diagnostic imaging reports and relevant laboratory panels;",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 19.8,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T3",
+      "question": "how recent must they be?",
+      "answer": "Clinical consultation notes must be within the past 30 days; the evidence does not specify a recency requirement for dia",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 22.28,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    }
+  ],
+  "nvidia:mistralai/mistral-large-4-1t-a52b": [
+    {
+      "id": "Q1",
+      "question": "HORIZON VALLEY HEALTH CLINIC data please",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "explain",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 43.44,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q2",
+      "question": "What is the front desk intake fax number?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [],
+      "seconds": 315.99,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q3",
+      "question": "How early must patients arrive for a routine visit?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf",
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 190.58,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q4",
+      "question": "Summarize the outpatient prior authorization guide",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "explain",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "front_desk_policy_v1.pdf",
+        "front_desk_policy_v2.pdf",
+        "fee_schedule.pdf",
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 303.73,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q5",
+      "question": "What insurance plans are accepted?",
+      "answer": "| Pre-Auth | Plan Code | Deductible | Payer Name | Network Tier | Standard Copay |\n| --- | --- | --- | --- | --- | --- |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "accepted_plans.csv"
+      ],
+      "seconds": 164.94,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q6",
+      "question": "What is the effective date for our outpatient prior authorization policy?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [],
+      "seconds": 230.03,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q7",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "5 business days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 183.42,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q8",
+      "question": "How recent must clinical consultation notes be when submitting an auth request?",
+      "answer": "within the past 30 days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 113.86,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Q9",
+      "question": "What is the policy reference code for outpatient prior authorization?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "exact",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [],
+      "seconds": 159.67,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q10",
+      "question": "What is the copayment amount for acupuncture therapy sessions at Horizon Valley?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 53.11,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q11",
+      "question": "What is the discounted parking rate for patients in the medical plaza garage?",
+      "answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- accepted_plan",
+      "answer_mode": "short",
+      "evidence_state": "WEAK",
+      "sources": [],
+      "seconds": 41.92,
+      "correct": true,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Q12",
+      "question": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+      "answer": "| Urgency | Payer Name | Standard SLA | Liaison Contact | Service Category |\n| --- | --- | --- | --- | --- |\n| Routine |",
+      "answer_mode": "table",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "pa_turnaround_times.xlsx"
+      ],
+      "seconds": 224.14,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T1",
+      "question": "How many business days in advance must outpatient surgery prior auths be submitted?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "front_desk_policy_v2.pdf",
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 278.55,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T2",
+      "question": "and what documents are required with it?",
+      "answer": "I couldn't confirm that from the documents.",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "front_desk_policy_v2.pdf",
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 320.38,
+      "correct": false,
+      "is_refusal": true,
+      "json_error": false
+    },
+    {
+      "id": "Chain-T3",
+      "question": "how recent must they be?",
+      "answer": "within past 30 days",
+      "answer_mode": "short",
+      "evidence_state": "RELIABLE_TEXT",
+      "sources": [
+        "prior_auth_guide.pdf"
+      ],
+      "seconds": 415.92,
+      "correct": true,
+      "is_refusal": false,
+      "json_error": false
+    }
+  ]
+}

@@ -1,49 +1,288 @@
-# Model Comparison — November 5, 2026
+# Model Comparison Report — November 5, 2026
 
-## Run status: requested matrix incomplete
+## 1. Executive Summary
 
-The requested comparison was started only after the full `not models` suite and all pre-commit hooks passed. The terminal execution limit expired at 420 seconds before the runner returned output or produced a completed comparison artifact. No result rows, timing values, accuracy scores, refusal counts, malformed-JSON counts, or extraction measurements from this attempt are available; none are inferred from older comparison artifacts.
+This report provides an authoritative side-by-side evaluation of local, cloud, and hosted models across both answer-generation and multimodal vision extraction roles under identical test harnesses and throwaway PostgreSQL databases.
 
-The existing `backend/scripts/compare_4b_vs_beam.py` hard-codes two answer-model runs (`qwen3-vl:4b` and `beam:cloud`). It does not implement the requested NVIDIA answer-model run or independent vision-model matrix. Requested selectors: answer models `qwen3-vl:4b`, `beam:cloud`, and NVIDIA `mistralai/mistral-large-4-1t-a52b`; vision models `qwen3-vl:4b` and NVIDIA `mistralai/mistral-large-4-1t-a52b`.
+- **Answer Models Evaluated**:
+  1. `qwen3-vl:4b` (Local 4B multimodal model)
+  2. `beam:cloud` (Ollama Cloud hosted model)
+  3. `nvidia:mistralai/mistral-large-4-1t-a52b` (NVIDIA Cloud OpenAI-compatible hosted model)
+- **Vision Models Evaluated**:
+  1. `qwen3-vl:4b` (Local 4B vision)
+  2. `nvidia:mistralai/mistral-large-4-1t-a52b` (NVIDIA Cloud vision)
+- **Safety Lock**: Enforced SHA-256 validation verifying that all active documents come from `evals/golden/docs/`.
+- **Rate Limiting**: NVIDIA requests were sequenced one question at a time with a 1.5s delay (respecting the <= 40 RPM quota).
 
-## Root cause and repair
+## 2. Per-Model Summary
 
-The test-suite regression was **not caused by dotenv settings being unavailable**: `HERMES_SKIP_DOTENV` was not set in the requested test command, and the run reached 80% before its first failure. The first failure was `tests/unit/test_table_and_conflict_validation.py::test_render_table_answer_compares_every_cell_to_stored_row_byte_for_byte`. The test still parsed the old `[Sheet: ..., Row: ...]` text representation, while `node_generate` had been changed to produce a Markdown table assembled from stored cells. Updated the regression test to assert the Markdown header, separator, full rows, and byte-for-byte cell equality.
+| Model | Evaluated | Correct | Accuracy (%) | Refusals | Invalid JSON | Avg Latency (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| `qwen3-vl:4b` | 15 | 13 | 86.67% | 3 | 0 | 14.51s |
+| `beam:cloud` | 15 | 14 | 93.33% | 3 | 0 | 19.14s |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | 15 | 7 | 46.67% | 10 | 0 | 202.65s |
 
-Separately, `HERMES_SKIP_DOTENV` in `backend/app/db/env_utils.py` was an unnecessary guard introduced from the earlier misreading of the `.env` rule. Removed the guard and replaced its guard-specific test with a synthetic explicit-file test proving normal dotenv loading preserves existing environment values. No `.env` file was manually opened, printed, or read.
+## 3. Answer Comparison Grid
 
-## Implemented work and verification
+| # | Question | qwen3-vl:4b (Correct / Time) | beam:cloud (Correct / Time) | NVIDIA mistral-large (Correct / Time) | Category |
+|---|---|:---:|:---:|:---:|:---:|
+| Q1 | HORIZON VALLEY HEALTH CLINIC data please | No (21.95s) | No (14.98s) | No (43.44s) | **ALL-FAIL** |
+| Q2 | What is the front desk intake fax number? | Yes (13.89s) | Yes (16.48s) | No (315.99s) | **SOME-FAIL** |
+| Q3 | How early must patients arrive for a routine visit? | Yes (13.47s) | Yes (18.88s) | No (190.58s) | **SOME-FAIL** |
+| Q4 | Summarize the outpatient prior authorization guide | No (22.62s) | Yes (34.08s) | No (303.73s) | **SOME-FAIL** |
+| Q5 | What insurance plans are accepted? | Yes (22.33s) | Yes (25.86s) | Yes (164.94s) | **ALL-PASS** |
+| Q6 | What is the effective date for our outpatient prior authorization policy? | Yes (10.53s) | Yes (14.66s) | No (230.03s) | **SOME-FAIL** |
+| Q7 | How many business days in advance must outpatient surgery prior auths be submitted? | Yes (12.78s) | Yes (19.62s) | Yes (183.42s) | **ALL-PASS** |
+| Q8 | How recent must clinical consultation notes be when submitting an auth request? | Yes (10.41s) | Yes (17.38s) | Yes (113.86s) | **ALL-PASS** |
+| Q9 | What is the policy reference code for outpatient prior authorization? | Yes (11.05s) | Yes (17.31s) | No (159.67s) | **SOME-FAIL** |
+| Q10 | What is the copayment amount for acupuncture therapy sessions at Horizon Valley? | Yes (10.05s) | Yes (14.7s) | Yes (53.11s) | **ALL-PASS** |
+| Q11 | What is the discounted parking rate for patients in the medical plaza garage? | Yes (9.7s) | Yes (11.08s) | Yes (41.92s) | **ALL-PASS** |
+| Q12 | What is the standard SLA for Apex Health Insurance diagnostic imaging? | Yes (17.77s) | Yes (23.11s) | Yes (224.14s) | **ALL-PASS** |
+| Chain-T1 | How many business days in advance must outpatient surgery prior auths be submitted? | Yes (12.88s) | Yes (16.88s) | No (278.55s) | **SOME-FAIL** |
+| Chain-T2 | and what documents are required with it? | Yes (13.12s) | Yes (19.8s) | No (320.38s) | **SOME-FAIL** |
+| Chain-T3 | how recent must they be? | Yes (15.05s) | Yes (22.28s) | Yes (415.92s) | **ALL-PASS** |
 
-- Table row selection retains only the best-matching source document; CSV and XLSX header detection skips title/banner rows; table answers are rendered as Markdown from stored cells and real headers.
-- Inventory routing is limited to explicit questions about the assistant's own document inventory; the comparison grader rejects unexpected table values.
-- Cloud safety compares SHA-256 hashes of original stored bytes with local synthetic golden files and checks both answer and vision model selections.
-- Added independent `ANSWER_MODEL` and `VISION_MODEL` settings, an OpenAI-compatible NVIDIA/Inception adapter, and provider routing. Hosted model selectors require their endpoint and API key settings or raise `ConfigurationError`.
-- Added per-model/per-role output token limits for `beam:cloud`, the requested NVIDIA Mistral model, and hosted-provider fallbacks in the desktop and cloud profiles. Existing Qwen3-VL 4B limits remain unchanged.
-- Focused migration-free unit tests covering table, inventory, grading, safety, model routing/settings, token limits, graph, and validation completed with exit code 0. All pre-commit hooks passed on `--all-files`.
-- `pytest -m "not models"` with the requested timeout: **905 passed, 1 skipped, 0 failed, 0 errors**, exit 0. The first `-x` run reached 80% and identified the stale table-format assertion; no setup-error cascade or hang reproduced.
-- Final targeted tests covering changed tests: 22 passed.
-- `uv run --project backend pre-commit run --all-files`: all configured hooks passed.
-- Comparison runner attempted after both gates passed; terminal tool timed out at 420 seconds before output/measurements were captured.
+## 4. Failure Breakdown & Traces
 
-## Requested answer-model comparison grid
+### 4.1 ALL-FAIL (All Models Failed)
 
-No current-run measurements were captured. `—` means unavailable, not zero. Historical data in `docs/comparison_4b_vs_beam.json` was not treated as a result of this attempt.
+Total ALL-FAIL Questions: **1**
 
-| Answer model | Correct / evaluated | Refusals | Malformed JSON | Average seconds | ALL-FAIL / SOME-FAIL / ALL-PASS | Traces / exact answer grid |
-|---|---:|---:|---:|---:|---|---|
-| `qwen3-vl:4b` | — | — | — | — | — | — |
-| `beam:cloud` | — | — | — | — | — | — |
-| NVIDIA `mistralai/mistral-large-4-1t-a52b` | — | — | — | — | — | — |
+#### `Q1`: HORIZON VALLEY HEALTH CLINIC data please
+- **Classification**: PIPELINE failure (deterministic guard or threshold failure common to all models).
+- **qwen3-vl:4b Trace**: State `WEAK`, Sources: `[]`
+  *Answer*: `I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan...`
+- **beam:cloud Trace**: State `WEAK`, Sources: `[]`
+  *Answer*: `I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan...`
+- **NVIDIA mistral Trace**: State `WEAK`, Sources: `[]`
+  *Answer*: `I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan...`
+- **Root Cause Analysis**:
+  Underspecified query without concrete entity details scores below `RELIABLE_TEXT_THRESHOLD = 0.25` on hybrid retrieval, cleanly falling back to inventory.
 
-## Requested vision/extraction comparison grid
+### 4.2 SOME-FAIL (Discrepant Failures)
 
-No vision-model grid or fax extraction completed in the captured run.
+Total SOME-FAIL Questions: **7**
 
-| Vision model | Extraction outcome / fields | False fills | Refusals / invalid JSON | Average seconds | Trace |
-|---|---|---:|---|---:|---|
-| `qwen3-vl:4b` | — | — | — | — | — |
-| NVIDIA `mistralai/mistral-large-4-1t-a52b` | — | — | — | — | — |
+#### `Q2`: What is the front desk intake fax number?
+- **4B**: PASS (13.89s) | **beam**: PASS (16.48s) | **NVIDIA**: FAIL (315.99s)
+- **4B Answer**: `Front desk intake fax number is 555-0102.
+Note: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n...`
+- **Beam Answer**: `Front desk intake fax number is 555-0102.
+Note: An older version (front_desk_policy_v1.pdf) stated 555-0101, while the n...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
 
-## Failed-answer text
+#### `Q3`: How early must patients arrive for a routine visit?
+- **4B**: PASS (13.47s) | **beam**: PASS (18.88s) | **NVIDIA**: FAIL (190.58s)
+- **4B Answer**: `Routine appointment arrival window is 20 minutes prior to scheduled visit.
+Note: An older version (front_desk_policy_v1....`
+- **Beam Answer**: `Routine appointment arrival window is 20 minutes prior to scheduled visit.
+Note: An older version (front_desk_policy_v1....`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
 
-No newly failed answer text was captured from the timed-out run. This is not evidence that all answers passed; the comparison report is incomplete.
+#### `Q4`: Summarize the outpatient prior authorization guide
+- **4B**: FAIL (22.62s) | **beam**: PASS (34.08s) | **NVIDIA**: FAIL (303.73s)
+- **4B Answer**: `- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal...`
+- **Beam Answer**: `- All participating providers must submit prior authorization requests through the provider portal or via secure electro...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
+
+#### `Q6`: What is the effective date for our outpatient prior authorization policy?
+- **4B**: PASS (10.53s) | **beam**: PASS (14.66s) | **NVIDIA**: FAIL (230.03s)
+- **4B Answer**: `January 1, 2026...`
+- **Beam Answer**: `January 1, 2026...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
+
+#### `Q9`: What is the policy reference code for outpatient prior authorization?
+- **4B**: PASS (11.05s) | **beam**: PASS (17.31s) | **NVIDIA**: FAIL (159.67s)
+- **4B Answer**: `Policy 2026-PA-01...`
+- **Beam Answer**: `2026-PA-01...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
+
+#### `Chain-T1`: How many business days in advance must outpatient surgery prior auths be submitted?
+- **4B**: PASS (12.88s) | **beam**: PASS (16.88s) | **NVIDIA**: FAIL (278.55s)
+- **4B Answer**: `5...`
+- **Beam Answer**: `5...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
+
+#### `Chain-T2`: and what documents are required with it?
+- **4B**: PASS (13.12s) | **beam**: PASS (19.8s) | **NVIDIA**: FAIL (320.38s)
+- **4B Answer**: `Complete clinical consultation notes within past 30 days, diagnostic imaging reports and relevant laboratory panels, pro...`
+- **Beam Answer**: `Complete clinical consultation notes within the past 30 days; diagnostic imaging reports and relevant laboratory panels;...`
+- **NVIDIA Answer**: `I couldn't confirm that from the documents....`
+
+### 4.3 ALL-PASS (All Models Passed)
+
+Total ALL-PASS Questions: **7**
+
+- `Q5`: What insurance plans are accepted? (4B: 22.33s, beam: 25.86s, NVIDIA: 164.94s)
+- `Q7`: How many business days in advance must outpatient surgery prior auths be submitted? (4B: 12.78s, beam: 19.62s, NVIDIA: 183.42s)
+- `Q8`: How recent must clinical consultation notes be when submitting an auth request? (4B: 10.41s, beam: 17.38s, NVIDIA: 113.86s)
+- `Q10`: What is the copayment amount for acupuncture therapy sessions at Horizon Valley? (4B: 10.05s, beam: 14.7s, NVIDIA: 53.11s)
+- `Q11`: What is the discounted parking rate for patients in the medical plaza garage? (4B: 9.7s, beam: 11.08s, NVIDIA: 41.92s)
+- `Q12`: What is the standard SLA for Apex Health Insurance diagnostic imaging? (4B: 17.77s, beam: 23.11s, NVIDIA: 224.14s)
+- `Chain-T3`: how recent must they be? (4B: 15.05s, beam: 22.28s, NVIDIA: 415.92s)
+
+## 5. Vision / Extraction Comparison Grid
+
+### 5.1 Vision Benchmark Summary
+
+| Vision Model | Correct | Correctly Blank | Missed | False Fill | Total Fields | Accuracy (%) | False Fill Rate (%) | Avg Latency (s) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `qwen3-vl:4b` | 20 | 3 | 2 | 0 | 25 | 92.0% | 0.0% | 40.18s |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | 17 | 3 | 4 | 1 | 25 | 80.0% | 4.0% | 191.36s |
+
+### 5.2 Detailed Field-by-Field Vision Grid
+
+| Model | Document | Field Name | Expected State | Expected Value | Extracted State | Extracted Value | Outcome |
+|---|---|---|---|---|---|---|:---:|
+| `qwen3-vl:4b` | invalid_npi_fax.pdf | patient_name | FILLED_HIGH | Casey Bennett | FILLED_HIGH | Casey Bennett | **correct** |
+| `qwen3-vl:4b` | invalid_npi_fax.pdf | authorized_medication | FILLED_HIGH | Amoxicillin 500mg | CONFLICTING | null | **missed** |
+| `qwen3-vl:4b` | invalid_npi_fax.pdf | authorization_date | FILLED_HIGH | 2026-02-14 | FILLED_HIGH | 2026-02-14 | **correct** |
+| `qwen3-vl:4b` | invalid_npi_fax.pdf | chart_number | FILLED_HIGH | MRN-1102-K | FILLED_HIGH | MRN-1102-K | **correct** |
+| `qwen3-vl:4b` | invalid_npi_fax.pdf | prescriber_npi | INVALID | 1982736451 | INVALID | 1982736451 | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | patient_name | FILLED_HIGH | Alex Morgan | FILLED_HIGH | Alex Morgan | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | attending_physician | FILLED_HIGH | Dr. Evelyn Reed | FILLED_MEDIUM | Dr. Evelyn Reed | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | prescription_dosage | FILLED_HIGH | Take 1 capsule by mouth three times daily for 10 days. | FILLED_HIGH | Take 1 capsule by mouth three times daily for 10 days. | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | chart_number | FILLED_HIGH | MRN-4412-A | FILLED_HIGH | MRN-4412-A | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | authorized_medication | FILLED_HIGH | Amoxicillin 500mg | CONFLICTING | null | **missed** |
+| `qwen3-vl:4b` | skewed_fax.pdf | authorization_date | FILLED_MEDIUM | 2026-02-14 | FILLED_HIGH | 2026-02-14 | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | refill_count | FILLED_MEDIUM | 0 | FILLED_HIGH | 0 | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | clinic_phone | FILLED_MEDIUM | 555-0145 | FILLED_HIGH | 555-0145 | **correct** |
+| `qwen3-vl:4b` | skewed_fax.pdf | prescriber_signature | UNREADABLE | null | NOT_PRESENT | null | **correctly_blank** |
+| `qwen3-vl:4b` | skewed_fax.pdf | prescriber_npi | NOT_PRESENT | null | NOT_PRESENT | null | **correctly_blank** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | patient_name | FILLED_HIGH | Jordan Taylor | FILLED_HIGH | Jordan Taylor | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | procedure_ordered | FILLED_HIGH | MRI lumbar spine | FILLED_HIGH | MRI lumbar spine | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | appointment_date | FILLED_HIGH | 2026-03-01 | FILLED_HIGH | 2026-03-01 | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | facility_location | FILLED_MEDIUM | Imaging Suite B | FILLED_HIGH | Imaging Suite B | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | referring_phone | FILLED_MEDIUM | 555-0170 | FILLED_HIGH | 555-0170 | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | clinical_justification | FILLED_HIGH | chronic lower back pain with radiculopathy | FILLED_MEDIUM | chronic lower back pain with radiculopathy | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | pain_scale_score | FILLED_HIGH | 7/10 | FILLED_HIGH | 7/10 | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | ordering_physician | FILLED_MEDIUM | Dr. Evelyn Reed | FILLED_MEDIUM | Dr. Evelyn Reed | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | prescriber_signature | FILLED_MEDIUM | Dr. Evelyn Reed | FILLED_MEDIUM | Dr. Evelyn Reed | **correct** |
+| `qwen3-vl:4b` | faint_fax_2page.pdf | prescriber_npi | NOT_PRESENT | null | NOT_PRESENT | null | **correctly_blank** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | invalid_npi_fax.pdf | patient_name | FILLED_HIGH | Casey Bennett | FILLED_HIGH | Casey Bennett | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | invalid_npi_fax.pdf | authorized_medication | FILLED_HIGH | Amoxicillin 500mg | CONFLICTING | null | **missed** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | invalid_npi_fax.pdf | authorization_date | FILLED_HIGH | 2026-02-14 | FILLED_HIGH | 2026-02-14 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | invalid_npi_fax.pdf | chart_number | FILLED_HIGH | MRN-1102-K | FILLED_HIGH | MRN-1102-K | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | invalid_npi_fax.pdf | prescriber_npi | INVALID | 1982736451 | INVALID | 1982736451 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | patient_name | FILLED_HIGH | Alex Morgan | FILLED_MEDIUM | Alex Morgan | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | attending_physician | FILLED_HIGH | Dr. Evelyn Reed | FILLED_MEDIUM | Dr. Evelyn Reed | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | prescription_dosage | FILLED_HIGH | Take 1 capsule by mouth three times daily for 10 days. | FILLED_MEDIUM | Take 1 capsule by mouth three times daily for 10 days. | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | chart_number | FILLED_HIGH | MRN-4412-A | FILLED_MEDIUM | MRN-4412-A | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | authorized_medication | FILLED_HIGH | Amoxicillin 500mg | FILLED_MEDIUM | Amoxicillin 5oOmg | **false_fill** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | authorization_date | FILLED_MEDIUM | 2026-02-14 | FILLED_MEDIUM | 2026-02-14 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | refill_count | FILLED_MEDIUM | 0 | FILLED_MEDIUM | 0 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | clinic_phone | FILLED_MEDIUM | 555-0145 | FILLED_MEDIUM | 555-0145 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | prescriber_signature | UNREADABLE | null | NOT_PRESENT | null | **correctly_blank** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | skewed_fax.pdf | prescriber_npi | NOT_PRESENT | null | NOT_PRESENT | null | **correctly_blank** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | patient_name | FILLED_HIGH | Jordan Taylor | FILLED_MEDIUM | Jordan Taylor | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | procedure_ordered | FILLED_HIGH | MRI lumbar spine | FILLED_MEDIUM | MRI lumbar spine | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | appointment_date | FILLED_HIGH | 2026-03-01 | FILLED_MEDIUM | 2026-03-01 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | facility_location | FILLED_MEDIUM | Imaging Suite B | FILLED_MEDIUM | Imaging Suite B | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | referring_phone | FILLED_MEDIUM | 555-0170 | FILLED_MEDIUM | 555-0170 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | clinical_justification | FILLED_HIGH | chronic lower back pain with radiculopathy | NOT_PRESENT | null | **missed** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | pain_scale_score | FILLED_HIGH | 7/10 | FILLED_MEDIUM | 7/10 | **correct** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | ordering_physician | FILLED_MEDIUM | Dr. Evelyn Reed | NOT_PRESENT | null | **missed** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | prescriber_signature | FILLED_MEDIUM | Dr. Evelyn Reed | NOT_PRESENT | null | **missed** |
+| `nvidia:mistralai/mistral-large-4-1t-a52b` | faint_fax_2page.pdf | prescriber_npi | NOT_PRESENT | null | NOT_PRESENT | null | **correctly_blank** |
+
+## 6. Exact Text of Failed Answers
+
+### 1. [Q1] Model: `qwen3-vl:4b`
+**Question**: HORIZON VALLEY HEALTH CLINIC data please
+**Diagnostic Trace**: State: WEAK, Sources: []
+
+```text
+I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan
+```
+
+### 2. [Q1] Model: `beam:cloud`
+**Question**: HORIZON VALLEY HEALTH CLINIC data please
+**Diagnostic Trace**: State: WEAK, Sources: []
+
+```text
+I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan
+```
+
+### 3. [Q1] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: HORIZON VALLEY HEALTH CLINIC data please
+**Diagnostic Trace**: State: WEAK, Sources: []
+
+```text
+I couldn't find that in this assistant's documents. I do have information on:
+- pa_turnaround_times.xlsx
+- accepted_plan
+```
+
+### 4. [Q2] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: What is the front desk intake fax number?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: []
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 5. [Q3] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: How early must patients arrive for a routine visit?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 6. [Q4] Model: `qwen3-vl:4b`
+**Question**: Summarize the outpatient prior authorization guide
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'prior_auth_guide.pdf']
+
+```text
+- The outpatient prior authorization submission guide requires providers to submit requests through the provider portal
+```
+
+### 7. [Q4] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: Summarize the outpatient prior authorization guide
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: ['front_desk_policy_v1.pdf', 'front_desk_policy_v2.pdf', 'fee_schedule.pdf', 'prior_auth_guide.pdf']
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 8. [Q6] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: What is the effective date for our outpatient prior authorization policy?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: []
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 9. [Q9] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: What is the policy reference code for outpatient prior authorization?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: []
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 10. [Chain-T1] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: How many business days in advance must outpatient surgery prior auths be submitted?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: ['front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']
+
+```text
+I couldn't confirm that from the documents.
+```
+
+### 11. [Chain-T2] Model: `nvidia:mistralai/mistral-large-4-1t-a52b`
+**Question**: and what documents are required with it?
+**Diagnostic Trace**: State: RELIABLE_TEXT, Sources: ['front_desk_policy_v2.pdf', 'prior_auth_guide.pdf']
+
+```text
+I couldn't confirm that from the documents.
+```
