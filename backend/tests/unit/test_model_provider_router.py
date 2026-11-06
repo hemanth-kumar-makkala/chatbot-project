@@ -16,16 +16,20 @@ class StubProvider(ModelProvider):
         self.roles: list[ModelRole] = []
 
     async def generate(self, role, messages, schema=None, max_tokens=None) -> ModelResponse:
+        _ = (messages, schema, max_tokens)
         self.roles.append(role)
         return ModelResponse(content=self.model_name, model_id=self.model_name, model_version="v1")
 
     async def transcribe_page(self, role, image: bytes) -> PageReading:
+        _ = (role, image)
         return PageReading(reading=self.model_name, model_id=self.model_name, model_version="v1")
 
     async def read_page(self, role, image: bytes, question: str) -> PageReading:
+        _ = (role, image, question)
         return PageReading(reading=self.model_name, model_id=self.model_name, model_version="v1")
 
     async def extract_fields(self, role, image: bytes, schema: type[BaseModel]) -> ExtractedFields:
+        _ = (role, image, schema)
         return ExtractedFields(fields={}, model_id=self.model_name, model_version="v1")
 
 

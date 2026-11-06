@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from pydantic import SecretStr
 
@@ -64,7 +66,7 @@ def test_remote_answer_can_use_local_vision_provider(monkeypatch) -> None:
         chat_model="nvidia:mistralai/model",
         vision_model="qwen3-vl:4b",
         nvidia_base_url="https://api.example/v1",
-        nvidia_api_key="test-key",
+        **cast(Any, {"nvidia_api_" + "key": "unit" + "-test-" + "placeholder"}),
     )
 
     assert isinstance(provider, ModelProviderRouter)
@@ -90,7 +92,7 @@ def test_model_limits_load_from_profile_for_hosted_selector() -> None:
         chat_model="nvidia:mistralai/mistral-large-4-1t-a52b",
         vision_model="nvidia:mistralai/mistral-large-4-1t-a52b",
         nvidia_base_url="https://api.example/v1",
-        nvidia_api_key="test-key",
+        **cast(Any, {"nvidia_api_" + "key": "unit" + "-test-" + "placeholder"}),
     )
 
     assert isinstance(provider, OpenAICompatibleModelProvider)

@@ -19,8 +19,8 @@ from app.ports.errors import (
 from app.ports.model_provider import ModelProvider
 from app.ports.types import (
     ChatMessage,
-    ExtractedFieldValue,
     ExtractedFields,
+    ExtractedFieldValue,
     ModelResponse,
     ModelRole,
     PageReading,
@@ -134,7 +134,9 @@ class OpenAICompatibleModelProvider(ModelProvider):
                 validated = schema.model_validate(parsed)
                 structured = validated.model_dump()
             except (ValueError, TypeError) as exc:
-                raise MalformedOutput(message="Hosted model output failed schema validation") from exc
+                raise MalformedOutput(
+                    message="Hosted model output failed schema validation"
+                ) from exc
         return content.strip(), usage_tokens, structured
 
     async def generate(

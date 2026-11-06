@@ -1,6 +1,6 @@
 {
-  "run_status": "not_executed",
-  "reason": "The comparison script loads .env and performs Alembic upgrades on a throwaway database. Both are explicitly prohibited for this task.",
+  "run_status": "incomplete_terminal_timeout",
+  "reason": "The comparison runner was attempted after tests and pre-commit passed, but the terminal execution limit expired at 420 seconds before output or completed measurements were captured. Runtime dotenv loading and migrations on the runner's own throwaway database were allowed; .env was not manually read.",
   "part_a": {
     "status": "implemented",
     "focused_tests": {
@@ -36,9 +36,9 @@
   },
   "verification": {
     "focused_migration_free_unit_set": "passed (exit code 0)",
-    "full_not_models_suite": "not run: integration tests execute prohibited Alembic upgrade/downgrade operations",
-    "expanded_unit_attempt": "timed out at 420 seconds; no test process remained",
-    "api_auth_unit_test": "fixture omits required session retention; after temporary diagnostic setting, local PostgreSQL connection failed without a password; fixture edit reverted and no .env/credentials accessed",
-    "pre_commit_all_files": "passed; all hooks"
+    "full_not_models_suite": "905 passed, 1 skipped, 0 failed, 0 errors; exit 0",
+    "first_failure_root_cause": "Stale table-rendering test parsed the old [Sheet: ..., Row: ...] output after implementation switched to a Markdown table. HERMES_SKIP_DOTENV guard was unrelated and removed.",
+    "comparison_attempt": "terminal timed out at 420 seconds; no completed output or measurements captured",
+    "pre_commit_all_files": "passed; all configured hooks"
   }
 }

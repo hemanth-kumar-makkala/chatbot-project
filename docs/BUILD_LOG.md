@@ -3145,3 +3145,19 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `HERMES_SKIP_DOTENV=1 uv run --project backend pre-commit run --all-files`: all hooks passed.
   - Full `pytest -m "not models"` suite was not run to preserve the explicit no-Alembic rule. A broader exploratory unit invocation timed out at 420 seconds. An API-auth test fixture omits required session retention; after temporarily supplying that value for diagnosis, the test attempted local PostgreSQL and failed without a password. The temporary fixture edit was reverted. No `.env` access or credentials were used.
 - **Remaining work**: Run the requested grids only after a compliant comparison path avoids `.env` access and Alembic and the model placeholders/credentials are supplied.
+
+---
+
+## 2026-11-06 — Regression Repair, Full Suite, and Comparison Attempt
+
+- **Root cause**:
+  - The first full-suite failure was `tests/unit/test_table_and_conflict_validation.py::test_render_table_answer_compares_every_cell_to_stored_row_byte_for_byte`; it expected legacy `[Sheet: ..., Row: ...]` text even though the current table renderer emits Markdown assembled from stored cell values.
+  - The `HERMES_SKIP_DOTENV` guard in `backend/app/db/env_utils.py` was unrelated to the failure and had been introduced due to a misreading of the `.env` rule. Removed the guard and replaced its guard-specific test with synthetic explicit-path coverage for normal loading and environment precedence.
+- **Fix**: Updated table regression assertions to check Markdown header/separator/data rows and exact stored-cell equality. No `.env` file was manually accessed.
+- **Verification**:
+  - First full-suite run with `-x` reached 80% and stopped at the stale table assertion; no setup-error cascade reproduced.
+  - Targeted dotenv/table tests: 10 passed; final changed-test selection: 22 passed.
+  - `timeout 1200 env APP_PROFILE=mock uv --directory backend run python -m pytest -m "not models" -q -rA`: 905 passed, 1 skipped, 0 failed, 0 errors; exit 0.
+  - `uv run --project backend pre-commit run --all-files`: all configured hooks passed.
+  - Comparison runner was attempted after both gates passed. The terminal tool timed out at 420 seconds before completed output or measurements were captured. The existing runner hard-codes the Qwen/Beam answer comparison and does not yet execute the requested NVIDIA/vision matrix; the report records no inferred measurements.
+- **Files changed**: `backend/app/db/env_utils.py`; `backend/tests/unit/test_env_utils.py`; `backend/tests/unit/test_table_and_conflict_validation.py`; `backend/app/adapters/models/openai_compatible.py`; `backend/tests/unit/test_openai_compatible_provider.py`; `backend/tests/unit/test_model_settings.py`; `backend/tests/unit/test_model_provider_router.py`; `docs/STATUS.md`; `docs/reports/2026-11-05-model-comparison.md`; `docs/reports/2026-11-05-model-comparison.json`; `docs/BUILD_LOG.md`.

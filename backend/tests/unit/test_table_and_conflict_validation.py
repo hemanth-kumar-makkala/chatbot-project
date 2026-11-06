@@ -168,7 +168,6 @@ async def test_table_answer_exact_stored_cells_accepted() -> None:
 @pytest.mark.asyncio
 async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_byte() -> None:
     """Table answer must be built only by code from stored cells and match byte for byte."""
-    import re
 
     ctx = _make_context()
     stored_rows = [
@@ -236,17 +235,16 @@ async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_by
     assert res["status"] == "in_progress"
 
     rendered_answer = ctx.response_text
-    row_blocks = re.findall(r"\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*([^;]+)", rendered_answer)
-    assert len(row_blocks) == len(stored_rows), "All rows must be rendered"
+    expected_rows = ["| " + " | ".join(row.values()) + " |" for row in stored_rows]
+    rendered_lines = rendered_answer.splitlines()
+    assert rendered_lines[0] == "| " + " | ".join(stored_rows[0]) + " |"
+    assert rendered_lines[1] == "| " + " | ".join("---" for _ in stored_rows[0]) + " |"
+    assert rendered_lines[2:] == expected_rows
 
-    for _, row_idx_str, row_content in row_blocks:
-        r_idx = int(row_idx_str)
-        stored_cells = stored_rows[r_idx - 1]
-        for pair in row_content.split(", "):
-            col_name, col_val = pair.split(": ", 1)
-            stored_val = stored_cells[col_name.strip()]
-            # Byte for byte exact comparison
-            assert col_val.strip().encode("utf-8") == stored_val.encode("utf-8")
+    # Every rendered cell is checked byte for byte against the stored row.
+    for rendered_row, stored_row in zip(rendered_lines[2:], stored_rows, strict=True):
+        rendered_cells = rendered_row.strip("| ").split(" | ")
+        assert rendered_cells == list(stored_row.values())
 
     # Invariant: validation passes
     val_res = await node_validate(state, _make_runtime(ctx))

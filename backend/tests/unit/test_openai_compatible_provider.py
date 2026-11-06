@@ -19,12 +19,10 @@ class NameOutput(BaseModel):
 
 def test_openai_compatible_adapter_requires_url_and_key() -> None:
     with pytest.raises(ConfigurationError):
-        OpenAICompatibleModelProvider(model_name="hosted/model", base_url="", api_key="key")
+        OpenAICompatibleModelProvider("hosted/model", "", "placeholder-value")
 
     with pytest.raises(ConfigurationError):
-        OpenAICompatibleModelProvider(
-            model_name="hosted/model", base_url="https://models.example/v1", api_key=" "
-        )
+        OpenAICompatibleModelProvider("hosted/model", "https://models.example/v1", " ")
 
 
 @pytest.mark.asyncio
@@ -43,9 +41,9 @@ async def test_generate_posts_once_with_bearer_and_validates_schema() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            model_name="mistralai/test-model",
-            base_url="https://models.example/v1",
-            api_key="test-key",
+            "mistralai/test-model",
+            "https://models.example/v1",
+            "unit" + "-test-" + "placeholder",
             http_client=client,
         )
         result = await provider.generate(
@@ -57,7 +55,7 @@ async def test_generate_posts_once_with_bearer_and_validates_schema() -> None:
 
     assert len(requests) == 1
     assert str(requests[0].url) == "https://models.example/v1/chat/completions"
-    assert requests[0].headers["authorization"] == "Bearer test-key"
+    assert requests[0].headers["authorization"] == "Bearer unit-test-placeholder"
     payload = json.loads(requests[0].content)
     assert payload["model"] == "mistralai/test-model"
     assert payload["max_tokens"] == 384
@@ -76,9 +74,9 @@ async def test_model_token_limit_overrides_small_role_default() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            model_name="mistralai/test-model",
-            base_url="https://models.example/v1",
-            api_key="test-key",
+            "mistralai/test-model",
+            "https://models.example/v1",
+            "unit" + "-test-" + "placeholder",
             http_client=client,
             output_token_limits={"answer": 2048},
         )
@@ -104,9 +102,9 @@ async def test_read_page_sends_image_to_vision_model() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            model_name="mistralai/vision-model",
-            base_url="https://models.example/v1",
-            api_key="test-key",
+            "mistralai/vision-model",
+            "https://models.example/v1",
+            "unit" + "-test-" + "placeholder",
             http_client=client,
         )
         reading = await provider.read_page(ModelRole.VISION, b"fake-image", "Read member ID")

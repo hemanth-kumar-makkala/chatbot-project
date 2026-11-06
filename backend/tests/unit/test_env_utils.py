@@ -7,14 +7,22 @@ import pytest
 from app.db.env_utils import load_dotenv
 
 
-def test_skip_dotenv_environment_flag_returns_before_any_file_access(
+def test_load_dotenv_reads_explicit_path_without_overwriting_environment(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HERMES_SKIP_DOTENV", "1")
+    """Load explicit dotenv values while preserving existing environment settings."""
+    monkeypatch.setenv("DOTENV_TEST_EXISTING", "environment-value")
+    dotenv_file = tmp_path / "synthetic.env"
+    dotenv_file.write_text(
+        "DOTENV_TEST_EXISTING=file-value\nDOTENV_TEST_NEW=loaded-value\n",
+        encoding="utf-8",
+    )
 
-    def fail_if_file_checked(_self: Path) -> bool:
-        raise AssertionError("dotenv lookup should be skipped entirely")
+    load_dotenv(dotenv_file)
 
-    monkeypatch.setattr(Path, "is_file", fail_if_file_checked)
+    import os
 
-    load_dotenv()
+    assert os.environ["DOTENV_TEST_EXISTING"] == "environment-value"
+    assert os.environ["DOTENV_TEST_NEW"] == "loaded-value"
+    monkeypatch.delenv("DOTENV_TEST_NEW")
