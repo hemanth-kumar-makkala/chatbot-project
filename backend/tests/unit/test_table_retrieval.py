@@ -14,11 +14,13 @@ from uuid import uuid4
 
 import pytest
 
+from app.adapters.retrieval.postgres_retriever import _select_best_table_source
 from app.core.graph import (
     GraphPorts,
     GraphRuntimeContext,
     GraphState,
     node_assess_evidence,
+    node_generate,
     node_rerank,
     node_retrieve,
     node_route,
@@ -110,6 +112,52 @@ def table_context() -> GraphRuntimeContext:
         question_text="What insurance plans are accepted?",
         active_document_count=1,
     )
+
+
+def test_table_retrieval_keeps_only_best_matching_document() -> None:
+    rows = [
+        {"document_title": "accepted_plans.csv", "match_score": 6, "row_index": 1},
+        {"document_title": "accepted_plans.csv", "match_score": 6, "row_index": 2},
+        {"document_title": "pa_turnaround_times.xlsx", "match_score": 2, "row_index": 3},
+    ]
+
+    selected = _select_best_table_source(rows)
+
+    assert [row["document_title"] for row in selected] == [
+        "accepted_plans.csv",
+        "accepted_plans.csv",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_table_answer_uses_readable_headers_and_stored_values(
+    table_context: GraphRuntimeContext,
+) -> None:
+    table_context.table_candidates = {
+        "tab-row-1": TableCandidate(
+            id="tab-row-1",
+            document_title="accepted_plans.csv",
+            document_version_id="ver-tab-1",
+            sheet_name="Sheet1",
+            row_index=1,
+            cells={"Payer Name": "Apex Health Insurance", "Plan Code": "APX-HMO-01"},
+        )
+    }
+    table_context.evidence_text = {"tab-row-1": "stored row evidence"}
+    state: GraphState = {
+        "request_id": "r-table",
+        "answer_mode": "table",
+        "evidence_ids": ["tab-row-1"],
+    }
+
+    class MockRuntime:
+        context = table_context
+
+    await node_generate(state, MockRuntime())  # type: ignore
+
+    assert "| Payer Name | Plan Code |" in table_context.response_text
+    assert "| Apex Health Insurance | APX-HMO-01 |" in table_context.response_text
+    assert "[Sheet:" not in table_context.response_text
 
 
 @pytest.mark.asyncio

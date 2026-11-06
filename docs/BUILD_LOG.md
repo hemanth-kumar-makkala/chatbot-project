@@ -3106,4 +3106,42 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 - **5. Verification Summary**:
   - `uv run --project backend pre-commit run --files ...`: all 10 hooks passed cleanly (exit code 0).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run python -m pytest -m "not models" -q`: 881 passed, 1 skipped, 15 deselected in 131s (0 failed).
+  - `uv run --project backend pre-commit run --all-files`: all configured hooks passed (exit code 0).
+  - Focused non-migration unit tests: 58 passed (exit code 0). The full `pytest -m "not models"` suite was not run because integration tests execute Alembic upgrades/downgrades, which were explicitly prohibited.
+
+---
+
+## 2026-11-05 — Table Retrieval, Inventory, and Safety-Lock Corrections
+
+- **Completed (Part A)**:
+  - Table retrieval now selects the best matching source document and excludes rows from unrelated tables.
+  - CSV and XLSX extraction skip leading title/banner rows when detecting headers; regression coverage includes a synthetic banner.
+  - Table answers render a clean Markdown table from stored candidate cells and column names.
+  - Inventory routing is restricted to explicit questions about the assistant's own document inventory.
+  - Comparison grading rejects unexpected values from unrelated table sources.
+  - Cloud safety validation compares SHA-256 hashes of original stored document bytes with the synthetic golden files; filenames do not authorize a document.
+  - Corrected the stale Next Phase & Task section in `docs/STATUS.md`.
+- **Tests Added/Updated**: Table banner, table source selection/readability, inventory follow-up, strict grading, renamed non-golden document rejection, original storage-byte hashing, and dotenv skip guard regressions.
+- **Part B status**: Not implemented or run. Model-specific token settings and NVIDIA/Inception OpenAI-compatible adapters remain outstanding. No comparison calls were sent; the existing comparison runner reads `.env` and performs Alembic upgrades, both forbidden here. Unfilled `[MINIMAX ID]` and `[MERCURY NAME]` model entries were skipped.
+- **Report artifacts**: `docs/reports/2026-11-05-model-comparison.md` and `docs/reports/2026-11-05-model-comparison.json`. The JSON records `not_executed` and contains no fabricated measurements.
+- **Verification**:
+  - `HERMES_SKIP_DOTENV=1 APP_PROFILE=mock uv run python -m pytest --confcutdir=tests/unit tests/unit/test_cloud_safety_lock.py tests/unit/test_table_ingestion.py tests/unit/test_table_retrieval.py tests/unit/test_inventory_and_prefix_rejection.py tests/unit/test_comparison_grading.py tests/unit/test_env_utils.py tests/unit/test_conflict_rule.py tests/unit/test_multiturn_followup.py tests/unit/test_table_validation_disambiguation.py -q`: 58 passed.
+  - `HERMES_SKIP_DOTENV=1 uv run --project backend pre-commit run --all-files`: all hooks passed.
+  - Full `pytest -m "not models"` suite not run; integration tests perform Alembic operations.
+- **Open Issues**: Complete Part B adapter/config work and run the comparison through a compliant pathway that neither reads `.env` nor invokes Alembic.
+
+---
+
+## 2026-11-05 — Hosted Model Providers and Comparison Blockers
+
+- **Part B implementation completed**:
+  - Added independent `ANSWER_MODEL` and `VISION_MODEL` settings and documented NVIDIA/Inception endpoint and key variables in `.env.example`; no secrets or `.env` contents were read.
+  - Added an OpenAI-compatible model adapter and provider routing for NVIDIA and Inception selectors. Required endpoint/key omissions raise `ConfigurationError`.
+  - Added per-model/per-role output token limits in the desktop and cloud profiles for `beam:cloud`, the requested NVIDIA Mistral model, and provider-family fallbacks. Existing Qwen3-VL 4B limits were not changed.
+  - Cloud safety checks both selected models and remains content-hash based.
+- **Comparison not run**: No answer or vision requests were sent, and no fax extractions or measurements were generated. The existing runner reads `.env` and executes Alembic migrations, both prohibited. `NVIDIA [MINIMAX ID]` and `Inception [MERCURY NAME]` remain unfilled and were skipped.
+- **Verification**:
+  - A focused migration-free unit set covering table, inventory, grading, safety, provider routing, token limits, graph, and validation tests completed with exit code 0.
+  - `HERMES_SKIP_DOTENV=1 uv run --project backend pre-commit run --all-files`: all hooks passed.
+  - Full `pytest -m "not models"` suite was not run to preserve the explicit no-Alembic rule. A broader exploratory unit invocation timed out at 420 seconds. An API-auth test fixture omits required session retention; after temporarily supplying that value for diagnosis, the test attempted local PostgreSQL and failed without a password. The temporary fixture edit was reverted. No `.env` access or credentials were used.
+- **Remaining work**: Run the requested grids only after a compliant comparison path avoids `.env` access and Alembic and the model placeholders/credentials are supplied.

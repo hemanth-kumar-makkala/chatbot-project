@@ -77,6 +77,8 @@ def is_cloud_model(model_name: str | None, is_cloud_override: bool = False) -> b
         or "-cloud" in tag
         or tag.startswith("cloud/")
         or tag.startswith("hosted/")
+        or tag.startswith("nvidia:")
+        or tag.startswith("inception:")
         or "/cloud" in tag
         or tag.endswith(":cloud")
         or tag.endswith("-cloud")
@@ -98,5 +100,6 @@ def is_vision_model(model_name: str | None) -> bool:
             "vision",
             "multimodal",
             "omni",
+            "mistral-large-4",
         )
     )

@@ -55,7 +55,9 @@ def test_version_ordering_by_supersedes_clause():
         doc1_name="intake_policy.pdf",
         chunk1_text="Front Desk Operational SOP (Version 1.0)\nFax is 555-0101.",
         doc2_name="intake_policy_revised.pdf",
-        chunk2_text="Front Desk Operational SOP (Version 2.0)\nSupersedes Version 1.0\nFax is 555-0102.",
+        chunk2_text=(
+            "Front Desk Operational SOP (Version 2.0)\nSupersedes Version 1.0\nFax is 555-0102."
+        ),
     )
     assert order == (2, 1)
 
@@ -78,7 +80,6 @@ def test_format_version_conflict_answer():
         newer_quote="Front desk intake fax number is 555-0102.",
         newer_val="555-0102",
         older_doc="front_desk_policy_v1.pdf",
-        older_quote="Front desk intake fax number is 555-0101.",
         older_val="555-0101",
     )
     assert "Front desk intake fax number is 555-0102." in answer
@@ -112,7 +113,7 @@ async def test_node_assess_evidence_resolves_version_conflict():
     ctx.candidate_scores = {"c1": 0.95, "c2": 0.94}
 
     class MockConflictModel:
-        async def generate(self, **kwargs: Any) -> ModelResponse:
+        async def generate(self, **_kwargs: Any) -> ModelResponse:
             return ModelResponse(
                 content="",
                 model_id="mock",
@@ -163,7 +164,7 @@ async def test_node_assess_evidence_keeps_conflicting_when_order_undetermined():
     ctx.candidate_scores = {"c1": 0.95, "c2": 0.94}
 
     class MockConflictModel:
-        async def generate(self, **kwargs: Any) -> ModelResponse:
+        async def generate(self, **_kwargs: Any) -> ModelResponse:
             return ModelResponse(
                 content="",
                 model_id="mock",

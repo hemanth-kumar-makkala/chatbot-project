@@ -44,6 +44,7 @@ from app.ports.errors import (
     TransientIngestionError,
 )
 from app.ports.types import (
+    ChatMessage,
     ModelRole,
     PageReading,
 )
@@ -273,6 +274,51 @@ class TestOllamaModelProviderUnit:
         assert reading.reading == "PRIOR AUTHORIZATION APPROVED"
         assert "<think>" not in reading.reading
         assert "</think>" not in reading.reading
+
+    @pytest.mark.asyncio
+    async def test_model_specific_token_limits_override_only_configured_model(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "profile.yaml"
+        config_path.write_text(
+            "models:\n"
+            "  answer: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "  router: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "  vision: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "  extract: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "  judge: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "generation_limits:\n"
+            "  'beam:cloud': {answer: 1536}\n",
+            encoding="utf-8",
+        )
+        chat_payloads: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                )
+            chat_payloads.append(json.loads(request.content))
+            return httpx.Response(200, json={"message": {"content": "ok"}, "eval_count": 1})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            for model in ("qwen3-vl:4b", "beam:cloud"):
+                provider = OllamaModelProvider(
+                    profile="desktop-gpu",
+                    base_url="http://ollama.test",
+                    config_path=config_path,
+                    http_client=client,
+                    chat_model=model,
+                )
+                await provider.generate(
+                    role=ModelRole.ANSWER,
+                    messages=[ChatMessage(role="user", content="Answer")],
+                    max_tokens=150,
+                )
+
+        assert chat_payloads[0]["options"]["num_predict"] == 150
+        assert chat_payloads[1]["options"]["num_predict"] == 1536
 
     @pytest.mark.asyncio
     async def test_model_digest_cached_once_per_provider(self) -> None:

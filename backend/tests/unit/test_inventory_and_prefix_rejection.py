@@ -136,18 +136,31 @@ async def test_inventory_query_returns_titles_and_headings_without_model(
     # Model provider call count must remain 0
     assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
 
-    # Test "what documents"
-    inventory_context.question_text = "what documents"
+    # Inventory intent must explicitly ask which documents are possessed.
+    inventory_context.question_text = "what documents do you have"
     res2 = await node_route(state, MockRuntime())  # type: ignore
     assert res2["status"] == "completed"
     assert "clean_fax.pdf" in inventory_context.response_text
-
-    # Test "what can you tell me about"
-    inventory_context.question_text = "what can you tell me about"
-    res3 = await node_route(state, MockRuntime())  # type: ignore
-    assert res3["status"] == "completed"
-    assert "clean_fax.pdf" in inventory_context.response_text
     assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
+
+    assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
+
+
+@pytest.mark.asyncio
+async def test_required_documents_followup_does_not_trigger_inventory(
+    inventory_context: GraphRuntimeContext,
+) -> None:
+    inventory_context.question_text = "and what documents are required with it?"
+    state: GraphState = {"request_id": "r-followup"}
+
+    class MockRuntime:
+        context = inventory_context
+
+    result = await node_route(state, MockRuntime())  # type: ignore
+
+    assert result.get("status") != "completed"
+    assert "This assistant has information" not in inventory_context.response_text
+    assert inventory_context.ports.model_provider.call_count == 1  # type: ignore
 
 
 @pytest.mark.asyncio

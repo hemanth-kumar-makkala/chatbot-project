@@ -3,7 +3,7 @@
 import os
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from app.ports.errors import ConfigurationError
 
@@ -44,11 +44,30 @@ def _default_session_upload_retention_hours() -> int | None:
 
 
 def _default_chat_model() -> str:
-    """Chat and generation model name setting, default qwen3-vl:4b."""
-    val = os.getenv("CHAT_MODEL")
+    """Answer model setting, preferring ANSWER_MODEL with CHAT_MODEL compatibility."""
+    val = os.getenv("ANSWER_MODEL") or os.getenv("CHAT_MODEL")
     if val is not None and val.strip():
         return val.strip()
     return "qwen3-vl:4b"
+
+
+def _default_vision_model() -> str:
+    """Vision model setting, independent from the answer model."""
+    val = os.getenv("VISION_MODEL")
+    if val is not None and val.strip():
+        return val.strip()
+    return "qwen3-vl:4b"
+
+
+def _optional_secret_env(name: str) -> SecretStr | None:
+    """Load an optional hosted-provider secret without assigning a fallback credential."""
+    val = os.getenv(name)
+    return SecretStr(val) if val is not None and val.strip() else None
+
+
+def _optional_env(name: str) -> str | None:
+    val = os.getenv(name)
+    return val.strip() if val is not None and val.strip() else None
 
 
 class ApiSettings(BaseModel):
@@ -95,7 +114,21 @@ class ApiSettings(BaseModel):
     )
     chat_model: str = Field(
         default_factory=_default_chat_model,
-        description="Chat and answer generation model name (default: qwen3-vl:4b).",
+        description="Answer-generation model (ANSWER_MODEL; CHAT_MODEL remains compatible).",
+    )
+    vision_model: str = Field(
+        default_factory=_default_vision_model,
+        description="Independent vision model selection (VISION_MODEL).",
+    )
+    nvidia_base_url: str | None = Field(default_factory=lambda: _optional_env("NVIDIA_BASE_URL"))
+    nvidia_api_key: SecretStr | None = Field(
+        default_factory=lambda: _optional_secret_env("NVIDIA_API_KEY")
+    )
+    inception_base_url: str | None = Field(
+        default_factory=lambda: _optional_env("INCEPTION_BASE_URL")
+    )
+    inception_api_key: SecretStr | None = Field(
+        default_factory=lambda: _optional_secret_env("INCEPTION_API_KEY")
     )
 
     def __init__(self, **data: Any) -> None:

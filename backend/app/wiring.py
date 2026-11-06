@@ -77,6 +77,7 @@ def create_production_ports(
     tracer: Tracer | None = None,
     image_processor: ImageProcessor | None = None,
     chat_model: str = "qwen3-vl:4b",
+    vision_model: str = "qwen3-vl:4b",
 ) -> GraphPorts:
     """Create production GraphPorts with is_mock_profile=False and simulation triggers disabled."""
     from app.adapters.images.pillow import PillowImageProcessor
@@ -88,6 +89,7 @@ def create_production_ports(
         tracer=tracer,
         image_processor=image_processor or PillowImageProcessor(),
         chat_model=chat_model,
+        vision_model=vision_model,
         is_mock_profile=False,
         mock_evidence_state=None,
         mock_forced_route=None,
@@ -515,41 +517,137 @@ def create_version_activation_service(
     return VersionActivationService(repository=repo)
 
 
-def create_model_provider(profile: str, chat_model: str | None = None) -> ModelProvider:
-    """Create ModelProvider adapter based on runtime profile.
-
-    Profiles:
-    - mock: MockModelProvider
-    - desktop-gpu, home-gpu: OllamaModelProvider
-    - office-cpu, dev-free-api, cloud: ConfigurationError
-      (real Vertex vision providers will be implemented in their respective tasks)
-    - unknown profile: ConfigurationError
-    The mock model provider must never be returned outside the mock profile.
-    """
+def create_model_provider(
+    profile: str,
+    chat_model: str | None = None,
+    *,
+    vision_model: str | None = None,
+    nvidia_base_url: str | None = None,
+    nvidia_api_key: str | None = None,
+    inception_base_url: str | None = None,
+    inception_api_key: str | None = None,
+) -> ModelProvider:
+    """Create local/hosted model providers with answer and vision routing independent."""
     from app.ports.errors import ConfigurationError
 
-    if profile == "mock":
+    profile_config_path = (
+        Path(__file__).resolve().parent.parent / "config" / "profiles" / f"{profile}.yaml"
+    )
+    generation_limits: dict[str, dict[str, int]] = {}
+    if profile_config_path.is_file():
+        from app.adapters.models.ollama import _load_profile_generation_limits
+
+        generation_limits = _load_profile_generation_limits(profile, profile_config_path)
+    hosted_providers: dict[str, ModelProvider] = {}
+
+    def create_selected_provider(model_selector: str) -> ModelProvider | None:
+        if model_selector in hosted_providers:
+            return hosted_providers[model_selector]
+        provider_name, separator, model_name = model_selector.partition(":")
+        if not separator or provider_name not in {"nvidia", "inception"}:
+            return None
+        if not model_name.strip():
+            raise ConfigurationError(
+                message="Hosted model selector is missing its model identifier",
+                error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
+            )
+        if provider_name == "nvidia":
+            base_url, api_key = nvidia_base_url, nvidia_api_key
+            missing = [
+                name
+                for name, value in (
+                    ("NVIDIA_BASE_URL", base_url),
+                    ("NVIDIA_API_KEY", api_key),
+                )
+                if not value or not value.strip()
+            ]
+        else:
+            base_url, api_key = inception_base_url, inception_api_key
+            missing = [
+                name
+                for name, value in (
+                    ("INCEPTION_BASE_URL", base_url),
+                    ("INCEPTION_API_KEY", api_key),
+                )
+                if not value or not value.strip()
+            ]
+        if missing:
+            raise ConfigurationError(
+                message=f"Missing hosted model settings: {', '.join(missing)}",
+                error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
+            )
+        from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
+
+        configured_limits = generation_limits.get(model_selector) or generation_limits.get(
+            f"{provider_name}:*", {}
+        )
+        provider = OpenAICompatibleModelProvider(
+            model_name=model_name.strip(),
+            base_url=base_url or "",
+            api_key=api_key or "",
+            output_token_limits=configured_limits,
+        )
+        hosted_providers[model_selector] = provider
+        return provider
+
+    answer_selector = chat_model or "qwen3-vl:4b"
+    vision_selector = vision_model or "qwen3-vl:4b"
+    answer_remote = create_selected_provider(answer_selector)
+    vision_remote = create_selected_provider(vision_selector)
+
+    if profile == "mock" and answer_remote is None and vision_remote is None:
         from app.adapters.models.mock import MockModelProvider
 
         return MockModelProvider()
 
-    if profile in ("desktop-gpu", "home-gpu"):
-        from app.adapters.models.ollama import OllamaModelProvider
-
-        return OllamaModelProvider(profile=profile, chat_model=chat_model)
-
-    if profile in ("office-cpu", "dev-free-api", "cloud"):
+    known_profiles = (
+        "mock",
+        "office-cpu",
+        "desktop-gpu",
+        "home-gpu",
+        "dev-free-api",
+        "cloud",
+        "frontier",
+    )
+    if profile not in known_profiles:
         raise ConfigurationError(
-            f"ModelProvider is not yet implemented for profile '{profile}'. "
-            "Real Vertex vision providers will be implemented in subsequent tasks.",
+            f"Unknown or unauthorized profile '{profile}' for ModelProvider.",
+            error_code="UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
+        )
+
+    local_profile_supported = profile in ("desktop-gpu", "home-gpu")
+    local_needed = answer_remote is None or vision_remote is None
+    if local_needed and not local_profile_supported:
+        raise ConfigurationError(
+            f"Local model provider is not implemented for profile '{profile}'.",
             error_code="MODEL_PROVIDER_NOT_IMPLEMENTED",
         )
 
-    allowed = ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api", "cloud")
-    raise ConfigurationError(
-        f"Unknown or unauthorized profile '{profile}' for ModelProvider. "
-        f"Allowed profiles: {', '.join(repr(p) for p in allowed)}.",
-        error_code="UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
+    local_provider: ModelProvider | None = None
+    if local_needed:
+        from app.adapters.models.ollama import OllamaModelProvider
+
+        local_provider = OllamaModelProvider(
+            profile=profile,
+            chat_model=answer_selector if answer_remote is None else None,
+            vision_model=vision_selector if vision_remote is None else None,
+        )
+
+    answer_provider = answer_remote or local_provider
+    vision_provider = vision_remote or local_provider
+    if answer_provider is None or vision_provider is None:
+        raise ConfigurationError(
+            "Unable to construct the selected model providers.",
+            error_code="MODEL_PROVIDER_NOT_IMPLEMENTED",
+        )
+    if answer_provider is vision_provider:
+        return answer_provider
+
+    from app.adapters.models.provider_router import ModelProviderRouter
+
+    return ModelProviderRouter(
+        answer_provider=answer_provider,
+        vision_provider=vision_provider,
     )
 
 

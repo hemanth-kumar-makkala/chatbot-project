@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import datetime
 import io
+import itertools
 import zipfile
 from typing import Any
 
@@ -42,6 +43,29 @@ def _normalize_headers(raw_headers: list[Any]) -> list[str]:
             normalized.append(f"{name}_{counts[name]}")
 
     return normalized
+
+
+def _header_row_offset(rows: list[list[Any]]) -> int:
+    """Skip a single-cell title/banner when a multi-column header follows."""
+    populated: list[tuple[int, int]] = []
+    for index, row in enumerate(rows):
+        count = sum(value is not None and str(value).strip() != "" for value in row)
+        if count:
+            populated.append((index, count))
+        if len(populated) == 2:
+            break
+    if len(populated) == 2:
+        first_index, first_count = populated[0]
+        second_index, second_count = populated[1]
+        first_text = " ".join(
+            str(value).strip().lower()
+            for value in rows[first_index]
+            if value is not None and str(value).strip()
+        )
+        marked_title = first_text.startswith("***") or first_text.startswith(("title:", "report:"))
+        if marked_title or (first_count == 1 and second_count > 1):
+            return second_index
+    return populated[0][0] if populated else 0
 
 
 def _format_xlsx_cell_value(cell_data: Any, cell_formula: Any) -> tuple[Any, bool]:
@@ -150,15 +174,19 @@ class BuiltinTableExtractor(TableExtractor):
             max(counts, key=lambda k: counts[k]) if any(c > 0 for c in counts.values()) else ","
         )
 
-        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        csv_reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        reader_preview, actual_reader = itertools.tee(csv_reader)
+        header_offset = _header_row_offset(list(itertools.islice(reader_preview, 25)))
 
         headers: list[str] | None = None
         rows: list[dict[str, Any]] = []
         total_cells = 0
 
-        for raw_row in reader:
+        for row_index, raw_row in enumerate(actual_reader):
             # Skip empty rows or comment rows before headers
             if headers is None:
+                if row_index < header_offset:
+                    continue
                 if not any(cell.strip() for cell in raw_row):
                     continue
                 if raw_row and raw_row[0].strip().startswith("#"):
@@ -227,16 +255,24 @@ class BuiltinTableExtractor(TableExtractor):
 
                 headers: list[str] | None = None
                 rows: list[dict[str, Any]] = []
+                preview = [
+                    list(row) for row in ws_data.iter_rows(min_row=1, max_row=25, values_only=True)
+                ]
+                header_offset = _header_row_offset(preview)
 
                 # Stream rows simultaneously
                 iter_data = ws_data.iter_rows(values_only=False)
                 iter_formula = ws_formula.iter_rows(values_only=False)
 
-                for row_data, row_formula in zip(iter_data, iter_formula, strict=False):
+                for row_index, (row_data, row_formula) in enumerate(
+                    zip(iter_data, iter_formula, strict=False)
+                ):
                     row_data_values = [c.value for c in row_data]
 
                     # Header detection
                     if headers is None:
+                        if row_index < header_offset:
+                            continue
                         if not any(v is not None and str(v).strip() != "" for v in row_data_values):
                             continue
                         if len(row_data) > MAX_COLUMNS:

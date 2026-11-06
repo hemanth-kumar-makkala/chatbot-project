@@ -204,6 +204,7 @@ class GraphPorts:
     tracer: Tracer | None = None
     image_processor: ImageProcessor | None = None
     chat_model: str = "qwen3-vl:4b"
+    vision_model: str = "qwen3-vl:4b"
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
     is_mock_profile: bool = False
     mock_vision_mode: str = "ok"  # "ok" or "fail"
@@ -250,6 +251,7 @@ class GraphRuntimeContext:
     generated_answer: dict[str, Any] = field(default_factory=dict)
     active_document_count: int | None = None
     active_document_titles: list[str] = field(default_factory=list)
+    active_document_hashes: list[str] = field(default_factory=list)
     chat_model: str = "qwen3-vl:4b"
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
     evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
@@ -371,13 +373,17 @@ async def node_guard_input(
                 "evidence_ids": [],
             }
 
-        # Cloud Model Safety Lock: cloud models may ONLY be used with synthetic golden documents
+        # Cloud model safety applies independently to both answer and vision selectors.
         effective_chat_model = runtime.context.chat_model or ports.chat_model
-        if is_cloud_model(effective_chat_model):
+        selected_models = dict.fromkeys((effective_chat_model, ports.vision_model))
+        for effective_model in selected_models:
+            if not is_cloud_model(effective_model):
+                continue
             try:
                 verify_cloud_model_safety_lock(
-                    model_name=effective_chat_model,
+                    model_name=effective_model,
                     active_document_titles=runtime.context.active_document_titles,
+                    active_document_hashes=runtime.context.active_document_hashes,
                 )
             except CloudModelSafetyLockError as lock_err:
                 logger.warning(
@@ -475,18 +481,15 @@ async def node_route(
         inventory_phrases = (
             "what data do you have",
             "what documents do you have",
-            "what documents",
-            "what can you tell me about",
-            "what topics do you have",
-            "what do you have",
             "what files do you have",
             "what documents are available",
+            "what topics do you have",
             "what information do you have",
+            "what is in your knowledge base",
+            "what is in this assistant",
             "list your documents",
             "list all documents",
             "list documents",
-            "what is in your knowledge base",
-            "what is in this assistant",
         )
         if any(p in q_clean for p in inventory_phrases):
             if ctx.active_document_count == 0:
@@ -996,12 +999,7 @@ async def node_assess_evidence(
                                             v1,
                                             c1_match,
                                         )
-                                        older_doc, older_quote, older_val, older_cid = (
-                                            d2_name,
-                                            q2_final,
-                                            v2,
-                                            c2_match,
-                                        )
+                                        older_doc, older_val, older_cid = d2_name, v2, c2_match
                                     else:
                                         newer_doc, newer_quote, newer_val, newer_cid = (
                                             d2_name,
@@ -1009,19 +1007,13 @@ async def node_assess_evidence(
                                             v2,
                                             c2_match,
                                         )
-                                        older_doc, older_quote, older_val, older_cid = (
-                                            d1_name,
-                                            q1_final,
-                                            v1,
-                                            c1_match,
-                                        )
+                                        older_doc, older_val, older_cid = d1_name, v1, c1_match
 
                                     ctx.response_text = format_version_conflict_answer(
                                         newer_doc=newer_doc,
                                         newer_quote=newer_quote,
                                         newer_val=newer_val,
                                         older_doc=older_doc,
-                                        older_quote=older_quote,
                                         older_val=older_val,
                                     )
                                     ctx.generated_answer = {
@@ -1067,12 +1059,10 @@ async def node_assess_evidence(
                 "needs_vision": False,
             }
         if computed_ev_state == "VISUAL_REQUIRED":
-            effective_model = ctx.chat_model or ports.chat_model
-            if not is_vision_model(effective_model) and (
-                ports.is_mock_profile or ports.model_provider is None
-            ):
+            effective_model = ports.vision_model
+            if not is_vision_model(effective_model):
                 logger.info(
-                    "Chat model '%s' has no vision; "
+                    "Vision model '%s' has no vision capability; "
                     "skipping question-time vision reading and using OCR evidence.",
                     effective_model,
                 )
@@ -1380,15 +1370,24 @@ async def node_generate(
                     "evidence_ids": selected_ids,
                 }
 
-            # Code builds the answer text strictly from tables_data cells:
-            # every column, exact cell strings, header names from stored header row.
-            row_texts = []
-            for rid in selected_ids:
-                tc = avail_table[rid]
-                cells_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
-                row_texts.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] {cells_str}")
+            # Build a readable table deterministically from stored cells only.
+            selected_ids = list(dict.fromkeys(selected_ids))
+            headers = list(
+                dict.fromkeys(header for rid in selected_ids for header in avail_table[rid].cells)
+            )
 
-            content = "; ".join(row_texts)
+            def _display_cell(value: Any) -> str:
+                if value is None:
+                    return ""
+                return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+            header_line = "| " + " | ".join(headers) + " |"
+            separator_line = "| " + " | ".join("---" for _ in headers) + " |"
+            row_lines = [
+                "| " + " | ".join(_display_cell(tc.cells.get(header)) for header in headers) + " |"
+                for tc in (avail_table[rid] for rid in selected_ids)
+            ]
+            content = "\n".join([header_line, separator_line, *row_lines])
             ctx.response_text = content
             ctx.generated_answer = {
                 "mode": "table",

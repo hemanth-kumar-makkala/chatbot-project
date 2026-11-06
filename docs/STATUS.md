@@ -441,16 +441,13 @@
   - Completed: Review policy with MECE coverage for all 4 page types, Migration 0005 applied to shared database (`0005_readings_table_cites`), database seeding test fixtures decoupled to `tests/fixtures/database_seeding.py`, parser profile matrix routing (`mock` -> `MockDocumentParser`, `office-cpu`/`desktop-gpu`/`home-gpu`/`dev-free-api` -> `DoclingDocumentParser`, `cloud` -> `DoclingDocumentParser` with offline/pinned models enforced), and adapter offline configuration (`EasyOCR` download disabled, model directory set, `HF_HUB_OFFLINE=1`).
 
 ## Next Phase & Task
-- **Phase 5**: Hardening
-- **Next Task**: Task 5.1: Input Guardrails (Node 1 `guard_input`) and Rate Limiting per `docs/phases/PHASE-5.md`.
-- **Test Infrastructure & CI**:
-  - Test suite passes cleanly on fresh clone and in CI from both `backend/` and repository root (`741 passed, 1 skipped, 0 failed` under `pytest -m "not models"`).
-  - Storage paths normalized across test fixtures using pytest `tmp_path`.
-  - Golden files resolved from repo root using `Path(__file__)`.
-  - CI mypy configuration hardened: `torch` and `torch.*` added to `tool.mypy.overrides` in `backend/pyproject.toml` so CI passes with default dependencies (`uv sync --frozen`, without optional `parsing` or `retrieval` groups).
-  - Model typing in `backend/app/adapters/embedding/bge_m3.py` annotated with `SentenceTransformerModelProtocol` variable assignment, resolving `no-any-return` without `cast` or `# type: ignore`.
-  - Pre-commit formatting and secrets allowlisting resolved across all test files: all 10 hooks pass cleanly on `pre-commit run --all-files`.
-  - AGENTS.md rule 10 enforced: all tests requiring real models, Docling, or downloaded weights carry `@pytest.mark.models` or use `pytest.importorskip("docling")`.
+- **Completed (Part A):** Table-source selection, CSV/XLSX banner header detection, code-built readable table output, inventory intent routing, strict Q5 grading, and content-hash cloud safety lock.
+- **Completed (Part B implementation):** Per-model token limits for `beam:cloud` and NVIDIA/Inception hosted selectors; OpenAI-compatible NVIDIA/Inception adapter wiring; independent `ANSWER_MODEL` and `VISION_MODEL`; cloud safety checks both selected models. Existing Qwen3-VL 4B limits remain unchanged.
+- **Comparison status:** No model requests or fax extractions were run. The runner currently opens `.env` and performs Alembic operations, both prohibited. The placeholders `NVIDIA [MINIMAX ID]` and `Inception [MERCURY NAME]` remain unfilled and were skipped.
+- **Verification:** All pre-commit hooks passed on `--all-files`. The focused migration-free unit test set passed. The full `pytest -m "not models"` suite remains blocked because integration tests perform prohibited Alembic operations; an expanded unit run timed out. A separate API-auth test has an incomplete fixture and also depends on local PostgreSQL credentials not available without `.env`.
+- **Next task:** Provide a comparison path that avoids `.env` access and Alembic, then run the requested comparison with the supplied credentials/model IDs.
+- **Next roadmap phase:** Phase 6 — Cloud staging on GCP; next planned roadmap task is Task 6.1, GCP infrastructure provisioning and BAA compliance check (`docs/phases/PHASE-6.md`).
+- **Test infrastructure note:** Set `HERMES_SKIP_DOTENV=1` to prevent the test environment loader from opening `.env`; focused test runs used `--confcutdir=tests/unit` and did not load integration fixtures.
 
 ## Pending Implementation Notes
 - **Multilingual Support**: Multilingual (Spanish and others) is deferred. Existing Spanish code, the EasyOCR Spanish model and test_real_docling_ocr_spanish_scanned_page stay as they are. No new multilingual work until the core application is complete. Golden set documents A11, A12 and E03 are deferred.

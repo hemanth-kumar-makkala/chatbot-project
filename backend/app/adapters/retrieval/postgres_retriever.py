@@ -22,6 +22,19 @@ from app.ports.types import (
 )
 
 
+def _select_best_table_source(rows: list[Any]) -> list[Any]:
+    """Keep rows from the source document with the strongest query match."""
+    if not rows:
+        return rows
+    best_by_title: dict[str, int] = {}
+    for row in rows:
+        title = str(row["document_title"])
+        score = int(row.get("match_score", 0))
+        best_by_title[title] = max(best_by_title.get(title, score), score)
+    best_score = max(best_by_title.values())
+    return [row for row in rows if best_by_title[str(row["document_title"])] == best_score]
+
+
 class PostgresRetriever(Retriever):
     """Hybrid retriever combining pgvector dense search and tsvector text search with RRF."""
 
@@ -408,11 +421,8 @@ class PostgresRetriever(Retriever):
                 where_clauses.append(f"AND ({combined_or})")
 
             filter_sql = " ".join(where_clauses)
-            order_sql = (
-                f"ORDER BY ({' + '.join(score_terms)}) DESC, td.row_index ASC"
-                if score_terms
-                else "ORDER BY td.row_index ASC"
-            )
+            score_expr = f"({' + '.join(score_terms)})" if score_terms else "0"
+            order_sql = "ORDER BY match_score DESC, td.row_index ASC"
             stmt = text(
                 f"""
                 SELECT
@@ -421,7 +431,8 @@ class PostgresRetriever(Retriever):
                     td.sheet_name,
                     td.row_index,
                     td.row_data,
-                    d.title AS document_title
+                    d.title AS document_title,
+                    {score_expr} AS match_score
                 FROM tables_data td
                 JOIN document_versions dv ON td.document_version_id = dv.id
                 JOIN documents d ON dv.document_id = d.id
@@ -436,45 +447,7 @@ class PostgresRetriever(Retriever):
             res = await session.execute(stmt, sql_params)
             rows = res.mappings().all()
 
-            if not rows and any(
-                k in clean_query.lower()
-                for k in (
-                    "table",
-                    "sheet",
-                    "plan",
-                    "insurance",
-                    "accepted plan",
-                    "fee schedule",
-                    "turnaround",
-                    "sla",
-                    "copay",
-                    "deductible",
-                    "tier",
-                    "payer",
-                )
-            ):
-                fallback_stmt = text(
-                    """
-                    SELECT
-                        td.id,
-                        td.document_version_id,
-                        td.sheet_name,
-                        td.row_index,
-                        td.row_data,
-                        d.title AS document_title
-                    FROM tables_data td
-                    JOIN document_versions dv ON td.document_version_id = dv.id
-                    JOIN documents d ON dv.document_id = d.id
-                    WHERE td.tenant_id = :tenant_id
-                      AND d.active_version_id = dv.id
-                      AND d.is_retired = false
-                    ORDER BY td.row_index ASC
-                    LIMIT :limit;
-                    """
-                )
-                res_fb = await session.execute(fallback_stmt, {"tenant_id": tid, "limit": limit})
-                rows = res_fb.mappings().all()
-
+            rows = _select_best_table_source(list(rows))
             from app.ports.types import TableCandidate
 
             candidates: list[TableCandidate] = []

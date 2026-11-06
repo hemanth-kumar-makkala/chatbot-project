@@ -44,11 +44,17 @@ def test_heuristic_rewrite_resolves_prior_auth_followup():
     history = [
         {
             "role": "user",
-            "content": "How many business days in advance must outpatient surgery prior auths be submitted?",
+            "content": (
+                "How many business days in advance must outpatient surgery prior auths be "
+                "submitted?"
+            ),
         },
         {
             "role": "assistant",
-            "content": "Outpatient surgery prior auths must be submitted at least 5 business days in advance.",
+            "content": (
+                "Outpatient surgery prior auths must be submitted at least 5 business days "
+                "in advance."
+            ),
         },
     ]
     res = heuristic_rewrite("and what documents are required with it?", history)
@@ -88,7 +94,10 @@ async def test_node_rewrite_updates_question_and_context():
     history = [
         {
             "role": "user",
-            "content": "How many business days in advance must outpatient surgery prior auths be submitted?",
+            "content": (
+                "How many business days in advance must outpatient surgery prior auths be "
+                "submitted?"
+            ),
         },
         {"role": "assistant", "content": "5 business days."},
     ]

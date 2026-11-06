@@ -60,7 +60,7 @@ def is_followup_question(question: str) -> bool:
         return True
     if _PRONOUN_PATTERN.search(q_clean):
         return True
-    if any(
+    return any(
         phrase in q_clean.lower()
         for phrase in (
             "with it",
@@ -68,9 +68,7 @@ def is_followup_question(question: str) -> bool:
             "for that",
             "about that",
         )
-    ):
-        return True
-    return False
+    )
 
 
 def _extract_recent_topic(history: list[dict[str, str]]) -> str | None:
@@ -157,7 +155,9 @@ def heuristic_rewrite(
             is_followup=True,
             rewritten_question=q_clean,
             needs_clarification=True,
-            clarifying_question="Could you please clarify which document or procedure you are referring to?",
+            clarifying_question=(
+                "Could you please clarify which document or procedure you are referring to?"
+            ),
         )
 
     topic = _extract_recent_topic(history)
@@ -166,7 +166,9 @@ def heuristic_rewrite(
             is_followup=True,
             rewritten_question=q_clean,
             needs_clarification=True,
-            clarifying_question="Could you please clarify which document or procedure you are referring to?",
+            clarifying_question=(
+                "Could you please clarify which document or procedure you are referring to?"
+            ),
         )
 
     # Perform targeted pronoun / ellipsis replacement
@@ -187,7 +189,10 @@ def heuristic_rewrite(
     rewritten = re.sub(r"\bit\b", topic, rewritten, flags=re.IGNORECASE)
     # Replace "they" / "them"
     if "how recent must they be" in rewritten.lower():
-        rewritten = f"How recent must clinical consultation notes be when submitting an auth request for {topic}?"
+        rewritten = (
+            "How recent must clinical consultation notes be when submitting an auth request "
+            f"for {topic}?"
+        )
     else:
         rewritten = re.sub(r"\bthey\b", f"documents for {topic}", rewritten, flags=re.IGNORECASE)
         rewritten = re.sub(r"\bthem\b", f"documents for {topic}", rewritten, flags=re.IGNORECASE)
@@ -234,8 +239,10 @@ async def rewrite_followup_question(
                 f"Current Question: {question}\n\n"
                 "Task: If the current question refers to previous conversation context "
                 "(e.g. using pronouns like 'it', 'that', or elliptical phrases), rewrite it "
-                "into a clear, complete, self-contained question that can be answered independently. "
-                "If it has an unclear referent that cannot be resolved from the conversation history, "
+                "into a clear, complete, self-contained question that can be "
+                "answered independently. "
+                "If it has an unclear referent that cannot be resolved from the "
+                "conversation history, "
                 "set needs_clarification=true and provide a short clarifying_question. "
                 "If it is already standalone, return it unchanged."
             )

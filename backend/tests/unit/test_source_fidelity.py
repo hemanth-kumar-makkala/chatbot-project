@@ -41,7 +41,7 @@ def test_apex_diagnostic_imaging_sla_exact_cells() -> None:
 
 
 def test_prior_auth_guide_source_fidelity_no_imaging_requisition() -> None:
-    """Verify prior_auth_guide.pdf text mentions diagnostic imaging reports, not imaging requisition."""
+    """Check prior auth guide wording for imaging reports, not requisitions."""
     pdf_path = DOCS_DIR / "prior_auth_guide.pdf"
     assert pdf_path.is_file(), f"Missing {pdf_path}"
 

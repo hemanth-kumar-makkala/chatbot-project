@@ -240,6 +240,55 @@ def _load_profile_models(profile: str, config_path: Path | None = None) -> dict[
     return models_by_role
 
 
+def _load_profile_generation_limits(
+    profile: str, config_path: Path | None = None
+) -> dict[str, dict[str, int]]:
+    """Load optional per-model/per-role output token limits from a profile YAML file."""
+    if config_path is not None:
+        target_path = config_path
+    else:
+        backend_root = Path(__file__).resolve().parent.parent.parent.parent
+        target_path = backend_root / "config" / "profiles" / (profile + ".yaml")
+
+    try:
+        with open(target_path, encoding="utf-8") as f:
+            parsed = yaml.safe_load(f)
+    except Exception as exc:
+        raise ConfigurationError(
+            message="Malformed profile generation limits",
+            error_code="CONFIGURATION_ERROR",
+        ) from exc
+
+    section = parsed.get("generation_limits", {}) if isinstance(parsed, dict) else {}
+    if not isinstance(section, dict):
+        raise ConfigurationError(
+            message="Malformed profile generation limits",
+            error_code="CONFIGURATION_ERROR",
+        )
+
+    limits: dict[str, dict[str, int]] = {}
+    for model_name, role_limits in section.items():
+        if not isinstance(model_name, str) or not isinstance(role_limits, dict):
+            raise ConfigurationError(
+                message="Malformed profile generation limits",
+                error_code="CONFIGURATION_ERROR",
+            )
+        limits[model_name] = {}
+        for role_name, token_limit in role_limits.items():
+            if (
+                role_name not in {role.value for role in ModelRole}
+                or not isinstance(token_limit, int)
+                or isinstance(token_limit, bool)
+                or token_limit <= 0
+            ):
+                raise ConfigurationError(
+                    message="Malformed profile generation limits",
+                    error_code="CONFIGURATION_ERROR",
+                )
+            limits[model_name][role_name] = token_limit
+    return limits
+
+
 class OllamaModelProvider(ModelProvider):
     """ModelProvider adapter communicating with local Ollama service."""
 
@@ -252,6 +301,7 @@ class OllamaModelProvider(ModelProvider):
         image_processor: ImageProcessor | None = None,
         timeout_seconds: float = 120.0,
         chat_model: str | None = None,
+        vision_model: str | None = None,
     ) -> None:
         if base_url is not None:
             cleaned_url = base_url.strip()
@@ -277,6 +327,9 @@ class OllamaModelProvider(ModelProvider):
 
         self._profile = profile
         self._models = _load_profile_models(profile=profile, config_path=config_path)
+        self._generation_limits = _load_profile_generation_limits(
+            profile=profile, config_path=config_path
+        )
 
         # Allow configured chat_model setting or CHAT_MODEL env var to override
         # chat and generation roles
@@ -290,6 +343,14 @@ class OllamaModelProvider(ModelProvider):
             if is_vision_model(cm):
                 self._models["vision"] = cm
             # Note: If cm has no vision, vision role retains profile model (e.g. qwen3-vl:4b)
+
+        if vision_model is not None:
+            if not vision_model.strip():
+                raise ConfigurationError(
+                    message="VISION_MODEL setting is empty",
+                    error_code="CONFIGURATION_ERROR",
+                )
+            self._models["vision"] = vision_model.strip()
 
         if image_processor is not None:
             self._image_processor = image_processor
@@ -499,6 +560,9 @@ class OllamaModelProvider(ModelProvider):
             )
         model_name = self._models[role_str]
         model_id = model_name
+        configured_token_limit = self._generation_limits.get(model_name, {}).get(role_str)
+        if configured_token_limit is not None:
+            max_tokens = max(max_tokens or 0, configured_token_limit)
 
         if "qwen" in model_name.lower():
             chat_messages = [{"role": m.role, "content": m.content} for m in messages]

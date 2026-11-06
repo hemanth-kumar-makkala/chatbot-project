@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from openpyxl import load_workbook
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -33,6 +35,7 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 from dotenv import load_dotenv
+from scripts.comparison_grader import table_answer_contains_only_expected_values
 
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_DIR / ".env")
@@ -84,6 +87,22 @@ with open(ACCEPTED_PLANS_CSV_PATH, encoding="utf-8") as f:
     for row in csv.DictReader(clean_lines):
         CSV_PLANS.append(row)
 
+EXPECTED_PLAN_VALUES = {
+    value for plan in CSV_PLANS for value in [*plan.keys(), *plan.values()] if value
+}
+TURNAROUND_XLSX_PATH = PROJECT_ROOT / "evals" / "golden" / "docs" / "pa_turnaround_times.xlsx"
+workbook = load_workbook(TURNAROUND_XLSX_PATH, read_only=True, data_only=True)
+try:
+    UNRELATED_TABLE_VALUES = {
+        str(cell.value).strip()
+        for worksheet in workbook.worksheets
+        for row in worksheet.iter_rows()
+        for cell in row
+        if cell.value is not None and str(cell.value).strip()
+    } - EXPECTED_PLAN_VALUES
+finally:
+    workbook.close()
+
 
 def _check_q1(ans: str, state: str, src: str) -> bool:
     """Q1: HORIZON VALLEY HEALTH CLINIC data please."""
@@ -133,17 +152,16 @@ def _check_q4(ans: str, state: str, src: str) -> bool:
 
 
 def _check_q5(ans: str, state: str, src: str) -> bool:
-    """Q5: What insurance plans are accepted? Compare cells to CSV."""
-    for r in CSV_PLANS:
-        for col_name, cell_val in r.items():
-            if col_name not in ans or cell_val not in ans:
-                return False
-    if "blue horizon" in ans.lower() or "crv-epo-03" in ans.lower():
-        return False
+    """Q5: Require all accepted-plan cells and reject unrelated XLSX values."""
+    has_exact_rows = table_answer_contains_only_expected_values(
+        ans,
+        expected_values=EXPECTED_PLAN_VALUES,
+        unexpected_values=UNRELATED_TABLE_VALUES,
+    )
     only_accepted_plans = (
         "accepted_plans.csv" in src and "front_desk" not in src and "prior_auth" not in src
     )
-    return only_accepted_plans
+    return has_exact_rows and only_accepted_plans
 
 
 def _check_q6(ans: str, state: str, src: str) -> bool:

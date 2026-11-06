@@ -52,7 +52,7 @@ def _make_runtime(ctx: GraphRuntimeContext) -> Runtime[GraphRuntimeContext]:
 
 @pytest.mark.asyncio
 async def test_colliding_sheet_and_row_indices_validate_cleanly() -> None:
-    """When two spreadsheets share Sheet1 Row 1, correct candidate row is matched without refusal."""
+    """Shared sheet/row indices still validate the selected candidate without refusal."""
     ctx = _make_context()
 
     # Candidate 1 from pa_turnaround_times.xlsx (Sheet1, Row 1)
@@ -96,7 +96,8 @@ async def test_colliding_sheet_and_row_indices_validate_cleanly() -> None:
     ctx.evidence_text = {
         "xlsx-row-1": (
             "[Document: pa_turnaround_times.xlsx, Sheet: Sheet1, Row: 1] "
-            "Payer Name: Apex Health Insurance, Service Category: Diagnostic Imaging, Standard SLA: 48 Hours"
+            "Payer Name: Apex Health Insurance, Service Category: Diagnostic Imaging, "
+            "Standard SLA: 48 Hours"
         ),
         "csv-row-1": (
             "[Document: accepted_plans.csv, Sheet: Sheet1, Row: 1] "
@@ -173,7 +174,9 @@ async def test_colliding_sheet_and_row_cell_tampering_still_rejected() -> None:
         "csv-row-1": tc_csv,
     }
     ctx.evidence_text = {
-        "xlsx-row-1": "[Document: pa_turnaround_times.xlsx, Sheet: Sheet1, Row: 1] Standard SLA: 48 Hours",
+        "xlsx-row-1": (
+            "[Document: pa_turnaround_times.xlsx, Sheet: Sheet1, Row: 1] Standard SLA: 48 Hours"
+        ),
         "csv-row-1": "[Document: accepted_plans.csv, Sheet: Sheet1, Row: 1] Deductible: $250.00",
     }
 

@@ -10,7 +10,10 @@ from pathlib import Path
 
 
 def load_dotenv(explicit_path: str | Path | None = None) -> None:
-    """Load key-value pairs from .env into os.environ."""
+    """Load key-value pairs from .env into os.environ unless explicitly disabled."""
+    if os.environ.get("HERMES_SKIP_DOTENV") == "1":
+        return
+
     candidates: list[Path]
     if explicit_path is not None:
         candidates = [Path(explicit_path)]

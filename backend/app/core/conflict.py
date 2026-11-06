@@ -11,6 +11,7 @@ Enforces:
 
 from __future__ import annotations
 
+import contextlib
 import re
 from datetime import datetime
 from typing import NamedTuple
@@ -73,18 +74,14 @@ def extract_document_version_metadata(
     version_num: float | None = None
     fn_v_match = re.search(r"v(\d+(?:\.\d+)?)", doc_name, re.IGNORECASE)
     if fn_v_match:
-        try:
+        with contextlib.suppress(ValueError):
             version_num = float(fn_v_match.group(1))
-        except ValueError:
-            pass
 
     if version_num is None:
         text_v_match = re.search(r"version\s*(\d+(?:\.\d+)?)", combined, re.IGNORECASE)
         if text_v_match:
-            try:
+            with contextlib.suppress(ValueError):
                 version_num = float(text_v_match.group(1))
-            except ValueError:
-                pass
 
     effective_date = _extract_date(combined)
     is_superseding = bool(
@@ -157,7 +154,6 @@ def format_version_conflict_answer(
     newer_quote: str,
     newer_val: str,
     older_doc: str,
-    older_quote: str,
     older_val: str,
 ) -> str:
     """Format answer answering from newer version with a short line noting the older version."""

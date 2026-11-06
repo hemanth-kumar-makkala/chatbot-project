@@ -3,7 +3,8 @@
 Tests:
 1. Multi-turn follow-up question rewrite using conversation history (Step 3.j context).
 2. Clarifying question triggered when follow-up has no antecedent in history.
-3. Strict cross-tenant isolation: Tenant B cannot access or leak Tenant A's conversation history (returns 404).
+3. Strict cross-tenant isolation: Tenant B cannot access or leak Tenant A's conversation history
+   (returns 404).
 4. Strict cross-session isolation: Session 2 does not leak or use Session 1's history.
 5. Two additional 3-turn follow-up chains proving multi-turn continuity.
 """
@@ -133,8 +134,10 @@ async def test_multiturn_followup_chains_and_clarification(
                     page_id=page_id,
                     text=(
                         "Outpatient Prior Authorization Submission Guide (Policy 2026-PA-01). "
-                        "Prior authorization requests for outpatient surgery require submission at least 5 business days in advance. "
-                        "Documentation Checklist: Complete clinical consultation notes within past 30 days. "
+                        "Prior authorization requests for outpatient surgery require submission at "
+                        "least 5 business days in advance. "
+                        "Documentation Checklist: Complete clinical consultation notes within "
+                        "past 30 days. "
                         "Diagnostic imaging reports and relevant laboratory panels. "
                         "Proposed CPT procedure codes and ICD-10 diagnostic indications."
                     ),
@@ -161,7 +164,10 @@ async def test_multiturn_followup_chains_and_clarification(
                 "/v1/questions",
                 json={
                     "assistant_id": str(asst_id),
-                    "question_text": "How many business days in advance must outpatient surgery prior auths be submitted?",
+                    "question_text": (
+                        "How many business days in advance must outpatient surgery prior auths "
+                        "be submitted?"
+                    ),
                 },
                 cookies=cookies,
                 headers=headers,
@@ -229,7 +235,9 @@ async def test_multiturn_followup_chains_and_clarification(
                 "/v1/questions",
                 json={
                     "assistant_id": str(asst_id),
-                    "question_text": "What is the standard SLA for Apex Health Insurance diagnostic imaging?",
+                    "question_text": (
+                        "What is the standard SLA for Apex Health Insurance diagnostic imaging?"
+                    ),
                 },
                 cookies=cookies,
                 headers=headers,
@@ -373,7 +381,10 @@ async def test_multiturn_cross_tenant_and_cross_session_isolation(
                 "/v1/questions",
                 json={
                     "assistant_id": str(asst_a),
-                    "question_text": "How many business days in advance must outpatient surgery prior auths be submitted?",
+                    "question_text": (
+                        "How many business days in advance must outpatient surgery prior auths "
+                        "be submitted?"
+                    ),
                 },
                 cookies=cookies_a,
                 headers={"X-CSRF-Token": csrf_a},

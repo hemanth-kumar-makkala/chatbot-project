@@ -14,35 +14,22 @@ No vendor names or environment reads in app/core (Architecture Boundary Invarian
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 
 from app.ports.model_provider import is_cloud_model, is_vision_model
 
-# Authoritative set of synthetic golden document filenames
-GOLDEN_SYNTHETIC_DOCS: frozenset[str] = frozenset(
-    {
-        "accepted_plans.csv",
-        "clean_fax.pdf",
-        "clinical_protocols_manual.pdf",
-        "compliance_notice.pdf",
-        "eligibility_checklist.pdf",
-        "faint_fax_2page.pdf",
-        "fee_schedule.pdf",
-        "front_desk_policy_v1.pdf",
-        "front_desk_policy_v2.pdf",
-        "injected_coverage_override.pdf",
-        "injected_fax_redirect.pdf",
-        "injected_visual_hidden.pdf",
-        "invalid_npi_fax.pdf",
-        "missing_field_fax.pdf",
-        "pa_turnaround_times.xlsx",
-        "payer_contact_table.pdf",
-        "prior_auth_guide.pdf",
-        "skewed_fax.pdf",
-        "unreadable_field_fax.pdf",
-    }
-)
+GOLDEN_DOCS_PATH = Path(__file__).resolve().parents[3] / "evals" / "golden" / "docs"
+GOLDEN_SYNTHETIC_HASHES_BY_NAME: dict[str, str] = {
+    path.name.lower(): hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in sorted(GOLDEN_DOCS_PATH.iterdir())
+    if path.is_file()
+}
+GOLDEN_SYNTHETIC_SHA256: frozenset[str] = frozenset(GOLDEN_SYNTHETIC_HASHES_BY_NAME.values())
+
+# Kept for display and compatibility; identity is enforced by content hash, never filename.
+GOLDEN_SYNTHETIC_DOCS: frozenset[str] = frozenset(GOLDEN_SYNTHETIC_HASHES_BY_NAME)
 
 
 class CloudModelSafetyLockError(Exception):
@@ -61,24 +48,27 @@ class CloudModelSafetyLockError(Exception):
 def verify_cloud_model_safety_lock(
     model_name: str,
     active_document_titles: Iterable[str],
+    active_document_hashes: Iterable[str] | None = None,
     is_cloud_override: bool = False,
 ) -> None:
-    """Verify that every active document is a synthetic golden document if a cloud model is used.
-
-    Raises:
-        CloudModelSafetyLockError: If a cloud model is used and any active document is not golden.
-    """
+    """Allow cloud models only when every active stored-file hash is golden."""
     if not is_cloud_model(model_name, is_cloud_override=is_cloud_override):
         return
 
-    for doc_title in active_document_titles:
-        clean_title = Path(doc_title.strip()).name.lower()
-        if clean_title not in GOLDEN_SYNTHETIC_DOCS:
-            raise CloudModelSafetyLockError(filename=doc_title, model_name=model_name)
+    titles = list(active_document_titles)
+    hashes = list(active_document_hashes or [])
+    if len(hashes) != len(titles):
+        filename = titles[0] if titles else "(unverifiable active document)"
+        raise CloudModelSafetyLockError(filename=filename, model_name=model_name)
+    for title, content_hash in zip(titles, hashes, strict=True):
+        if content_hash.lower() not in GOLDEN_SYNTHETIC_SHA256:
+            raise CloudModelSafetyLockError(filename=title, model_name=model_name)
 
 
 __all__ = [
     "GOLDEN_SYNTHETIC_DOCS",
+    "GOLDEN_SYNTHETIC_HASHES_BY_NAME",
+    "GOLDEN_SYNTHETIC_SHA256",
     "CloudModelSafetyLockError",
     "is_cloud_model",
     "is_vision_model",

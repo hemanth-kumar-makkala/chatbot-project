@@ -11,10 +11,15 @@ Enforces:
 
 from __future__ import annotations
 
+from hashlib import sha256
+from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 
+from app.api.config import ApiSettings
+from app.api.routes import questions as questions_route
 from app.core.graph import (
     GraphPorts,
     GraphRuntimeContext,
@@ -24,11 +29,13 @@ from app.core.graph import (
 )
 from app.core.safety_lock import (
     GOLDEN_SYNTHETIC_DOCS,
+    GOLDEN_SYNTHETIC_HASHES_BY_NAME,
     CloudModelSafetyLockError,
     is_cloud_model,
     is_vision_model,
     verify_cloud_model_safety_lock,
 )
+from app.ports.storage import StorageKey
 from app.ports.types import TenantContext, UserRole
 
 
@@ -77,6 +84,9 @@ def test_safety_lock_allows_golden_synthetic_documents() -> None:
     verify_cloud_model_safety_lock(
         model_name="beam:cloud",
         active_document_titles=golden_docs,
+        active_document_hashes=[
+            GOLDEN_SYNTHETIC_HASHES_BY_NAME[Path(doc).name.lower()] for doc in golden_docs
+        ],
     )
 
 
@@ -99,6 +109,10 @@ def test_safety_lock_refuses_non_golden_document() -> None:
         verify_cloud_model_safety_lock(
             model_name="beam:cloud",
             active_document_titles=active_docs,
+            active_document_hashes=[
+                GOLDEN_SYNTHETIC_HASHES_BY_NAME["prior_auth_guide.pdf"],
+                sha256(b"non-golden document").hexdigest(),
+            ],
         )
 
     err_msg = str(exc_info.value)
@@ -107,6 +121,18 @@ def test_safety_lock_refuses_non_golden_document() -> None:
     assert "beam:cloud" in err_msg
     assert exc_info.value.filename == "Work_Tracker_FINAL.xlsx"
     assert exc_info.value.model_name == "beam:cloud"
+
+
+def test_safety_lock_rejects_non_golden_bytes_even_when_renamed_like_golden() -> None:
+    renamed_title = "prior_auth_guide.pdf"
+    forged_file_hash = sha256(b"renamed real document content").hexdigest()
+
+    with pytest.raises(CloudModelSafetyLockError):
+        verify_cloud_model_safety_lock(
+            model_name="beam:cloud",
+            active_document_titles=[renamed_title],
+            active_document_hashes=[forged_file_hash],
+        )
 
 
 def test_safety_lock_handles_paths_and_casing() -> None:
@@ -118,6 +144,10 @@ def test_safety_lock_handles_paths_and_casing() -> None:
     verify_cloud_model_safety_lock(
         model_name="beam:cloud",
         active_document_titles=active_docs,
+        active_document_hashes=[
+            GOLDEN_SYNTHETIC_HASHES_BY_NAME["prior_auth_guide.pdf"],
+            GOLDEN_SYNTHETIC_HASHES_BY_NAME["accepted_plans.csv"],
+        ],
     )
 
     bad_docs = [
@@ -129,6 +159,58 @@ def test_safety_lock_handles_paths_and_casing() -> None:
             active_document_titles=bad_docs,
         )
     assert "Patient_PHI_2026.pdf" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_cloud_lock_hashes_original_bytes_from_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class StubStorage:
+        async def get(self, key: StorageKey) -> bytes:
+            assert key.path == "documents/version-1/original.pdf"
+            return b"stored synthetic bytes"
+
+    monkeypatch.setattr(
+        questions_route,
+        "create_storage_backend",
+        lambda **_kwargs: StubStorage(),
+    )
+    settings = ApiSettings(profile="mock", storage_dir=str(tmp_path))
+
+    hashes = await questions_route._hash_active_stored_documents(
+        settings,
+        UUID("00000000-0000-0000-0000-000000000001"),
+        [("renamed.pdf", "version-1", "pdf")],
+        "beam:cloud",
+    )
+
+    assert hashes == [sha256(b"stored synthetic bytes").hexdigest()]
+
+
+@pytest.mark.asyncio
+async def test_node_guard_enforces_cloud_safety_for_vision_model() -> None:
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(is_mock_profile=True, vision_model="nvidia:mistralai/vision"),
+        tenant=TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-1",
+            role=UserRole.STAFF,
+            session_id="session-vision",
+        ),
+        question_text="Read this document image",
+        active_document_titles=["non-golden.pdf"],
+    )
+    runtime = MagicMock()
+    runtime.context = ctx
+
+    result = await node_guard_input(
+        {"request_id": "req-vision", "tenant_id": "tenant", "status": "pending"},
+        runtime,
+    )
+
+    assert result["status"] == "refusal"
+    assert result["public_error_ref"] == "ERR-CLOUD-SAFETY-LOCK"
+    assert "non-golden.pdf" in ctx.response_text
 
 
 @pytest.mark.asyncio
@@ -167,6 +249,36 @@ async def test_node_guard_input_enforces_cloud_safety_lock() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assess_evidence_uses_independent_vision_model() -> None:
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(
+            is_mock_profile=True,
+            chat_model="beam:cloud",
+            vision_model="qwen3-vl:4b",
+            mock_evidence_state="VISUAL_REQUIRED",
+        ),
+        tenant=TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-1",
+            role=UserRole.STAFF,
+            session_id="vision-selection",
+        ),
+        question_text="Read the form",
+        chat_model="beam:cloud",
+    )
+    runtime = MagicMock()
+    runtime.context = ctx
+
+    result = await node_assess_evidence(
+        {"request_id": "req-vision-selection", "status": "in_progress", "evidence_ids": []},
+        runtime,
+    )
+
+    assert result["needs_vision"] is True
+    assert result["evidence_state"] == "VISUAL_REQUIRED"
+
+
+@pytest.mark.asyncio
 async def test_node_assess_evidence_skips_vision_for_non_vision_cloud_model() -> None:
     """When a non-vision model is used and visual evidence is requested,
     assess_evidence skips vision read.
@@ -175,6 +287,7 @@ async def test_node_assess_evidence_skips_vision_for_non_vision_cloud_model() ->
         ports=GraphPorts(
             is_mock_profile=True,
             chat_model="beam:cloud",
+            vision_model="beam:cloud",
             mock_evidence_state="VISUAL_REQUIRED",
         ),
         tenant=TenantContext(

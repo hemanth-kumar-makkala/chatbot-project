@@ -1,9 +1,10 @@
 """Question and answer dispatch routes."""
 
 import contextlib
+import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -69,11 +70,59 @@ def get_compiled_graph():
     return _compiled_graph
 
 
+async def _hash_active_stored_documents(
+    settings: ApiSettings,
+    tenant_uuid: UUID,
+    rows: Sequence[Any],
+    model_name: str,
+) -> list[str]:
+    """Hash original bytes from tenant storage; refuse cloud use if any cannot be verified."""
+    storage = create_storage_backend(profile=settings.profile, base_dir=settings.storage_dir)
+    hashes: list[str] = []
+    for title, version_id, extension in rows:
+        if not extension:
+            raise CloudModelSafetyLockError(str(title), model_name)
+        key = StorageKey(
+            tenant_id=tenant_uuid,
+            path=f"documents/{version_id}/original.{extension}",
+        )
+        try:
+            file_bytes = await storage.get(key)
+        except Exception as exc:
+            raise CloudModelSafetyLockError(str(title), model_name) from exc
+        hashes.append(hashlib.sha256(file_bytes).hexdigest())
+    return hashes
+
+
+async def _verify_active_documents_for_cloud_models(
+    settings: ApiSettings,
+    tenant_uuid: UUID,
+    rows: Sequence[Any],
+) -> list[str]:
+    """Hash active files once and validate every selected cloud answer/vision model."""
+    cloud_models = list(
+        dict.fromkeys(
+            model for model in (settings.chat_model, settings.vision_model) if is_cloud_model(model)
+        )
+    )
+    if not cloud_models:
+        return []
+    hashes = await _hash_active_stored_documents(settings, tenant_uuid, rows, cloud_models[0])
+    titles = [str(row[0]) for row in rows]
+    for model_name in cloud_models:
+        verify_cloud_model_safety_lock(
+            model_name=model_name,
+            active_document_titles=titles,
+            active_document_hashes=hashes,
+        )
+    return hashes
+
+
 def get_engine_ports(settings: ApiSettings) -> GraphPorts:
     """Retrieve or construct profile-scoped GraphPorts instance."""
-    if settings.profile in _ports_cache:
+    if settings.profile == "mock" and settings.profile in _ports_cache:
         return _ports_cache[settings.profile]
-    cache_key = f"{settings.profile}:{settings.chat_model}"
+    cache_key = f"{settings.profile}:{settings.chat_model}:{settings.vision_model}"
     if cache_key in _ports_cache:
         return _ports_cache[cache_key]
 
@@ -81,7 +130,21 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
     if profile == "mock":
         ports = create_mock_ports()
     else:
-        model_provider = create_model_provider(profile, chat_model=settings.chat_model)
+        model_provider = create_model_provider(
+            profile,
+            chat_model=settings.chat_model,
+            vision_model=settings.vision_model,
+            nvidia_base_url=settings.nvidia_base_url,
+            nvidia_api_key=(
+                settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+            ),
+            inception_base_url=settings.inception_base_url,
+            inception_api_key=(
+                settings.inception_api_key.get_secret_value()
+                if settings.inception_api_key
+                else None
+            ),
+        )
         retriever = create_retriever(profile)
         reranker = None
         if profile in ("desktop-gpu", "home-gpu"):
@@ -91,6 +154,7 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             retriever=retriever,
             reranker=reranker,
             chat_model=settings.chat_model,
+            vision_model=settings.vision_model,
         )
 
     _ports_cache[cache_key] = ports
@@ -340,22 +404,27 @@ async def ask_question(
             Document.active_version_id.is_not(None),
         )
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
-        active_docs_stmt = select(Document.title).where(
-            Document.tenant_id == tenant_uuid,
-            Document.is_retired.is_(False),
-            Document.active_version_id.is_not(None),
+        active_docs_stmt = (
+            select(Document.title, DocumentVersion.id, DocumentVersion.file_extension)
+            .join(DocumentVersion, Document.active_version_id == DocumentVersion.id)
+            .where(
+                Document.tenant_id == tenant_uuid,
+                Document.is_retired.is_(False),
+                Document.active_version_id.is_not(None),
+                DocumentVersion.tenant_id == tenant_uuid,
+            )
         )
-        active_doc_titles = [row[0] for row in (await db_session.execute(active_docs_stmt)).all()]
+        active_doc_rows = (await db_session.execute(active_docs_stmt)).all()
+        active_doc_titles = [row[0] for row in active_doc_rows]
+        active_doc_hashes: list[str] = []
 
-        # Safety lock check for cloud models
-        if is_cloud_model(settings.chat_model):
-            try:
-                verify_cloud_model_safety_lock(
-                    model_name=settings.chat_model,
-                    active_document_titles=active_doc_titles,
-                )
-            except CloudModelSafetyLockError as lock_err:
-                raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        # Safety lock validates every selected cloud answer and vision model.
+        try:
+            active_doc_hashes = await _verify_active_documents_for_cloud_models(
+                settings, tenant_uuid, active_doc_rows
+            )
+        except CloudModelSafetyLockError as lock_err:
+            raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
 
         # 4. Load visual page metadata inside the pre-graph DB transaction
         page_images: dict[str, bytes] = {}
@@ -398,6 +467,7 @@ async def ask_question(
         conversation_history=history_turns,
         active_document_count=doc_count,
         active_document_titles=active_doc_titles,
+        active_document_hashes=active_doc_hashes,
         chat_model=settings.chat_model,
         page_images=page_images,
         page_ocr_confidences=page_ocr_confidences,
@@ -593,23 +663,27 @@ async def ask_question_stream(
             Document.active_version_id.is_not(None),
         )
         doc_count = (await db_session.execute(doc_count_query)).scalar() or 0
-        active_docs_stmt = select(Document.title).where(
-            Document.tenant_id == tenant_uuid,
-            Document.is_retired.is_(False),
-            Document.active_version_id.is_not(None),
+        active_docs_stmt = (
+            select(Document.title, DocumentVersion.id, DocumentVersion.file_extension)
+            .join(DocumentVersion, Document.active_version_id == DocumentVersion.id)
+            .where(
+                Document.tenant_id == tenant_uuid,
+                Document.is_retired.is_(False),
+                Document.active_version_id.is_not(None),
+                DocumentVersion.tenant_id == tenant_uuid,
+            )
         )
-        active_doc_titles = [row[0] for row in (await db_session.execute(active_docs_stmt)).all()]
+        active_doc_rows = (await db_session.execute(active_docs_stmt)).all()
+        active_doc_titles = [row[0] for row in active_doc_rows]
+        active_doc_hashes: list[str] = []
 
-        # Safety lock check for cloud models
-        settings = get_api_settings(request)
-        if is_cloud_model(settings.chat_model):
-            try:
-                verify_cloud_model_safety_lock(
-                    model_name=settings.chat_model,
-                    active_document_titles=active_doc_titles,
-                )
-            except CloudModelSafetyLockError as lock_err:
-                raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        # Safety lock validates every selected cloud answer and vision model.
+        try:
+            active_doc_hashes = await _verify_active_documents_for_cloud_models(
+                settings, tenant_uuid, active_doc_rows
+            )
+        except CloudModelSafetyLockError as lock_err:
+            raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
 
     async def event_generator() -> AsyncIterator[str]:
         settings = get_api_settings(request)
@@ -622,6 +696,7 @@ async def ask_question_stream(
             conversation_history=history_turns,
             active_document_count=doc_count,
             active_document_titles=active_doc_titles,
+            active_document_hashes=active_doc_hashes,
             chat_model=settings.chat_model,
         )
         state: GraphState = {

@@ -261,6 +261,42 @@ async def test_header_row_offset_skips_leading_empty_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_xlsx_header_detection_skips_synthetic_banner_row() -> None:
+    """A single-cell title/banner before the real header is not the table header."""
+    xlsx_bytes = _create_sample_xlsx(
+        {
+            "Sheet1": [
+                ["*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"],
+                ["Payer Name", "Service Category", "Urgency", "Standard SLA"],
+                ["Apex Health Insurance", "Diagnostic Imaging", "Routine", "48 Hours"],
+            ]
+        }
+    )
+
+    result = await BuiltinTableExtractor().extract_tables(
+        xlsx_bytes, "pa_turnaround_times.xlsx", XLSX_MIME
+    )
+
+    assert result.sheets[0].headers == ["Payer Name", "Service Category", "Urgency", "Standard SLA"]
+    assert result.sheets[0].rows[0]["cells"]["Standard SLA"] == "48 Hours"
+
+
+@pytest.mark.asyncio
+async def test_csv_header_detection_skips_synthetic_banner_row() -> None:
+    """CSV header selection also skips an obvious synthetic title/banner row."""
+    csv_bytes = (
+        b"*** SYNTHETIC TEST DOCUMENT - ACCEPTED PLANS ***\n"
+        b"Plan Code,Payer Name,Status\n"
+        b"APX-HMO-01,Apex Health Insurance,Accepted\n"
+    )
+
+    result = await BuiltinTableExtractor().extract_tables(csv_bytes, "plans.csv", CSV_MIME)
+
+    assert result.sheets[0].headers == ["Plan Code", "Payer Name", "Status"]
+    assert result.sheets[0].rows[0]["cells"]["Plan Code"] == "APX-HMO-01"
+
+
+@pytest.mark.asyncio
 async def test_workbook_cell_limit_guard_raises_error() -> None:
     """Item 8: Total workbook cells exceeding 500,000 raises FileValidationError."""
     xlsx_bytes = _create_sample_xlsx(
