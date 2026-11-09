@@ -26,6 +26,32 @@ def _default_cookie_secure() -> bool:
     return True
 
 
+def _default_cors_origins() -> list[str]:
+    """Read comma-separated CORS_ORIGINS from env, defaulting to http://localhost:3000."""
+    val = os.getenv("CORS_ORIGINS")
+    if val is not None and val.strip():
+        origins = [item.strip() for item in val.split(",") if item.strip()]
+        if origins:
+            return origins
+    return ["http://localhost:3000"]
+
+
+def _default_allow_bearer_auth() -> bool:
+    """Read ALLOW_BEARER_AUTH from env, defaulting to False (cookie-only)."""
+    val = os.getenv("ALLOW_BEARER_AUTH")
+    if val is not None:
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return False
+
+
+def _default_allowed_frame_ancestors() -> list[str]:
+    """Read comma-separated ALLOWED_FRAME_ANCESTORS from env, defaulting to empty (DENY)."""
+    val = os.getenv("ALLOWED_FRAME_ANCESTORS")
+    if val is not None and val.strip():
+        return [item.strip() for item in val.split(",") if item.strip()]
+    return []
+
+
 def _default_auth_hmac_key() -> str:
     """Secret key for client_ip_hash HMAC-SHA256 pseudonymization, loaded from .env."""
     return os.getenv("AUTH_HMAC_KEY", "dev-secret-auth-hmac-key-placeholder")
@@ -59,6 +85,20 @@ def _default_vision_model() -> str:
     return "qwen3-vl:4b"
 
 
+AuthProviderType = Literal["builtin", "jwt", "api_key"]
+
+
+def _default_auth_provider_type() -> AuthProviderType:
+    """Auth provider backend setting (AUTH_PROVIDER), defaulting to builtin."""
+    val = os.getenv("AUTH_PROVIDER")
+    if val is not None and val.strip():
+        norm = val.strip().lower()
+        if norm in ("builtin", "jwt", "api_key"):
+            return norm  # type: ignore[return-value]
+        return norm  # type: ignore[return-value]
+    return "builtin"
+
+
 def _optional_secret_env(name: str) -> SecretStr | None:
     """Load an optional hosted-provider secret without assigning a fallback credential."""
     val = os.getenv(name)
@@ -74,8 +114,12 @@ class ApiSettings(BaseModel):
     """Configuration settings for the FastAPI application."""
 
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"],
+        default_factory=_default_cors_origins,
         description="Allowed web origins for CORS. Never allow '*'.",
+    )
+    allowed_frame_ancestors: list[str] = Field(
+        default_factory=_default_allowed_frame_ancestors,
+        description="Allowed parent frame origins for CSP frame-ancestors. Never allow '*'.",
     )
     cookie_name: str = "session_token"
     csrf_cookie_name: str = "csrf_token"
@@ -86,7 +130,10 @@ class ApiSettings(BaseModel):
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     idle_timeout_minutes: int = 30
     absolute_timeout_hours: int = 24
-    allow_bearer_auth: bool = False  # Strictly cookie-only in standard app; True in test overrides
+    allow_bearer_auth: bool = Field(
+        default_factory=_default_allow_bearer_auth,
+        description="Allow Authorization: Bearer tokens when True; defaults to False.",
+    )
     login_rate_limit_max_attempts: int = 5
     login_rate_limit_window_seconds: int = 60
     question_rate_limit_user_max_requests: int = 30
@@ -129,6 +176,26 @@ class ApiSettings(BaseModel):
     )
     inception_api_key: SecretStr | None = Field(
         default_factory=lambda: _optional_secret_env("INCEPTION_API_KEY")
+    )
+    auth_provider_type: AuthProviderType = Field(
+        default_factory=_default_auth_provider_type,
+        description="Auth provider backend: builtin, jwt, or api_key (AUTH_PROVIDER).",
+    )
+    jwt_secret: SecretStr | None = Field(
+        default_factory=lambda: _optional_secret_env("JWT_SECRET"),
+        description="HS256 secret key for delegated JWT authentication (JWT_SECRET).",
+    )
+    jwt_issuer: str | None = Field(
+        default_factory=lambda: _optional_env("JWT_ISSUER"),
+        description="Optional expected issuer claim for delegated JWT authentication.",
+    )
+    jwt_audience: str | None = Field(
+        default_factory=lambda: _optional_env("JWT_AUDIENCE"),
+        description="Optional expected audience claim for delegated JWT authentication.",
+    )
+    api_keys_json: SecretStr | None = Field(
+        default_factory=lambda: _optional_secret_env("API_KEYS_JSON"),
+        description="JSON array of service API keys for delegated API key authentication.",
     )
 
     def __init__(self, **data: Any) -> None:

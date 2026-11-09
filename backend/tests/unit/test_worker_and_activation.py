@@ -63,6 +63,7 @@ class TestWorkerWiringGuards:
         assert isinstance(embedder, EmbeddingProvider)
 
         # 2. desktop-gpu and home-gpu return BgeM3EmbeddingProvider
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         fake_model = FakeSentenceTransformerModel()
         monkeypatch.setattr(
             "app.adapters.embedding.bge_m3.load_bge_m3_model",
@@ -146,6 +147,9 @@ class TestWorkerConfigurationAndSecurity:
     @pytest.mark.asyncio
     async def test_worker_context_accepted_by_worker_tenant_session(self) -> None:
         """worker_tenant_session accepts WorkerContext and configures app.current_tenant_id."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
         from app.db.session import worker_tenant_session
 
         tenant_id = str(uuid4())
@@ -156,7 +160,32 @@ class TestWorkerConfigurationAndSecurity:
         assert not hasattr(worker_ctx, "role")
         assert not hasattr(worker_ctx, "user_id")
 
-        async with worker_tenant_session(worker_ctx) as session:
+        configured_tenant: list[str] = [""]
+
+        class FakeSession:
+            @asynccontextmanager
+            async def begin(self):
+                yield
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                pass
+
+            async def execute(self, stmt: object, params: dict[str, object] | None = None):
+                res = MagicMock()
+                sql = str(stmt)
+                if "set_config" in sql and params and "tenant_id" in params:
+                    configured_tenant[0] = str(params["tenant_id"])
+                elif "current_setting" in sql:
+                    res.scalar.return_value = configured_tenant[0]
+                return res
+
+        async with worker_tenant_session(
+            worker_ctx,
+            session_factory=lambda: FakeSession(),  # type: ignore[arg-type]
+        ) as session:
             res = await session.execute(
                 text("SELECT current_setting('app.current_tenant_id', true)")
             )
@@ -164,10 +193,15 @@ class TestWorkerConfigurationAndSecurity:
             assert current_tenant == tenant_id
 
     @pytest.mark.asyncio
-    async def test_audit_event_from_worker_uses_system_worker_actor(self) -> None:
+    async def test_audit_event_from_worker_uses_system_worker_actor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Audit events from worker explicitly set user_id=None (actor is system worker)."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
         from uuid import UUID
 
+        import app.db.session as session_mod
         from app.db.models import AuditEvent
         from app.db.session import worker_tenant_session
         from app.observability.audit import AuditLogger
@@ -176,14 +210,34 @@ class TestWorkerConfigurationAndSecurity:
         job_id = str(uuid4())
         worker_ctx = WorkerContext(tenant_id=tenant_id, job_id=job_id)
 
-        # Seed tenant first
-        from app.db.session import unscoped_session
+        stored_events: dict[UUID, AuditEvent] = {}
 
-        async with unscoped_session() as session:
-            await session.execute(
-                text("INSERT INTO tenants (id, name) VALUES (:tid, 'Audit Worker Tenant')"),
-                {"tid": UUID(tenant_id)},
-            )
+        class FakeSession:
+            @asynccontextmanager
+            async def begin(self):
+                yield
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                pass
+
+            def add(self, obj: object) -> None:
+                if isinstance(obj, AuditEvent):
+                    stored_events[obj.id] = obj
+
+            async def commit(self) -> None:
+                pass
+
+            async def execute(self, stmt: object, params: dict[str, object] | None = None):
+                _ = params
+                res = MagicMock()
+                if "FROM audit_events" in str(stmt):
+                    res.scalar_one.return_value = next(iter(stored_events.values()))
+                return res
+
+        monkeypatch.setattr(session_mod, "get_app_session_factory", lambda: (lambda: FakeSession()))
 
         logger = AuditLogger()
         event_id = await logger.record_worker(

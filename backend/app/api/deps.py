@@ -33,6 +33,17 @@ def get_auth_provider(request: Request) -> AuthProvider:
     provider = create_auth_provider(
         idle_timeout_minutes=settings.idle_timeout_minutes,
         absolute_timeout_hours=settings.absolute_timeout_hours,
+        provider_type=settings.auth_provider_type,
+        jwt_secret=(
+            settings.jwt_secret.get_secret_value() if settings.jwt_secret is not None else None
+        ),
+        jwt_issuer=settings.jwt_issuer,
+        jwt_audience=settings.jwt_audience,
+        api_keys_json=(
+            settings.api_keys_json.get_secret_value()
+            if settings.api_keys_json is not None
+            else None
+        ),
     )
     return cast(AuthProvider, provider)
 
@@ -137,6 +148,11 @@ async def get_tenant_context_for_assistant(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
         tenant_id = str(tenant_uuid)
 
+    # Defense-in-depth: if session carries a bound tenant_id (delegated JWT/API key),
+    # it must match the assistant's tenant_id.
+    if session.tenant_id and session.tenant_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
+
     # Membership check applies to EVERYONE (including platform admin per rule 2)
     roles = await auth_provider.roles(session.user_id, tenant_id)
     if not roles:
@@ -200,6 +216,9 @@ async def get_client_admin_tenant_context_for_assistant(
         if tenant_uuid is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
         tenant_id = str(tenant_uuid)
+
+    if session.tenant_id and session.tenant_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant not found")
 
     roles = await auth_provider.roles(session.user_id, tenant_id)
     if not roles:

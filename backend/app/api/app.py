@@ -12,7 +12,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.config import ApiSettings
 from app.api.rate_limiter import LoginRateLimiter
-from app.api.routes import auth, conversations, feedback, health, knowledge, questions
+from app.api.routes import (
+    assistants,
+    auth,
+    conversations,
+    feedback,
+    health,
+    knowledge,
+    questions,
+    tenants,
+)
 from app.observability.logger import set_exception_scrubber
 from app.ports.errors import ConfigurationError
 from app.wiring import create_auth_provider, create_exception_scrubber
@@ -76,9 +85,11 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
             "INVALID_CONFIGURATION: invalid fields: session_upload_retention_hours"
         )
 
-    # Invariant: CORS origins must never include "*"
+    # Invariant: CORS origins and frame-ancestors must never include "*"
     if "*" in app_settings.cors_origins:
         raise ValueError("Wildcard CORS origin '*' is strictly prohibited by security rules.")
+    if "*" in app_settings.allowed_frame_ancestors:
+        raise ValueError("Wildcard frame-ancestors '*' is strictly prohibited by security rules.")
 
     app = FastAPI(
         title="Client Knowledge Assistant API",
@@ -86,6 +97,23 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         docs_url=None,  # Disabled in production-style hardening
         redoc_url=None,
     )
+
+    frame_ancestors = list(app_settings.allowed_frame_ancestors)
+
+    @app.middleware("http")
+    async def add_security_headers(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if frame_ancestors:
+            ancestors_str = " ".join(frame_ancestors)
+            response.headers.setdefault(
+                "Content-Security-Policy", f"frame-ancestors {ancestors_str}"
+            )
+        else:
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        return response
 
     # Attach shared state
     scrubber = create_exception_scrubber(app_settings.profile)
@@ -99,6 +127,19 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app.state.auth_provider = create_auth_provider(
         idle_timeout_minutes=app_settings.idle_timeout_minutes,
         absolute_timeout_hours=app_settings.absolute_timeout_hours,
+        provider_type=app_settings.auth_provider_type,
+        jwt_secret=(
+            app_settings.jwt_secret.get_secret_value()
+            if app_settings.jwt_secret is not None
+            else None
+        ),
+        jwt_issuer=app_settings.jwt_issuer,
+        jwt_audience=app_settings.jwt_audience,
+        api_keys_json=(
+            app_settings.api_keys_json.get_secret_value()
+            if app_settings.api_keys_json is not None
+            else None
+        ),
     )
 
     # Configure CORS
@@ -113,6 +154,8 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     # Include routers
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(tenants.router)
+    app.include_router(assistants.router)
     app.include_router(knowledge.router)
     app.include_router(questions.router)
     app.include_router(conversations.router)

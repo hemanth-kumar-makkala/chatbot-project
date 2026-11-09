@@ -531,6 +531,8 @@ async def node_route(
         computed_lang = "en"
 
         # Knowledge-base inventory check (Rule 3c: no model call)
+        import re
+
         q_clean = q.strip().rstrip("?.! ")
         inventory_phrases = (
             "what data do you have",
@@ -545,7 +547,12 @@ async def node_route(
             "list all documents",
             "list documents",
         )
-        if any(p in q_clean for p in inventory_phrases):
+        broad_overview_re = re.compile(
+            r"^(?!\b(?:what|which|how|when|where|who|why|and)\b)"
+            r"[a-z0-9\s,'&-]+?\b(?:data|documents|files|information)\s+please$",
+            re.IGNORECASE,
+        )
+        if any(p in q_clean for p in inventory_phrases) or bool(broad_overview_re.match(q_clean)):
             if ctx.active_document_count == 0:
                 ctx.response_text = (
                     "This assistant has no documents yet. Add files in Data sources to get started."

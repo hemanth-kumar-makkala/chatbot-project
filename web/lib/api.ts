@@ -644,3 +644,112 @@ export function getSafeRedirectUrl(target: string | null | undefined): string {
   }
   return trimmed;
 }
+
+/* Assistant & Workspace Management Methods (Stage 3.3) */
+
+export interface AssistantSummary {
+  id: string;
+  tenant_id: string;
+  name: string;
+  prompt_id: string;
+  prompt_version: string;
+  created_at: string;
+  document_count: number;
+}
+
+export async function listAssistants(): Promise<ApiResult<AssistantSummary[]>> {
+  return apiFetch<AssistantSummary[]>("/v1/assistants", { method: "GET" });
+}
+
+export async function createAssistant(name: string): Promise<ApiResult<AssistantSummary>> {
+  return apiFetch<AssistantSummary>("/v1/assistants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function updateAssistant(
+  assistantId: string,
+  data: { name?: string; prompt_id?: string; prompt_version?: string }
+): Promise<ApiResult<AssistantSummary>> {
+  return apiFetch<AssistantSummary>(`/v1/assistants/${encodeURIComponent(assistantId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAssistant(
+  assistantId: string
+): Promise<ApiResult<{ status: string; assistant_id: string }>> {
+  return apiFetch<{ status: string; assistant_id: string }>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export async function getAssistantInstructions(
+  assistantId: string
+): Promise<ApiResult<{ instructions: string }>> {
+  return apiFetch<{ instructions: string }>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/instructions`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+export async function saveAssistantInstructions(
+  assistantId: string,
+  instructions: string
+): Promise<ApiResult<{ instructions: string }>> {
+  return apiFetch<{ instructions: string }>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/instructions`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instructions }),
+    }
+  );
+}
+
+export async function getAssistantGuardrails(
+  assistantId: string
+): Promise<ApiResult<{ refusal_message: string; blocked_topics: string[] }>> {
+  return apiFetch<{ refusal_message: string; blocked_topics: string[] }>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/guardrails`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+export async function saveAssistantGuardrails(
+  assistantId: string,
+  data: { refusal_message?: string; blocked_topics?: string[] }
+): Promise<ApiResult<{ refusal_message: string; blocked_topics: string[] }>> {
+  return apiFetch<{ refusal_message: string; blocked_topics: string[] }>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/guardrails`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export interface WorkspaceMember {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
+
+export async function listWorkspaceMembers(): Promise<ApiResult<WorkspaceMember[]>> {
+  return apiFetch<WorkspaceMember[]>("/v1/tenant/members", { method: "GET" });
+}

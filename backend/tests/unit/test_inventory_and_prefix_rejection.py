@@ -147,6 +147,28 @@ async def test_inventory_query_returns_titles_and_headings_without_model(
 
 
 @pytest.mark.asyncio
+async def test_broad_clinic_overview_query_returns_inventory_without_model_call(
+    inventory_context: GraphRuntimeContext,
+) -> None:
+    """Q1 ('HORIZON VALLEY HEALTH CLINIC data please') returns active document titles
+    and headings without invoking the model or refusing with 'couldn't find'.
+    """
+    inventory_context.question_text = "HORIZON VALLEY HEALTH CLINIC data please"
+    state: GraphState = {"request_id": "r-q1"}
+
+    class MockRuntime:
+        context = inventory_context
+
+    res = await node_route(state, MockRuntime())  # type: ignore
+    assert res["status"] == "completed"
+    assert "clean_fax.pdf" in inventory_context.response_text
+    assert "prior_auth_guide.pdf" in inventory_context.response_text
+    assert "couldn't find" not in inventory_context.response_text.lower()
+    assert "couldn't confirm" not in inventory_context.response_text.lower()
+    assert inventory_context.ports.model_provider.call_count == 0  # type: ignore
+
+
+@pytest.mark.asyncio
 async def test_required_documents_followup_does_not_trigger_inventory(
     inventory_context: GraphRuntimeContext,
 ) -> None:

@@ -86,20 +86,59 @@ class TestBuiltinAuthProviderUnit:
     async def test_authenticate_success_and_session_resolution(
         self,
         auth_provider: BuiltinAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
         runtime_test_password: str,
     ) -> None:
         """Authenticating valid credentials yields session token resolvable via session()."""
-        from app.db.models import User
-        from app.db.session import unscoped_session
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        import app.adapters.auth.builtin as builtin_mod
+        from app.db.models import Session, User
 
         email = f"user-{uuid4()}@example.com"
         hashed = auth_provider.hash_password(runtime_test_password)
+        user_uuid = uuid4()
+        user = User(id=user_uuid, email=email, hashed_password=hashed, is_platform_admin=False)
+        user_id = str(user.id)
 
-        async with unscoped_session() as db_session:
-            user = User(email=email, hashed_password=hashed, is_platform_admin=False)
-            db_session.add(user)
-            await db_session.flush()
-            user_id = str(user.id)
+        stored_sessions: dict[str, Session] = {}
+
+        class FakeDbSession:
+            def add(self, obj: object) -> None:
+                if isinstance(obj, Session):
+                    if obj.id is None:
+                        obj.id = uuid4()
+                    stored_sessions[obj.token_hash] = obj
+
+            async def flush(self) -> None:
+                pass
+
+            async def execute(self, stmt: object) -> object:
+                res = MagicMock()
+                stmt_str = str(stmt)
+                if "FROM users" in stmt_str:
+                    res.scalar_one_or_none.return_value = user
+                elif "UPDATE sessions" in stmt_str:
+                    updated = 0
+                    for s in stored_sessions.values():
+                        if s.revoked_at is None:
+                            s.revoked_at = datetime.now(UTC)
+                            updated += 1
+                    res.rowcount = updated
+                elif "FROM sessions" in stmt_str:
+                    active = next(
+                        (s for s in stored_sessions.values() if s.revoked_at is None),
+                        None,
+                    )
+                    res.scalar_one_or_none.return_value = active
+                return res
+
+        @asynccontextmanager
+        async def fake_unscoped_session():
+            yield FakeDbSession()
+
+        monkeypatch.setattr(builtin_mod, "unscoped_session", fake_unscoped_session)
 
         # Authenticate
         token_obj = await auth_provider.authenticate(
@@ -125,38 +164,49 @@ class TestBuiltinAuthProviderUnit:
     async def test_roles_resolution_from_memberships(
         self,
         auth_provider: BuiltinAuthProvider,
-        runtime_test_password: str,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Roles are derived from memberships; non-members get empty list."""
-        from app.db.models import Membership, Tenant, User
-        from app.db.session import tenant_session, unscoped_session
-        from app.ports.types import TenantContext
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
 
-        async with unscoped_session() as db_session:
-            t = Tenant(name="Tenant Test")
-            db_session.add(t)
-            await db_session.flush()
+        import app.adapters.auth.builtin as builtin_mod
 
-            u = User(
-                email=f"member-{uuid4()}@example.com",
-                hashed_password=auth_provider.hash_password(runtime_test_password),
-                is_platform_admin=False,
-            )
-            db_session.add(u)
-            await db_session.flush()
-            tid = str(t.id)
-            uid = str(u.id)
+        tid = str(uuid4())
+        uid = str(uuid4())
+        current_tid: list[str] = [""]
 
-        t_ctx = TenantContext(
-            tenant_id=tid,
-            user_id=uid,
-            role=UserRole.CLIENT_ADMIN,
-            session_id="test-session",
-        )
-        async with tenant_session(t_ctx) as t_sess:
-            mem = Membership(tenant_id=t.id, user_id=u.id, role="staff")
-            t_sess.add(mem)
-            await t_sess.flush()
+        class FakeSession:
+            @asynccontextmanager
+            async def begin(self):
+                yield
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                pass
+
+            async def execute(self, stmt: object) -> object:
+                res = MagicMock()
+                compiled = stmt.compile()  # type: ignore[attr-defined]
+                params = compiled.params
+                stmt_str = str(compiled)
+                if "set_config" in stmt_str:
+                    for val in params.values():
+                        if val in (tid,):
+                            current_tid[0] = str(val)
+                        elif isinstance(val, str) and len(val) == 36:
+                            current_tid[0] = val
+                    res.scalar_one_or_none.return_value = current_tid[0]
+                elif "FROM memberships" in stmt_str:
+                    if current_tid[0] == tid:
+                        res.scalar_one_or_none.return_value = "staff"
+                    else:
+                        res.scalar_one_or_none.return_value = None
+                return res
+
+        monkeypatch.setattr(builtin_mod, "get_app_session_factory", lambda: (lambda: FakeSession()))
 
         roles = await auth_provider.roles(uid, tid)
         assert roles == [UserRole.STAFF]
@@ -174,9 +224,23 @@ class TestBuiltinAuthProviderUnit:
         runtime_test_password: str,
     ) -> None:
         """When email is unknown, Argon2 verify runs against dummy hash for timing defense."""
-        from unittest.mock import MagicMock
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock
 
+        import app.adapters.auth.builtin as builtin_mod
         from app.ports.errors import AuthenticationError
+
+        fake_db = MagicMock()
+        fake_res = MagicMock()
+        fake_res.scalar_one_or_none.return_value = None
+        fake_db.execute = AsyncMock(return_value=fake_res)
+        fake_db.flush = AsyncMock()
+
+        @asynccontextmanager
+        async def fake_unscoped_session():
+            yield fake_db
+
+        monkeypatch.setattr(builtin_mod, "unscoped_session", fake_unscoped_session)
 
         verify_mock = MagicMock(return_value=False)
         monkeypatch.setattr(auth_provider, "verify_password", verify_mock)

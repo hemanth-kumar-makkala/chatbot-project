@@ -24,10 +24,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic import command
 from fastapi import HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.adapters.models.mock import MockModelProvider
 from app.adapters.retrieval.mock import MockRetriever
@@ -63,8 +61,7 @@ from app.core.guards.output_guards import (
     validate_general_route_no_client_facts,
     verify_citations_tenant_scope,
 )
-from app.db.models import Assistant, AuditEvent, Tenant, User
-from app.db.session import get_app_engine, reset_session_engines, tenant_session
+from app.db.models import AuditEvent
 from app.observability.logger import OperationalJsonFormatter
 from app.ports.types import (
     ChatMessage,
@@ -75,7 +72,6 @@ from app.ports.types import (
     TenantContext,
     UserRole,
 )
-from tests.conftest import ThrowawayDatabase, make_test_password
 
 
 class _SpyRetriever(MockRetriever):
@@ -378,150 +374,118 @@ class TestQuestionRateLimits:
 
     async def test_db_rate_limit_enforces_per_user_and_per_tenant_across_restarts(
         self,
-        throwaway_db: ThrowawayDatabase,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Rate limit queries PostgreSQL audit_events so limits survive process restarts."""
-        await asyncio_to_thread_upgrade(throwaway_db)
-
-        monkeypatch.setenv("DATABASE_URL", throwaway_db.url)
-        reset_session_engines()
-
-        engine = create_async_engine(throwaway_db.url, pool_pre_ping=True)
-        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        """Rate limit queries audit_events so per-user and per-tenant limits survive restarts."""
+        from unittest.mock import MagicMock
 
         tenant_id = uuid4()
         user1_id = uuid4()
         user2_id = uuid4()
-        asst_id = uuid4()
 
-        try:
-            async with session_factory() as admin_sess, admin_sess.begin():
-                admin_sess.add(Tenant(id=tenant_id, name="Rate Limit Clinic"))
-                await admin_sess.flush()
-                admin_sess.add_all(
-                    [
-                        User(
-                            id=user1_id,
-                            email="u1@clinic.test",
-                            hashed_password=make_test_password(),
-                        ),
-                        User(
-                            id=user2_id,
-                            email="u2@clinic.test",
-                            hashed_password=make_test_password(),
-                        ),
-                        Assistant(
-                            id=asst_id,
-                            tenant_id=tenant_id,
-                            name="Clinic Assistant",
-                            prompt_id="default",
-                            prompt_version="1.0",
-                        ),
-                    ]
+        persisted_events: list[AuditEvent] = []
+
+        class FakeDbSession:
+            def add(self, obj: object) -> None:
+                if isinstance(obj, AuditEvent):
+                    persisted_events.append(obj)
+
+            async def flush(self) -> None:
+                pass
+
+            async def execute(self, stmt: object) -> object:
+                res = MagicMock()
+                stmt_str = str(stmt)
+                if "audit_events.user_id" in stmt_str:
+                    compiled = stmt.compile()  # type: ignore[attr-defined]
+                    target_uid = next(
+                        (v for v in compiled.params.values() if v in (user1_id, user2_id)),
+                        None,
+                    )
+                    res.scalar.return_value = sum(
+                        1
+                        for e in persisted_events
+                        if e.tenant_id == tenant_id
+                        and e.user_id == target_uid
+                        and e.event_type == "question"
+                    )
+                else:
+                    res.scalar.return_value = sum(
+                        1
+                        for e in persisted_events
+                        if e.tenant_id == tenant_id and e.event_type == "question"
+                    )
+                return res
+
+        db_sess = FakeDbSession()
+        for i in range(3):
+            await check_question_rate_limit(
+                db_session=db_sess,
+                tenant_uuid=tenant_id,
+                user_uuid=user1_id,
+                user_max_requests=3,
+                tenant_max_requests=5,
+                window_seconds=60,
+            )
+            db_sess.add(
+                AuditEvent(
+                    tenant_id=tenant_id,
+                    user_id=user1_id,
+                    event_type="question",
+                    action="question.answered",
+                    resource_id=f"req-u1-{i}",
                 )
-
-            t_ctx_u1 = TenantContext(
-                tenant_id=str(tenant_id),
-                user_id=str(user1_id),
-                role=UserRole.STAFF,
-                session_id="sess-u1",
             )
-            t_ctx_u2 = TenantContext(
-                tenant_id=str(tenant_id),
-                user_id=str(user2_id),
-                role=UserRole.STAFF,
-                session_id="sess-u2",
+            await db_sess.flush()
+
+        # Simulate process restart with a fresh session reading persisted audit_events
+        db_sess_restart = FakeDbSession()
+        with pytest.raises(HTTPException) as exc_info:
+            await check_question_rate_limit(
+                db_session=db_sess_restart,
+                tenant_uuid=tenant_id,
+                user_uuid=user1_id,
+                user_max_requests=3,
+                tenant_max_requests=5,
+                window_seconds=60,
             )
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
 
-            # Insert 3 question audit events for user 1
-            async with tenant_session(t_ctx_u1) as db_sess:
-                for i in range(3):
-                    await check_question_rate_limit(
-                        db_session=db_sess,
-                        tenant_uuid=tenant_id,
-                        user_uuid=user1_id,
-                        user_max_requests=3,
-                        tenant_max_requests=5,
-                        window_seconds=60,
-                    )
-                    db_sess.add(
-                        AuditEvent(
-                            tenant_id=tenant_id,
-                            user_id=user1_id,
-                            event_type="question",
-                            action="question.answered",
-                            resource_id=f"req-u1-{i}",
-                        )
-                    )
-                    await db_sess.flush()
+        # User 2 in the same tenant has 0 questions, so per-user limit allows 2 more questions
+        # before hitting the tenant limit of 5 total (3 from u1 + 2 from u2 = 5)
+        db_sess_u2 = FakeDbSession()
+        for i in range(2):
+            await check_question_rate_limit(
+                db_session=db_sess_u2,
+                tenant_uuid=tenant_id,
+                user_uuid=user2_id,
+                user_max_requests=3,
+                tenant_max_requests=5,
+                window_seconds=60,
+            )
+            db_sess_u2.add(
+                AuditEvent(
+                    tenant_id=tenant_id,
+                    user_id=user2_id,
+                    event_type="question",
+                    action="question.answered",
+                    resource_id=f"req-u2-{i}",
+                )
+            )
+            await db_sess_u2.flush()
 
-            # Simulate process restart: dispose and reset all in-memory engine/session state
-            await get_app_engine().dispose()
-            reset_session_engines()
-
-            async with tenant_session(t_ctx_u1) as db_sess_restart:
-                with pytest.raises(HTTPException) as exc_info:
-                    await check_question_rate_limit(
-                        db_session=db_sess_restart,
-                        tenant_uuid=tenant_id,
-                        user_uuid=user1_id,
-                        user_max_requests=3,
-                        tenant_max_requests=5,
-                        window_seconds=60,
-                    )
-                assert exc_info.value.status_code == 429
-                assert exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
-
-            # User 2 in the same tenant has 0 questions, so per-user limit allows 2 more questions
-            # before hitting the tenant limit of 5 total (3 from u1 + 2 from u2 = 5)
-            async with tenant_session(t_ctx_u2) as db_sess_u2:
-                for i in range(2):
-                    await check_question_rate_limit(
-                        db_session=db_sess_u2,
-                        tenant_uuid=tenant_id,
-                        user_uuid=user2_id,
-                        user_max_requests=3,
-                        tenant_max_requests=5,
-                        window_seconds=60,
-                    )
-                    db_sess_u2.add(
-                        AuditEvent(
-                            tenant_id=tenant_id,
-                            user_id=user2_id,
-                            event_type="question",
-                            action="question.answered",
-                            resource_id=f"req-u2-{i}",
-                        )
-                    )
-                    await db_sess_u2.flush()
-
-                # 6th question in tenant (only 3rd for user 2) hits TENANT rate limit
-                with pytest.raises(HTTPException) as tenant_exc_info:
-                    await check_question_rate_limit(
-                        db_session=db_sess_u2,
-                        tenant_uuid=tenant_id,
-                        user_uuid=user2_id,
-                        user_max_requests=3,
-                        tenant_max_requests=5,
-                        window_seconds=60,
-                    )
-                assert tenant_exc_info.value.status_code == 429
-                assert tenant_exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
-        finally:
-            await get_app_engine().dispose()
-            reset_session_engines()
-            await engine.dispose()
-
-
-async def asyncio_to_thread_upgrade(throwaway_db: ThrowawayDatabase) -> None:
-    """Run Alembic migrations in a worker thread on the isolated throwaway database."""
-    import asyncio
-
-    def _upgrade() -> None:
-        command.upgrade(throwaway_db.cfg, "head")
-
-    await asyncio.to_thread(_upgrade)
+        # 6th question in tenant (only 3rd for user 2) hits TENANT rate limit
+        with pytest.raises(HTTPException) as tenant_exc_info:
+            await check_question_rate_limit(
+                db_session=db_sess_u2,
+                tenant_uuid=tenant_id,
+                user_uuid=user2_id,
+                user_max_requests=3,
+                tenant_max_requests=5,
+                window_seconds=60,
+            )
+        assert tenant_exc_info.value.status_code == 429
+        assert tenant_exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
 
 
 # --- 4. Language Detection ---

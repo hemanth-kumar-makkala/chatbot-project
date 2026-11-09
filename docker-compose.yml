@@ -29,10 +29,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: cka-api
-    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uv run uvicorn app.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
     environment:
       APP_PROFILE: ${APP_PROFILE:-mock}
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cka_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-knowledge_assistant}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cka_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-knowledge_assistant}
+      LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-/var/lib/cka/storage}
+      SESSION_UPLOAD_RETENTION_HOURS: "${SESSION_UPLOAD_RETENTION_HOURS:-24}"
       LANGSMITH_TRACING: "false"
     ports:
       - "8000:8000"
@@ -49,10 +51,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: cka-worker
-    command: python -m app.adapters.queue.worker
+    command: uv run procrastinate --app=app.worker.app worker
     environment:
       APP_PROFILE: ${APP_PROFILE:-mock}
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cka_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-knowledge_assistant}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cka_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-knowledge_assistant}
+      LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-/var/lib/cka/storage}
+      SESSION_UPLOAD_RETENTION_HOURS: "${SESSION_UPLOAD_RETENTION_HOURS:-24}"
+      LANGSMITH_TRACING: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +75,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      API_ORIGIN: ${API_ORIGIN:-http://api:8000}
       NEXT_PUBLIC_API_URL: http://api:8000
     deploy:
       resources:

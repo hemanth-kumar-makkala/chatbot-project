@@ -18,6 +18,7 @@ def test_settings(tmp_path: Path) -> ApiSettings:
         cookie_samesite="lax",
         idle_timeout_minutes=30,
         absolute_timeout_hours=24,
+        session_upload_retention_hours=24,
         allow_bearer_auth=False,  # strictly cookie-only in standard configuration
         profile="mock",
         storage_dir=str(tmp_path),
@@ -104,16 +105,134 @@ class TestApiAuthAndSecurityUnit:
 
     async def test_csrf_token_passes_when_header_matches_cookie(self, app) -> None:
         """State-changing requests succeed when X-CSRF-Token header matches csrf_token cookie."""
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            client.cookies.set("session_token", "fake-session-token")
-            client.cookies.set("csrf_token", "valid-csrf-token-12345")
-            resp = await client.post(
-                "/v1/auth/logout",
-                headers={"X-CSRF-Token": "valid-csrf-token-12345"},
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.api.deps import get_auth_provider
+
+        mock_auth = MagicMock()
+        mock_auth.revoke = AsyncMock(return_value=False)
+        app.dependency_overrides[get_auth_provider] = lambda: mock_auth
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                client.cookies.set("session_token", "fake-session-token")
+                client.cookies.set("csrf_token", "valid-csrf-token-12345")
+                resp = await client.post(
+                    "/v1/auth/logout",
+                    headers={"X-CSRF-Token": "valid-csrf-token-12345"},
+                )
+                # Passes CSRF check (status != 403 CSRF)
+                assert resp.status_code != 403
+        finally:
+            app.dependency_overrides.pop(get_auth_provider, None)
+
+    async def test_db_engines_configure_connect_timeout_of_3_seconds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_app_engine and get_retriever_engine pass connect_timeout=3 so tests never hang."""
+        from unittest.mock import MagicMock
+
+        import app.db.session as session_mod
+
+        session_mod.reset_session_engines()
+        captured_calls: list[dict[str, object]] = []
+
+        def fake_create_async_engine(url: str, **kwargs: object) -> object:
+            captured_calls.append({"url": url, **kwargs})
+            return MagicMock()
+
+        monkeypatch.setattr(session_mod, "create_async_engine", fake_create_async_engine)
+        monkeypatch.setattr(session_mod, "async_sessionmaker", lambda *_a, **_kw: MagicMock())
+
+        try:
+            session_mod.get_app_engine()
+            session_mod.get_retriever_engine()
+        finally:
+            session_mod.reset_session_engines()
+
+        assert len(captured_calls) == 2
+        for call in captured_calls:
+            assert call.get("connect_args") == {"connect_timeout": 3}
+
+    async def test_create_app_reads_cors_origins_and_allow_bearer_auth_from_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """create_app(settings=None) reads CORS_ORIGINS and ALLOW_BEARER_AUTH from env vars."""
+        monkeypatch.setenv("APP_PROFILE", "mock")
+        monkeypatch.setenv("LOCAL_STORAGE_PATH", str(tmp_path))
+        monkeypatch.setenv("SESSION_UPLOAD_RETENTION_HOURS", "24")
+        monkeypatch.setenv("CORS_ORIGINS", "https://portal.example.com, https://admin.example.com")
+        monkeypatch.setenv("ALLOW_BEARER_AUTH", "true")
+
+        env_app = create_app()
+        assert env_app.state.settings.cors_origins == [
+            "https://portal.example.com",
+            "https://admin.example.com",
+        ]
+        assert env_app.state.settings.allow_bearer_auth is True
+
+    async def test_wildcard_cors_and_wildcard_frame_ancestors_are_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Guardrail: wildcard '*' in CORS_ORIGINS or ALLOWED_FRAME_ANCESTORS is blocked."""
+        with pytest.raises(ValueError, match="Wildcard CORS origin"):
+            create_app(
+                ApiSettings(
+                    profile="mock",
+                    storage_dir=str(tmp_path),
+                    session_upload_retention_hours=24,
+                    cors_origins=["*"],
+                )
             )
-            # Fails on invalid session, but NOT on CSRF (status != 403 CSRF)
-            assert resp.status_code != 403
+
+        monkeypatch.setenv("ALLOWED_FRAME_ANCESTORS", "*")
+        with pytest.raises(ValueError, match="Wildcard frame-ancestors"):
+            create_app(
+                ApiSettings(
+                    profile="mock",
+                    storage_dir=str(tmp_path),
+                    session_upload_retention_hours=24,
+                )
+            )
+
+    async def test_security_headers_default_deny_framing_and_allowlist_override(
+        self, tmp_path: Path
+    ) -> None:
+        """Default responses include X-Frame-Options: DENY and CSP frame-ancestors 'none';
+        explicit allowed_frame_ancestors emits CSP frame-ancestors allowlist without X-Frame.
+        """
+        default_app = create_app(
+            ApiSettings(
+                profile="mock",
+                storage_dir=str(tmp_path),
+                session_upload_retention_hours=24,
+            )
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=default_app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/health")
+            assert resp.headers.get("x-content-type-options") == "nosniff"
+            assert resp.headers.get("x-frame-options") == "DENY"
+            assert "frame-ancestors 'none'" in resp.headers.get("content-security-policy", "")
+
+        embed_app = create_app(
+            ApiSettings(
+                profile="mock",
+                storage_dir=str(tmp_path),
+                session_upload_retention_hours=24,
+                allowed_frame_ancestors=["https://host-app.example.com"],
+            )
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=embed_app), base_url="http://test"
+        ) as client:
+            resp2 = await client.get("/health")
+            assert resp2.headers.get("x-content-type-options") == "nosniff"
+            assert resp2.headers.get("x-frame-options") is None
+            assert "frame-ancestors https://host-app.example.com" in resp2.headers.get(
+                "content-security-policy", ""
+            )
 
     async def test_secure_cookie_defaults_to_true(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

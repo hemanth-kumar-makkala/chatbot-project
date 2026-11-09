@@ -1,9 +1,15 @@
 "use client";
 
 import { use, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
-import { getCurrentUser, type User } from "@/lib/api";
+import {
+  getCurrentUser,
+  updateAssistant,
+  deleteAssistant,
+  type User,
+} from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 interface AssistantSettingsPageProps {
@@ -11,6 +17,7 @@ interface AssistantSettingsPageProps {
 }
 
 export default function AssistantSettingsPage({ params }: AssistantSettingsPageProps) {
+  const router = useRouter();
   const resolvedParams = use(params);
   const assistantId = resolvedParams.assistantId;
 
@@ -22,10 +29,13 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
     "Authorized clinical guidelines, prior authorization criteria, and formulary reference assistant."
   );
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   // Dialogs state
   const [deleteChatsOpen, setDeleteChatsOpen] = useState(false);
   const [deleteAssistantOpen, setDeleteAssistantOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     async function loadAuth() {
@@ -40,6 +50,37 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
     }
     loadAuth();
   }, []);
+
+  async function handleSaveDetails() {
+    setSaving(true);
+    setStatusMsg(null);
+    try {
+      const res = await updateAssistant(assistantId, { name });
+      if (res.ok) {
+        setStatusMsg("Assistant details updated successfully.");
+      } else {
+        setStatusMsg("Failed to update assistant details.");
+      }
+    } catch {
+      setStatusMsg("Failed to update assistant details.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    setDeleting(true);
+    try {
+      const res = await deleteAssistant(assistantId);
+      if (res.ok) {
+        router.push("/assistants");
+      }
+    } catch {
+      // Handled silently
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   function handleCopyId() {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -122,7 +163,7 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
               </p>
             </div>
             <ConnectionBadge
-              status="not_connected"
+              status="connected"
               route={`PATCH /v1/assistants/${assistantId}`}
             />
           </div>
@@ -251,27 +292,30 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
             <span
               style={{
                 fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-secondary)",
+                color: statusMsg?.includes("Failed")
+                  ? "var(--color-danger)"
+                  : "var(--color-text-secondary)",
               }}
             >
-              Updating assistant details requires PATCH /v1/assistants/{assistantId} (not built yet).
+              {statusMsg || `Configured under client tenant ${user?.tenant_id || "workspace"}.`}
             </span>
 
             <button
               type="button"
-              disabled
+              onClick={handleSaveDetails}
+              disabled={saving}
               style={{
-                backgroundColor: "var(--color-bg-subtle)",
-                color: "var(--color-text-secondary)",
-                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-primary)",
+                color: "var(--color-text-on-primary)",
+                border: "none",
                 borderRadius: "var(--radius-md)",
                 padding: "8px 16px",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
-                cursor: "not-allowed",
+                cursor: saving ? "wait" : "pointer",
               }}
             >
-              Save Details
+              {saving ? "Saving..." : "Save Details"}
             </button>
           </div>
         </div>
@@ -563,7 +607,7 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
               >
                 <div style={{ marginBottom: "4px" }}>
                   <ConnectionBadge
-                    status="not_connected"
+                    status="connected"
                     route={`DELETE /v1/assistants/${assistantId}`}
                   />
                 </div>
@@ -592,18 +636,20 @@ export default function AssistantSettingsPage({ params }: AssistantSettingsPageP
                 </button>
                 <button
                   type="button"
-                  disabled
+                  onClick={handleConfirmDelete}
+                  disabled={deleting}
                   style={{
                     padding: "8px 14px",
                     borderRadius: "var(--radius-md)",
-                    backgroundColor: "var(--color-bg-subtle)",
-                    color: "var(--color-text-secondary)",
+                    backgroundColor: "var(--color-danger)",
+                    color: "var(--color-text-on-primary)",
                     fontSize: "var(--font-size-sm)",
                     fontWeight: 600,
-                    cursor: "not-allowed",
+                    border: "none",
+                    cursor: deleting ? "wait" : "pointer",
                   }}
                 >
-                  Confirm Delete
+                  {deleting ? "Deleting..." : "Confirm Delete"}
                 </button>
               </div>
             </div>

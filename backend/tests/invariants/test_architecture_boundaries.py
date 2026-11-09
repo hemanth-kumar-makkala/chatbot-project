@@ -292,3 +292,28 @@ class TestRepoCodebaseScans:
             "Found golden filename branching or hardcoded document/field content in backend/app:\n"
             + "\n".join(violations)
         )
+
+    def test_dockerfiles_and_compose_entrypoints_and_drivers_are_valid(self) -> None:
+        """Verify backend/Dockerfile and web/Dockerfile exist and docker-compose.yml uses valid
+        entrypoints (app.api.app:create_app --factory, app.worker.app), psycopg, and API_ORIGIN.
+        """
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[3]
+        backend_dockerfile = repo_root / "backend" / "Dockerfile"
+        web_dockerfile = repo_root / "web" / "Dockerfile"
+        compose_file = repo_root / "docker-compose.yml"
+
+        assert backend_dockerfile.is_file(), "backend/Dockerfile must exist"
+        assert web_dockerfile.is_file(), "web/Dockerfile must exist"
+        assert compose_file.is_file(), "docker-compose.yml must exist"
+
+        compose_text = compose_file.read_text(encoding="utf-8")
+        assert "app.api.app:create_app" in compose_text
+        assert "--factory" in compose_text
+        assert "app.api.main:app" not in compose_text
+        assert "app.worker.app" in compose_text
+        assert "app.adapters.queue.worker" not in compose_text
+        assert "postgresql+psycopg://" in compose_text
+        assert "postgresql+asyncpg://" not in compose_text
+        assert "API_ORIGIN" in compose_text

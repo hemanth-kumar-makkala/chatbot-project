@@ -3,7 +3,12 @@
 import { use, useState, useEffect } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
-import { getCurrentUser, type User } from "@/lib/api";
+import {
+  getCurrentUser,
+  getAssistantInstructions,
+  saveAssistantInstructions,
+  type User,
+} from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 interface InstructionsPageProps {
@@ -18,20 +23,43 @@ export default function InstructionsPage({ params }: InstructionsPageProps) {
   const [instructionsText, setInstructionsText] = useState(
     "You are a clinical staff knowledge assistant. Respond concisely and professionally using bullet points when helpful. Use plain medical terminology suitable for clinical coordinators."
   );
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadAuth() {
+    async function loadData() {
       try {
-        const res = await getCurrentUser();
-        if (res.ok) {
-          setUser(res.data);
+        const resUser = await getCurrentUser();
+        if (resUser.ok) {
+          setUser(resUser.data);
+        }
+        const resInst = await getAssistantInstructions(assistantId);
+        if (resInst.ok && resInst.data.instructions) {
+          setInstructionsText(resInst.data.instructions);
         }
       } catch {
         // Handled silently
       }
     }
-    loadAuth();
-  }, []);
+    loadData();
+  }, [assistantId]);
+
+  async function handleSave() {
+    setSaving(true);
+    setStatusMsg(null);
+    try {
+      const res = await saveAssistantInstructions(assistantId, instructionsText);
+      if (res.ok) {
+        setStatusMsg("Instructions saved successfully.");
+      } else {
+        setStatusMsg("Failed to save instructions.");
+      }
+    } catch {
+      setStatusMsg("Failed to save instructions.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <AppShell
@@ -66,7 +94,7 @@ export default function InstructionsPage({ params }: InstructionsPageProps) {
               Instructions
             </h1>
             <ConnectionBadge
-              status="not_connected"
+              status="connected"
               route={`PATCH /v1/assistants/${assistantId}/instructions`}
             />
           </div>
@@ -169,27 +197,30 @@ export default function InstructionsPage({ params }: InstructionsPageProps) {
             <span
               style={{
                 fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-secondary)",
+                color: statusMsg?.includes("Failed")
+                  ? "var(--color-danger)"
+                  : "var(--color-text-secondary)",
               }}
             >
-              Updating instructions requires PATCH /v1/assistants/{assistantId}/instructions (not built yet).
+              {statusMsg || "Instructions shape assistant tone and scope. Answers still come strictly from verified documents."}
             </span>
 
             <button
               type="button"
-              disabled
+              onClick={handleSave}
+              disabled={saving}
               style={{
-                backgroundColor: "var(--color-bg-subtle)",
-                color: "var(--color-text-secondary)",
-                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-primary)",
+                color: "var(--color-text-on-primary)",
+                border: "none",
                 borderRadius: "var(--radius-md)",
                 padding: "8px 16px",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
-                cursor: "not-allowed",
+                cursor: saving ? "wait" : "pointer",
               }}
             >
-              Save Instructions
+              {saving ? "Saving..." : "Save Instructions"}
             </button>
           </div>
         </div>

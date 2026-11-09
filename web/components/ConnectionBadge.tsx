@@ -53,14 +53,14 @@ export function ConnectionBadge({ status, route, label }: ConnectionBadgeProps) 
         />
         {text}
       </span>
-      {route && !isConnected && (
+      {route && (
         <span
           style={{
             fontSize: "var(--font-size-xs)",
             color: "var(--color-text-secondary)",
           }}
         >
-          ({route}, not built yet)
+          ({route}{!isConnected ? ", not built yet" : ""})
         </span>
       )}
     </div>

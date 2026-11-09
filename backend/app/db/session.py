@@ -62,7 +62,13 @@ def get_app_engine() -> AsyncEngine:
     global _app_engine, _app_session_factory
     if _app_engine is None:
         url = os.getenv("DATABASE_URL") or get_database_url(role="app_user")
-        _app_engine = create_async_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5)
+        _app_engine = create_async_engine(
+            url,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=5,
+            connect_args={"connect_timeout": 3},
+        )
         _app_session_factory = async_sessionmaker(_app_engine, expire_on_commit=False)
     return _app_engine
 
@@ -80,7 +86,11 @@ def get_retriever_engine() -> AsyncEngine:
     if _retriever_engine is None:
         url = os.getenv("DATABASE_READONLY_URL") or get_database_url(role="retriever_user")
         _retriever_engine = create_async_engine(
-            url, pool_pre_ping=True, pool_size=5, max_overflow=5
+            url,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=5,
+            connect_args={"connect_timeout": 3},
         )
         _retriever_session_factory = async_sessionmaker(_retriever_engine, expire_on_commit=False)
     return _retriever_engine

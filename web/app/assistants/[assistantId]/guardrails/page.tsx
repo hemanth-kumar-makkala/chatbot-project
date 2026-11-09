@@ -3,7 +3,12 @@
 import { use, useState, useEffect } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
-import { getCurrentUser, type User } from "@/lib/api";
+import {
+  getCurrentUser,
+  getAssistantGuardrails,
+  saveAssistantGuardrails,
+  type User,
+} from "@/lib/api";
 import { DEV_DEFAULT_ASSISTANT_ID } from "@/lib/devDefaults";
 
 interface GuardrailsPageProps {
@@ -21,20 +26,55 @@ export default function GuardrailsPage({ params }: GuardrailsPageProps) {
   const [refusalMessage, setRefusalMessage] = useState(
     "I don't have that in Client A's documents."
   );
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadAuth() {
+    async function loadData() {
       try {
-        const res = await getCurrentUser();
-        if (res.ok) {
-          setUser(res.data);
+        const resUser = await getCurrentUser();
+        if (resUser.ok) {
+          setUser(resUser.data);
+        }
+        const resGuard = await getAssistantGuardrails(assistantId);
+        if (resGuard.ok) {
+          if (resGuard.data.refusal_message) {
+            setRefusalMessage(resGuard.data.refusal_message);
+          }
+          if (resGuard.data.blocked_topics && resGuard.data.blocked_topics.length > 0) {
+            setBlockedTopics(resGuard.data.blocked_topics.join(", "));
+          }
         }
       } catch {
         // Handled silently
       }
     }
-    loadAuth();
-  }, []);
+    loadData();
+  }, [assistantId]);
+
+  async function handleSave() {
+    setSaving(true);
+    setStatusMsg(null);
+    try {
+      const topics = blockedTopics
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const res = await saveAssistantGuardrails(assistantId, {
+        refusal_message: refusalMessage,
+        blocked_topics: topics,
+      });
+      if (res.ok) {
+        setStatusMsg("Guardrails saved successfully.");
+      } else {
+        setStatusMsg("Failed to save guardrails.");
+      }
+    } catch {
+      setStatusMsg("Failed to save guardrails.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const lockedRules = [
     {
@@ -92,7 +132,7 @@ export default function GuardrailsPage({ params }: GuardrailsPageProps) {
               Guardrails
             </h1>
             <ConnectionBadge
-              status="not_connected"
+              status="connected"
               route={`PATCH /v1/assistants/${assistantId}/guardrails`}
             />
           </div>
@@ -275,27 +315,30 @@ export default function GuardrailsPage({ params }: GuardrailsPageProps) {
             <span
               style={{
                 fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-secondary)",
+                color: statusMsg?.includes("Failed")
+                  ? "var(--color-danger)"
+                  : "var(--color-text-secondary)",
               }}
             >
-              Configuring guardrails requires PATCH /v1/assistants/{assistantId}/guardrails (not built yet).
+              {statusMsg || "Custom refusal message and blocked topics apply strictly within this assistant's tenant scope."}
             </span>
 
             <button
               type="button"
-              disabled
+              onClick={handleSave}
+              disabled={saving}
               style={{
-                backgroundColor: "var(--color-bg-subtle)",
-                color: "var(--color-text-secondary)",
-                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-primary)",
+                color: "var(--color-text-on-primary)",
+                border: "none",
                 borderRadius: "var(--radius-md)",
                 padding: "8px 16px",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
-                cursor: "not-allowed",
+                cursor: saving ? "wait" : "pointer",
               }}
             >
-              Save Guardrails
+              {saving ? "Saving..." : "Save Guardrails"}
             </button>
           </div>
         </section>

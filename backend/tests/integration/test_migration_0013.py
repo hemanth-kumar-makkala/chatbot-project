@@ -140,3 +140,148 @@ async def test_migration_0013_rate_limit_indexes_upgrade_downgrade_and_explain()
             assert "ix_audit_events_user_event_created" in reupgraded_indexes
 
         await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_db_rate_limit_enforces_per_user_and_per_tenant_across_restarts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rate limit queries PostgreSQL audit_events so limits survive process restarts."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.api.rate_limiter import check_question_rate_limit
+    from app.core.guards.input_guards import QUESTION_RATE_LIMIT_MESSAGE
+    from app.db.models import Assistant, AuditEvent, Tenant, User
+    from app.db.session import get_app_engine, reset_session_engines, tenant_session
+    from app.ports.types import TenantContext, UserRole
+    from tests.conftest import make_test_password
+
+    async with isolated_throwaway_database() as throwaway_db:
+        await asyncio.to_thread(command.upgrade, throwaway_db.cfg, "head")
+
+        monkeypatch.setenv("DATABASE_URL", throwaway_db.url)
+        reset_session_engines()
+
+        engine = create_async_engine(throwaway_db.url, pool_pre_ping=True)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        tenant_id = uuid4()
+        user1_id = uuid4()
+        user2_id = uuid4()
+        asst_id = uuid4()
+
+        try:
+            async with session_factory() as admin_sess, admin_sess.begin():
+                admin_sess.add(Tenant(id=tenant_id, name="Rate Limit Clinic"))
+                await admin_sess.flush()
+                admin_sess.add_all(
+                    [
+                        User(
+                            id=user1_id,
+                            email="u1@clinic.test",
+                            hashed_password=make_test_password(),
+                        ),
+                        User(
+                            id=user2_id,
+                            email="u2@clinic.test",
+                            hashed_password=make_test_password(),
+                        ),
+                        Assistant(
+                            id=asst_id,
+                            tenant_id=tenant_id,
+                            name="Clinic Assistant",
+                            prompt_id="default",
+                            prompt_version="1.0",
+                        ),
+                    ]
+                )
+
+            t_ctx_u1 = TenantContext(
+                tenant_id=str(tenant_id),
+                user_id=str(user1_id),
+                role=UserRole.STAFF,
+                session_id="sess-u1",
+            )
+            t_ctx_u2 = TenantContext(
+                tenant_id=str(tenant_id),
+                user_id=str(user2_id),
+                role=UserRole.STAFF,
+                session_id="sess-u2",
+            )
+
+            async with tenant_session(t_ctx_u1) as db_sess:
+                for i in range(3):
+                    await check_question_rate_limit(
+                        db_session=db_sess,
+                        tenant_uuid=tenant_id,
+                        user_uuid=user1_id,
+                        user_max_requests=3,
+                        tenant_max_requests=5,
+                        window_seconds=60,
+                    )
+                    db_sess.add(
+                        AuditEvent(
+                            tenant_id=tenant_id,
+                            user_id=user1_id,
+                            event_type="question",
+                            action="question.answered",
+                            resource_id=f"req-u1-{i}",
+                        )
+                    )
+                    await db_sess.flush()
+
+            await get_app_engine().dispose()
+            reset_session_engines()
+
+            async with tenant_session(t_ctx_u1) as db_sess_restart:
+                with pytest.raises(HTTPException) as exc_info:
+                    await check_question_rate_limit(
+                        db_session=db_sess_restart,
+                        tenant_uuid=tenant_id,
+                        user_uuid=user1_id,
+                        user_max_requests=3,
+                        tenant_max_requests=5,
+                        window_seconds=60,
+                    )
+                assert exc_info.value.status_code == 429
+                assert exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
+
+            async with tenant_session(t_ctx_u2) as db_sess_u2:
+                for i in range(2):
+                    await check_question_rate_limit(
+                        db_session=db_sess_u2,
+                        tenant_uuid=tenant_id,
+                        user_uuid=user2_id,
+                        user_max_requests=3,
+                        tenant_max_requests=5,
+                        window_seconds=60,
+                    )
+                    db_sess_u2.add(
+                        AuditEvent(
+                            tenant_id=tenant_id,
+                            user_id=user2_id,
+                            event_type="question",
+                            action="question.answered",
+                            resource_id=f"req-u2-{i}",
+                        )
+                    )
+                    await db_sess_u2.flush()
+
+                with pytest.raises(HTTPException) as tenant_exc_info:
+                    await check_question_rate_limit(
+                        db_session=db_sess_u2,
+                        tenant_uuid=tenant_id,
+                        user_uuid=user2_id,
+                        user_max_requests=3,
+                        tenant_max_requests=5,
+                        window_seconds=60,
+                    )
+                assert tenant_exc_info.value.status_code == 429
+                assert tenant_exc_info.value.detail == QUESTION_RATE_LIMIT_MESSAGE
+        finally:
+            await get_app_engine().dispose()
+            reset_session_engines()
+            await engine.dispose()

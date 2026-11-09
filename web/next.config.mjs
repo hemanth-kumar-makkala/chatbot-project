@@ -7,8 +7,10 @@ if (!apiOrigin) {
 }
 
 const cleanedOrigin = apiOrigin.replace(/\/+$/, "");
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/+$/, "");
 
 const nextConfig = {
+  ...(basePath ? { basePath } : {}),
   experimental: {
     proxyTimeout: 120_000,
   },

@@ -139,13 +139,39 @@ def create_mock_ports(
 def create_auth_provider(
     idle_timeout_minutes: int = 30,
     absolute_timeout_hours: int = 24,
+    provider_type: str = "builtin",
+    jwt_secret: str | None = None,
+    jwt_issuer: str | None = None,
+    jwt_audience: str | None = None,
+    api_keys_json: str | None = None,
 ) -> Any:
-    """Instantiate the built-in database-backed AuthProvider."""
-    from app.adapters.auth.builtin import BuiltinAuthProvider
+    """Instantiate the configured AuthProvider (builtin, jwt, or api_key)."""
+    norm_type = (provider_type or "builtin").strip().lower()
+    if norm_type == "builtin":
+        from app.adapters.auth.builtin import BuiltinAuthProvider
 
-    return BuiltinAuthProvider(
-        idle_timeout_minutes=idle_timeout_minutes,
-        absolute_timeout_hours=absolute_timeout_hours,
+        return BuiltinAuthProvider(
+            idle_timeout_minutes=idle_timeout_minutes,
+            absolute_timeout_hours=absolute_timeout_hours,
+        )
+    if norm_type == "jwt":
+        from app.adapters.auth.delegated import JwtAuthProvider
+
+        return JwtAuthProvider(
+            jwt_secret=jwt_secret or "",
+            issuer=jwt_issuer,
+            audience=jwt_audience,
+        )
+    if norm_type == "api_key":
+        from app.adapters.auth.delegated import ApiKeyAuthProvider
+
+        return ApiKeyAuthProvider.from_json(api_keys_json or "")
+
+    from app.ports.errors import ConfigurationError
+
+    raise ConfigurationError(
+        f"Unknown auth provider: {provider_type}",
+        error_code="INVALID_CONFIGURATION",
     )
 
 

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser, type User } from "@/lib/api";
+import { getCurrentUser, listWorkspaceMembers, type User, type WorkspaceMember } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
 
 export default function WorkspaceSettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<"general" | "members">("general");
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
 
   useEffect(() => {
     async function loadAuth() {
@@ -22,6 +24,25 @@ export default function WorkspaceSettingsPage() {
     }
     loadAuth();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "members") {
+      async function loadMembers() {
+        setLoadingMembers(true);
+        try {
+          const res = await listWorkspaceMembers();
+          if (res.ok && res.data) {
+            setMembers(res.data);
+          }
+        } catch {
+          // Handled silently
+        } finally {
+          setLoadingMembers(false);
+        }
+      }
+      loadMembers();
+    }
+  }, [activeTab]);
 
   return (
     <AppShell
@@ -241,28 +262,85 @@ export default function WorkspaceSettingsPage() {
                 </p>
               </div>
               <ConnectionBadge
-                status="not_connected"
+                status="connected"
                 route="GET /v1/tenant/members"
               />
             </div>
 
-            <div
-              style={{
-                padding: "var(--spacing-4)",
-                backgroundColor: "var(--color-bg-subtle)",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <p
+            {loadingMembers ? (
+              <div
                 style={{
-                  fontSize: "var(--font-size-sm)",
+                  padding: "var(--spacing-4)",
                   color: "var(--color-text-secondary)",
+                  fontSize: "var(--font-size-sm)",
                 }}
               >
-                Member management requires GET /v1/tenant/members (not built yet).
-              </p>
-            </div>
+                Loading workspace members...
+              </div>
+            ) : members.length > 0 ? (
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "var(--font-size-sm)",
+                }}
+              >
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--color-border)", textAlign: "left" }}>
+                    <th style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>Email</th>
+                    <th style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>Role</th>
+                    <th style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>Member ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((m) => (
+                    <tr key={m.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 500, color: "var(--color-text-primary)" }}>{m.email}</td>
+                      <td style={{ padding: "10px 12px", color: "var(--color-text-secondary)" }}>
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: "var(--radius-full)",
+                            fontSize: "var(--font-size-xs)",
+                            backgroundColor:
+                              m.role === "client_admin"
+                                ? "var(--color-status-success-bg)"
+                                : "var(--color-bg-subtle)",
+                            color:
+                              m.role === "client_admin"
+                                ? "var(--color-status-success-text)"
+                                : "var(--color-text-secondary)",
+                          }}
+                        >
+                          {m.role}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "var(--color-text-secondary)", fontSize: "var(--font-size-xs)" }}>
+                        {m.id}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div
+                style={{
+                  padding: "var(--spacing-4)",
+                  backgroundColor: "var(--color-bg-subtle)",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  No member records found.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

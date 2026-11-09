@@ -82,7 +82,7 @@ async def test_run_split_document_job_missing_version_raises_typed_error(
 
     # Mock session returning None for DocumentVersion lookup
     mock_session = AsyncMock()
-    mock_exec = AsyncMock()
+    mock_exec = MagicMock()
     mock_exec.scalars.return_value.first.return_value = None
     mock_session.execute.return_value = mock_exec
 
