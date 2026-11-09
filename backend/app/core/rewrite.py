@@ -86,10 +86,6 @@ def _extract_recent_topic(history: list[dict[str, str]]) -> str | None:
             return "outpatient prior authorizations"
         if re.search(r"prior\s+auth(?:orization)?\s+guide", content, re.IGNORECASE):
             return "the outpatient prior authorization guide"
-        if re.search(
-            r"apex\s+health(?:\s+insurance)?(?:\s+diagnostic\s+imaging)?", content, re.IGNORECASE
-        ):
-            return "Apex Health Insurance diagnostic imaging"
         if re.search(r"front\s+desk\s+(?:intake\s+)?fax", content, re.IGNORECASE):
             return "the front desk intake fax line"
         if re.search(r"routine\s+(?:appointment\s+)?visit", content, re.IGNORECASE):
@@ -100,7 +96,7 @@ def _extract_recent_topic(history: list[dict[str, str]]) -> str | None:
         # General noun phrase search in user question
         if turn.get("role") == "user":
             match = re.search(
-                r"(?:about|for|of|regarding|in)\s+([A-Za-z0-9\s-]{4,40})(?:\?|$)",
+                r"(?:about|for|of|regarding|in)\s+([A-Za-z0-9\s-]{4,60})(?:\?|$)",
                 content,
                 re.IGNORECASE,
             )

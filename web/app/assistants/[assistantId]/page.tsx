@@ -62,7 +62,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [demoStatusLines, setDemoStatusLines] = useState<string[]>([]);
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
-  const [activeSourceDoc, setActiveSourceDoc] = useState("prior_auth_guide.pdf");
+  const [activeSourceDoc, setActiveSourceDoc] = useState("");
   const [activeSourcePage, setActiveSourcePage] = useState<number>(1);
   const [activeSourceVersionId, setActiveSourceVersionId] = useState<string | undefined>(undefined);
   const [liveSourceWarning, setLiveSourceWarning] = useState(false);
@@ -130,6 +130,10 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     if (!res.ok) {
       setLiveExtractionError(res.code || "UPLOAD_FAILED");
       return;
+    }
+
+    if (!conversationId && res.data.conversation_id) {
+      setConversationId(res.data.conversation_id);
     }
 
     setAttachedDoc({
@@ -309,11 +313,10 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         trimmed.toLowerCase().includes("field table");
       const isVisual =
         isExtraction ||
-        trimmed.toLowerCase().includes("amoxicillin") ||
         trimmed.toLowerCase().includes("image") ||
         trimmed.toLowerCase().includes("page 31") ||
         trimmed.toLowerCase().includes("medication") ||
-        trimmed.toLowerCase().includes("evelyn reed") ||
+        trimmed.toLowerCase().includes("scan") ||
         trimmed.toLowerCase().includes("urgent refill");
 
       const lines = isExtraction
@@ -465,13 +468,13 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     if (isExtraction) {
       const fields = resp.extracted_fields || [];
       const firstSource = resp.sources?.[0];
-      const docTitle = firstSource?.document_title || "skewed_fax.pdf";
+      const docTitle = firstSource?.document_title || attachedDoc?.name || "session_document.pdf";
       const pageNum = firstSource?.page_number || 1;
-      const clean = docTitle.toLowerCase().replace(/\.pdf$/i, "").trim();
-      let stem = "skewed_fax";
-      if (clean.includes("clean")) stem = "clean_fax";
-      else if (clean.includes("faint")) stem = "faint_fax_2page";
-      else if (clean.includes("intake")) stem = "patient_intake_form";
+      const stem = docTitle
+        .toLowerCase()
+        .replace(/\.[a-z0-9]+$/i, "")
+        .trim()
+        .replace(/[^a-z0-9_-]/g, "_");
 
       return (
         <div>
@@ -788,20 +791,25 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         {(() => {
           if (!isVisual) return null;
           const firstVisSource = resp.sources?.[0];
-          const visDocTitle = firstVisSource?.document_title || "prior_auth_guide.pdf";
+          const visDocTitle = firstVisSource?.document_title || "document.pdf";
           const visPageNum = firstVisSource?.page_number || 1;
-          const cleanVis = visDocTitle.toLowerCase().replace(/\.pdf$/i, "").trim();
-          let visStem = "prior_auth_guide";
-          if (cleanVis.includes("skewed")) visStem = "skewed_fax";
-          else if (cleanVis.includes("clean")) visStem = "clean_fax";
-          else if (cleanVis.includes("faint")) visStem = "faint_fax_2page";
-          else if (cleanVis.includes("intake")) visStem = "patient_intake_form";
+          const visStem = visDocTitle
+            .toLowerCase()
+            .replace(/\.[a-z0-9]+$/i, "")
+            .trim()
+            .replace(/[^a-z0-9_-]/g, "_");
+          const visThumbSrc =
+            isLiveAssistant && firstVisSource?.version_id
+              ? firstVisSource.version_id.startsWith("/")
+                ? firstVisSource.version_id
+                : `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(firstVisSource.version_id)}/pages/${visPageNum}/thumbnail`
+              : `/demo/pages/${visStem}-p${visPageNum}.png`;
 
           return (
             <div data-testid="page-thumbnail-placeholder" style={{ margin: "var(--spacing-2) 0" }}>
               <img
                 data-testid="page-thumbnail-image"
-                src={`/demo/pages/${visStem}-p${visPageNum}.png`}
+                src={visThumbSrc}
                 alt={`Thumbnail of ${visDocTitle} Page ${visPageNum}`}
                 onClick={() => handleOpenSource(visDocTitle, visPageNum)}
                 style={{

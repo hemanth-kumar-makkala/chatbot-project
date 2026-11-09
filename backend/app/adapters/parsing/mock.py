@@ -41,9 +41,26 @@ class MockDocumentParser(DocumentParser):
     ) -> ParsedPageContent:
         """Return deterministic parsed content based on page type."""
         conf = 1.0 if page.page_type == PageType.DIGITAL_TEXT else self.default_confidence
+        base_text = f"{self.default_text} for page {page.page_number}"
+        if self.default_text == "Mock extracted content":
+            text = (
+                f"{base_text}\n"
+                "Patient Name: Jordan Taylor\n"
+                "Chart Number: MRN-7721-C\n"
+                "Authorized Medication: Cefdinir 3oOmg\n"
+                "Authorization Date: 2026-03-10\n"
+                "Dosage: 1 capsule twice daily for 10 days\n"
+                "Refill count: 0\n"
+                "Clinic Phone: 555-018-2200\n"
+                "Prescriber NPI: 1234567890\n"
+                "Prescriber Signature: [unreadable]\n"
+                "Secondary Insurance: None"
+            )
+        else:
+            text = base_text
         return ParsedPageContent(
             page_number=page.page_number,
-            text=f"{self.default_text} for page {page.page_number}",
+            text=text,
             tables=self.default_tables,
             confidence=conf,
         )

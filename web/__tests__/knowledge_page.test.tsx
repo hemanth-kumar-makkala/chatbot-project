@@ -143,6 +143,10 @@ describe("Knowledge Page (Task 2.8b Step 5)", () => {
     expect(screen.getByText("Ready (3 pages need review)")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getAllByText("Retired").length).toBeGreaterThan(0);
+
+    // Ready document with 0 flagged pages still provides an Inspect button alongside the verified badge
+    expect(screen.getByTestId("verified-badge-doc_4")).toBeInTheDocument();
+    expect(screen.getByTestId("inspect-btn-doc_4")).toBeInTheDocument();
   });
 
   it("polling starts when documents are active, and stops when all are final", async () => {

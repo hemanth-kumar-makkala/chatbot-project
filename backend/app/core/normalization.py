@@ -100,7 +100,7 @@ def normalize_ids(text: str) -> set[str]:
     """Extract and normalize IDs (MRN, phone/fax, NPI, plan codes)."""
     ids: set[str] = set()
 
-    # 1. MRN pattern: MRN-4412-A or MRN 4412 A
+    # 1. MRN pattern: MRN-1000-X or MRN 1000 X
     for m in re.finditer(r"\bMRN[-.\s]?(\d+)[-.\s]?([A-Za-z])\b", text, re.IGNORECASE):
         ids.add(f"MRN-{m.group(1)}-{m.group(2).upper()}")
 

@@ -166,8 +166,28 @@ class MockModelProvider(ModelProvider):
         del role, image
         await self._check_failure()
 
+        if "JSON object" in question or "clinical intake" in question.lower():
+            import json
+
+            reading_text = json.dumps(
+                {
+                    "patient_name": "Jordan Taylor",
+                    "chart_number": "MRN-7721-C",
+                    "authorized_medication": "Cefdinir 300mg",
+                    "authorization_date": "2026-03-10",
+                    "dosage": "1 capsule twice daily for 10 days",
+                    "refill_count": "0",
+                    "clinic_phone": "(555) 018-2200",
+                    "prescriber_npi": "1234567890",
+                    "prescriber_signature": "[unreadable]",
+                    "secondary_insurance": None,
+                }
+            )
+        else:
+            reading_text = f"Mock vision reading for question: {question}"
+
         return PageReading(
-            reading=f"Mock vision reading for question: {question}",
+            reading=reading_text,
             confidence=0.98,
             model_id="mock-vision",
             model_version="1.0",

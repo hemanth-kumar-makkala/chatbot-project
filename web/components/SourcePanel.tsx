@@ -30,20 +30,11 @@ interface SourcePanelProps {
 }
 
 function getDocStem(docTitle: string): string {
-  const clean = docTitle.toLowerCase().replace(/\.pdf$/i, "").trim();
-  if (clean.includes("prior auth") || clean.includes("prior_auth")) return "prior_auth_guide";
-  if (clean.includes("skewed")) return "skewed_fax";
-  if (clean.includes("compliance")) return "compliance_notice";
-  if (clean.includes("eligibility")) return "eligibility_checklist";
-  if (clean.includes("clean_fax") || clean.includes("clean fax")) return "clean_fax";
-  if (clean.includes("faint")) return "faint_fax_2page";
-  if (clean.includes("protocols")) return "clinical_protocols_manual";
-  if (clean.includes("policy") && (clean.includes("v2") || clean.includes("2"))) return "front_desk_policy_v2";
-  if (clean.includes("policy") || clean.includes("v1")) return "front_desk_policy_v1";
-  if (clean.includes("intake")) return "patient_intake_form";
-  if (clean.includes("fee")) return "fee_schedule";
-  if (clean.includes("contact") || clean.includes("payer")) return "payer_contact_table";
-  return clean.replace(/[^a-z0-9_-]/g, "_");
+  return docTitle
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .trim()
+    .replace(/[^a-z0-9_-]/g, "_");
 }
 
 export function SourcePanel({

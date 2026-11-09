@@ -123,8 +123,14 @@ async def test_session_document_upload_and_extraction_route(
             cookies_a, csrf_a = await _login(client, email_a, pass_a)
             cookies_b, csrf_b = await _login(client, email_b, pass_b)
 
-            # 1. Upload valid fax document
-            files = {"file": ("skewed_fax.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+            # 1. Upload valid fax document under a RENAMED filename (arbitrary_intake_01.pdf)
+            files = {
+                "file": (
+                    "arbitrary_intake_01.pdf",
+                    io.BytesIO(pdf_bytes),
+                    "application/pdf",
+                )
+            }
             upload_resp = await client.post(
                 f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents",
                 files=files,
@@ -137,7 +143,7 @@ async def test_session_document_upload_and_extraction_route(
 
             assert "session_document_id" in data
             assert data["conversation_id"] == str(conv_id)
-            assert data["file_name"] == "skewed_fax.pdf"
+            assert data["file_name"] == "arbitrary_intake_01.pdf"
             assert data["page_count"] >= 1
             assert data["status"] == "extracted"
             assert "extracted_fields" in data
@@ -148,9 +154,18 @@ async def test_session_document_upload_and_extraction_route(
             assert "patient_name" in fields
             assert fields["patient_name"]["state"] in ("FILLED_HIGH", "FILLED_MEDIUM")
 
-            # Invariant 6: UNREADABLE fields must have value=None / null
+            states_present = {f["state"] for f in data["extracted_fields"]}
+            assert "CONFLICTING" in states_present
+            assert "INVALID" in states_present
+            assert states_present & {"UNREADABLE", "NOT_PRESENT"}
+
+            serialized = str(data["extracted_fields"])
+            for forbidden in ("Amoxicillin 500mg", "MRN-4412-A", "Alex Morgan", "1982736451"):
+                assert forbidden not in serialized
+
+            # Invariant 6: UNREADABLE and CONFLICTING fields must have value=None / null
             for f in data["extracted_fields"]:
-                if f["state"] == "UNREADABLE":
+                if f["state"] in ("UNREADABLE", "CONFLICTING", "NOT_PRESENT"):
                     assert f["value"] is None
 
             # 2. Verify Invariant 7: Exists in session_documents, 0 chunks in index

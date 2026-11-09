@@ -543,14 +543,7 @@ async def ask_question(
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
-            conflict_sources_list = (
-                list(sources_list)
-                if sources_list
-                else [
-                    SourceCitation(document_title="Clinic Policy 2023", version="1", page_number=4),
-                    SourceCitation(document_title="Clinic Policy 2024", version="2", page_number=2),
-                ]
-            )
+            conflict_sources_list = list(sources_list)
 
         public_ref: str | None = None
         if "public_error_ref" in result:
@@ -685,9 +678,41 @@ async def ask_question_stream(
         except CloudModelSafetyLockError as lock_err:
             raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
 
+        visual_stmt = (
+            select(Chunk.id, Page.image_key, Page.ocr_confidence)
+            .join(Page, (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id))
+            .where(
+                Chunk.tenant_id == tenant_uuid,
+                Chunk.is_active.is_(True),
+                Chunk.evidence_type == "visual",
+            )
+        )
+        visual_rows = [
+            (str(vrow.id), vrow.image_key, vrow.ocr_confidence)
+            for vrow in (await db_session.execute(visual_stmt)).all()
+        ]
+
     async def event_generator() -> AsyncIterator[str]:
         settings = get_api_settings(request)
         ports = get_engine_ports(settings=settings)
+        page_images: dict[str, bytes] = {}
+        page_ocr_confidences: dict[str, float] = {}
+        if visual_rows:
+            storage = create_storage_backend(
+                profile=settings.profile, base_dir=settings.storage_dir
+            )
+            for cid_str, image_key, ocr_conf in visual_rows:
+                if ocr_conf is not None:
+                    page_ocr_confidences[cid_str] = float(ocr_conf)
+                if image_key:
+                    rel_path = str(image_key)
+                    prefix = f"{tenant_ctx.tenant_id}/"
+                    if rel_path.startswith(prefix):
+                        rel_path = rel_path[len(prefix) :]
+                    with contextlib.suppress(Exception):
+                        page_images[cid_str] = await storage.get(
+                            StorageKey(tenant_id=tenant_uuid, path=rel_path)
+                        )
 
         runtime_ctx = GraphRuntimeContext(
             ports=ports,
@@ -698,6 +723,8 @@ async def ask_question_stream(
             active_document_titles=active_doc_titles,
             active_document_hashes=active_doc_hashes,
             chat_model=settings.chat_model,
+            page_images=page_images,
+            page_ocr_confidences=page_ocr_confidences,
         )
         state: GraphState = {
             "request_id": request_id,
@@ -809,18 +836,7 @@ async def ask_question_stream(
 
             conflict_sources_list: list[SourceCitation] = []
             if status_val == "conflicting":
-                conflict_sources_list = (
-                    list(sources_list)
-                    if sources_list
-                    else [
-                        SourceCitation(
-                            document_title="Clinic Policy 2023", version="1", page_number=4
-                        ),
-                        SourceCitation(
-                            document_title="Clinic Policy 2024", version="2", page_number=2
-                        ),
-                    ]
-                )
+                conflict_sources_list = list(sources_list)
 
             ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
             public_ref = result.get("public_error_ref")

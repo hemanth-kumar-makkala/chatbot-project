@@ -55,3 +55,88 @@ def test_prior_auth_guide_source_fidelity_no_imaging_requisition() -> None:
 
     # Must not contain "imaging requisition" (which was an inaccurate test paraphrase)
     assert "imaging requisition" not in full_text.lower()
+
+
+async def test_explain_mode_scopes_chunks_to_named_target_document() -> None:
+    """When an explain-mode question names a specific document (e.g., 'Summarize the
+    outpatient prior authorization guide'), node_generate scopes used_evidence to chunks
+    from that target document so unrelated documents (e.g., front_desk_policy or faxes)
+    are not mixed into the summary prompt.
+    """
+    from unittest.mock import MagicMock
+
+    from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState, node_generate
+    from app.ports.model_provider import ModelProvider
+    from app.ports.types import ModelResponse
+
+    captured_prompts: list[str] = []
+
+    class SpyModelProvider(ModelProvider):
+        async def generate(self, role, messages, schema=None, temperature=0.0, max_tokens=None):
+            _ = role, schema, temperature, max_tokens
+            captured_prompts.append(messages[0].content)
+            return ModelResponse(
+                content=(
+                    '{"answer": "- Submit 5 business days in advance.", "evidence_ids": ["c_pa_1"]}'
+                ),
+                model_id="spy",
+                model_version="1.0",
+                structured_output={
+                    "answer": "- Submit 5 business days in advance.",
+                    "points": [
+                        {
+                            "point": "Submit 5 business days in advance.",
+                            "quoted_span": "at least 5 business days in advance",
+                            "evidence_ids": ["c_pa_1"],
+                        }
+                    ],
+                    "evidence_ids": ["c_pa_1"],
+                },
+            )
+
+        async def read_page(self, role, image, question):
+            raise NotImplementedError
+
+        async def transcribe_page(self, role, image):
+            raise NotImplementedError
+
+        async def extract_fields(self, role, image, schema):
+            raise NotImplementedError
+
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(model_provider=SpyModelProvider(), is_mock_profile=False),
+        question_text="Summarize the outpatient prior authorization guide",
+        evidence_text={
+            "c_pa_1": (
+                "[Document: prior_auth_guide.pdf, Version: 1, Page: 1, Section: Rules]\n"
+                "Outpatient surgery prior authorizations must be submitted at least "
+                "5 business days in advance."
+            ),
+            "c_fd_1": (
+                "[Document: front_desk_policy_v2.pdf, Version: 2, Page: 1, Section: Intake]\n"
+                "The front desk intake fax number is 555-0102."
+            ),
+            "c_fax_1": (
+                "[Document: faint_fax_2page.pdf, Version: 1, Page: 1, Section: Cover]\n"
+                "Attached: clinical consultation notes and imaging requisition."
+            ),
+        },
+    )
+    state: GraphState = {
+        "request_id": "req-q4-scope",
+        "route": "knowledge",
+        "answer_mode": "explain",
+        "language": "en",
+        "evidence_ids": ["c_pa_1", "c_fd_1", "c_fax_1"],
+        "status": "in_progress",
+    }
+    runtime = MagicMock()
+    runtime.context = ctx
+
+    await node_generate(state, runtime)
+
+    assert len(captured_prompts) == 1
+    prompt_sent = captured_prompts[0]
+    assert "prior_auth_guide.pdf" in prompt_sent
+    assert "front_desk_policy_v2.pdf" not in prompt_sent
+    assert "faint_fax_2page.pdf" not in prompt_sent

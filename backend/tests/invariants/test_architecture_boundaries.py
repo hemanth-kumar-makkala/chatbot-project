@@ -236,3 +236,59 @@ class TestRepoCodebaseScans:
                     raise AssertionError(
                         f"{py_file.name} contains forbidden 'cka_admin' literal in request path"
                     )
+
+    def test_no_route_or_adapter_branches_on_golden_filenames_or_hardcoded_extractions(
+        self,
+    ) -> None:
+        """Fail if any route, core module, or adapter in backend/app branches on golden
+        document filenames or contains hardcoded fake extraction/citation values.
+        (Only app/core/safety_lock.py is allowed to list golden filenames for the cloud
+        SHA-256 synthetic data lock.)
+        """
+        backend_dir = Path(__file__).resolve().parents[2]
+        app_dir = backend_dir / "app"
+
+        forbidden_substrings = (
+            # Golden document filename stems and extraction branch tokens
+            "skewed_fax",
+            "faint_fax",
+            "invalid_npi",
+            "unreadable_field",
+            "missing_field",
+            "in lower_name",
+            "front_desk_policy",
+            "prior_auth_guide",
+            "accepted_plans.csv",
+            "pa_turnaround_times",
+            "fee_schedule",
+            "patient_intake_form",
+            "compliance_notice",
+            # Hardcoded fake extraction or citation values
+            "Amoxicillin 500mg",
+            "Amoxicillin 5oOmg",
+            "Amoxillin",
+            "MRI Lumbar Spine",
+            "MRN-4412-A",
+            "Alex Morgan",
+            "Evelyn Reed",
+            "1982736451",
+            "Clinic Policy 2023",
+            "Clinic Policy 2024",
+            "Apex Health Insurance",
+        )
+
+        violations: list[str] = []
+        for py_file in sorted(app_dir.rglob("*.py")):
+            rel_path = py_file.relative_to(backend_dir).as_posix()
+            if rel_path == "app/core/safety_lock.py":
+                continue
+            text = py_file.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                for token in forbidden_substrings:
+                    if token in line:
+                        violations.append(f"{rel_path}:{lineno}: forbidden token {token!r}")
+
+        assert violations == [], (
+            "Found golden filename branching or hardcoded document/field content in backend/app:\n"
+            + "\n".join(violations)
+        )

@@ -29,8 +29,6 @@ from app.core.conflict import (
     format_version_conflict_answer,
     resolve_document_version_order,
 )
-from app.core.extraction.dual_read import dual_read_compare
-from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.guards.input_guards import (
     QUESTION_RATE_LIMIT_MESSAGE,
     guard_question_input,
@@ -62,6 +60,7 @@ from app.core.safety_lock import (
     is_vision_model,
     verify_cloud_model_safety_lock,
 )
+from app.ports.document_parser import DocumentParser
 from app.ports.errors import (
     MalformedOutput,
 )
@@ -167,6 +166,60 @@ def _extract_doc_title(text: str) -> str:
     return ""
 
 
+def _doc_stem_tokens(doc_title: str) -> tuple[str, ...]:
+    """Return normalized significant stem tokens for a document filename/title."""
+    import re
+
+    stem = re.sub(r"\.[a-z0-9]+$", "", doc_title.lower().strip())
+    tokens = [
+        tok
+        for tok in re.split(r"[^a-z0-9]+", stem)
+        if len(tok) >= 3 and not re.fullmatch(r"v\d+|\d+page|\d+", tok)
+    ]
+    return tuple(tokens)
+
+
+def _scope_explain_ids_to_named_document(
+    question_text: str,
+    candidate_ids: list[str],
+    evidence_text: dict[str, str],
+) -> list[str]:
+    """When an explain/summary question names a specific document, scope chunks to that document."""
+    if not question_text or len(candidate_ids) <= 1:
+        return candidate_ids
+
+    q_lower = question_text.lower()
+    stem_scores: dict[tuple[str, ...], int] = {}
+    id_stems: dict[str, tuple[str, ...]] = {}
+
+    for eid in candidate_ids:
+        raw_txt = evidence_text.get(eid, "")
+        doc_title = _extract_doc_title(raw_txt)
+        if not doc_title:
+            continue
+        stem = _doc_stem_tokens(doc_title)
+        if not stem:
+            continue
+        id_stems[eid] = stem
+        if stem not in stem_scores:
+            stem_scores[stem] = sum(1 for tok in stem if tok in q_lower)
+
+    if len(stem_scores) <= 1:
+        return candidate_ids
+
+    ranked = sorted(stem_scores.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)
+    best_stem, best_score = ranked[0]
+    second_score = ranked[1][1]
+
+    min_required = 2 if len(best_stem) >= 2 else 1
+    if best_score >= min_required and best_score > second_score:
+        scoped = [eid for eid in candidate_ids if id_stems.get(eid) == best_stem]
+        if scoped:
+            return scoped
+
+    return candidate_ids
+
+
 # --- 1. Graph State & Runtime Context ---
 
 
@@ -203,6 +256,7 @@ class GraphPorts:
     reranker: Reranker | None = None
     tracer: Tracer | None = None
     image_processor: ImageProcessor | None = None
+    document_parser: DocumentParser | None = None
     chat_model: str = "qwen3-vl:4b"
     vision_model: str = "qwen3-vl:4b"
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
@@ -1408,6 +1462,10 @@ async def node_generate(
             if not top_ids:
                 top_ids = list(ctx.evidence_text.keys())[:TOP_N_CHUNKS]
 
+            top_ids = _scope_explain_ids_to_named_document(
+                ctx.question_text, top_ids, ctx.evidence_text
+            )
+
             # Explain mode receives top N reranked chunks plus neighbouring chunks
             # from the same page
             if ports.retriever is not None and top_ids:
@@ -1425,6 +1483,9 @@ async def node_generate(
                             for n in neighbours:
                                 if n.chunk_id in ctx.evidence_text and n.chunk_id not in top_ids:
                                     top_ids.append(n.chunk_id)
+                            top_ids = _scope_explain_ids_to_named_document(
+                                ctx.question_text, top_ids, ctx.evidence_text
+                            )
                 except Exception:
                     logger.warning("Failed to fetch neighbouring chunks", exc_info=True)
 
@@ -2045,194 +2106,13 @@ async def node_safe_failure(
 
 # --- 4. Extraction Subgraph Nodes ---
 
-
-async def node_extract_fields(
-    state: GraphState,
-    runtime: Runtime[GraphRuntimeContext],
-) -> dict[str, Any]:
-    _ = state
-    ctx = runtime.context
-    if "raw_readings" in ctx.extracted_fields:
-        raw = ctx.extracted_fields["raw_readings"]
-        return {
-            "extracted_field_ids": list(
-                set(raw.get("ocr", {}).keys()) | set(raw.get("vision", {}).keys())
-            )
-        }
-
-    evidence = ctx.evidence_text
-
-    ocr_dict: dict[str, Any] = {}
-    vision_dict: dict[str, Any] = {}
-    conf_dict: dict[str, float] = {}
-
-    ocr_text = ""
-    vision_text = ""
-
-    for k, v in evidence.items():
-        if "vision" in k.lower():
-            vision_text += f"\n{v}"
-        else:
-            ocr_text += f"\n{v}"
-
-    if not vision_text and ctx.question_text:
-        vision_text = ctx.question_text
-    if not ocr_text:
-        ocr_text = vision_text
-
-    import re
-
-    # Patient Name
-    m_name = re.search(
-        r"patient[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", ocr_text, re.IGNORECASE
-    ) or re.search(r"\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b", ocr_text)
-    if m_name:
-        ocr_dict["patient_name"] = m_name.group(1).strip()
-    m_name_v = re.search(
-        r"patient[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", vision_text, re.IGNORECASE
-    ) or re.search(r"\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b", vision_text)
-    if m_name_v:
-        vision_dict["patient_name"] = m_name_v.group(1).strip()
-    conf_dict["patient_name"] = 0.98
-
-    # Medication / Dosage
-    m_med = re.search(
-        r"\b(Amoxicillin\s+\d+mg|Amoxillin\s+\d+mg|MRI\s+Lumbar\s+Spine[^\n,]*)\b",
-        ocr_text,
-        re.IGNORECASE,
-    )
-    if m_med:
-        ocr_dict["authorized_medication"] = m_med.group(1).strip()
-    m_med_v = re.search(
-        r"\b(Amoxicillin\s+\d+mg|Amoxillin\s+\d+mg|MRI\s+Lumbar\s+Spine[^\n,]*)\b",
-        vision_text,
-        re.IGNORECASE,
-    )
-    if m_med_v:
-        vision_dict["authorized_medication"] = m_med_v.group(1).strip()
-    conf_dict["authorized_medication"] = (
-        0.74 if (m_med and m_med_v and m_med.group(1) != m_med_v.group(1)) else 0.96
-    )
-
-    # Date
-    from app.core.normalization import normalize_dates
-
-    d_ocr = normalize_dates(ocr_text)
-    d_vis = normalize_dates(vision_text)
-    if d_ocr:
-        ocr_dict["authorization_date"] = sorted(d_ocr)[0]
-    if d_vis:
-        vision_dict["authorization_date"] = sorted(d_vis)[0]
-    conf_dict["authorization_date"] = 0.97
-
-    # MRN / Chart
-    m_mrn = re.search(r"\bMRN[-.\s]?(\d+)[-.\s]?([A-Za-z])\b", ocr_text, re.IGNORECASE)
-    if m_mrn:
-        ocr_dict["chart_number"] = f"MRN-{m_mrn.group(1)}-{m_mrn.group(2).upper()}"
-    m_mrn_v = re.search(r"\bMRN[-.\s]?(\d+)[-.\s]?([A-Za-z])\b", vision_text, re.IGNORECASE)
-    if m_mrn_v:
-        vision_dict["chart_number"] = f"MRN-{m_mrn_v.group(1)}-{m_mrn_v.group(2).upper()}"
-    conf_dict["chart_number"] = 0.82
-
-    # Prescriber Signature (cursive check on vision, not found in plain OCR text)
-    if "signature" in ocr_text.lower() or "prescriber" in ocr_text.lower():
-        ocr_dict["prescriber_signature"] = None
-        vision_dict["prescriber_signature"] = "[unreadable]"
-        conf_dict["prescriber_signature"] = 0.42
-
-    if not ocr_dict and not vision_dict:
-        ocr_dict = {"patient_name": "Alex Morgan", "authorized_medication": "Amoxicillin 500mg"}
-        vision_dict = {"patient_name": "Alex Morgan", "authorized_medication": "Amoxicillin 500mg"}
-
-    ctx.extracted_fields["raw_readings"] = {
-        "ocr": ocr_dict,
-        "vision": vision_dict,
-        "confidences": conf_dict,
-    }
-
-    return {"extracted_field_ids": list(set(ocr_dict.keys()) | set(vision_dict.keys()))}
-
-
-async def node_dual_read_compare(
-    state: GraphState,
-    runtime: Runtime[GraphRuntimeContext],
-) -> dict[str, Any]:
-    ctx = runtime.context
-    raw_readings = ctx.extracted_fields.get("raw_readings", {})
-    ocr_dict = raw_readings.get("ocr", {})
-    vision_dict = raw_readings.get("vision", {})
-    conf_dict = raw_readings.get("confidences", {})
-
-    doc_title = (
-        state.get("document_title")
-        or ctx.evidence_text.get("document_title")
-        or "Uploaded Document"
-    )
-    raw_p = ctx.evidence_text.get("page_number", "1")
-    page_int = int(str(raw_p)) if str(raw_p).isdigit() else 1
-
-    fields = dual_read_compare(
-        read1_ocr=ocr_dict,
-        read2_vision=vision_dict,
-        confidences=conf_dict,
-        document_title=str(doc_title),
-        page_number=page_int,
-    )
-
-    ctx.extracted_fields["fields"] = fields
-    for f in fields:
-        ctx.extracted_fields[f.name] = f.value
-        ctx.extracted_fields[f.name.lower().replace(" ", "_")] = f.value
-
-    all_agree = all(f.state != FieldState.CONFLICTING for f in fields)
-    return {"dual_read_matches": all_agree}
-
-
-async def node_classify_confidence(
-    state: GraphState,
-    runtime: Runtime[GraphRuntimeContext],
-) -> dict[str, Any]:
-    _ = state
-    ctx = runtime.context
-    fields: list[ExtractedField] = ctx.extracted_fields.get("fields", [])
-    avg_conf = sum(f.confidence for f in fields) / len(fields) if fields else 0.95
-    return {"confidence_score": round(avg_conf, 2)}
-
-
-async def node_validate_fields(
-    state: GraphState,
-    runtime: Runtime[GraphRuntimeContext],
-) -> dict[str, Any]:
-    _ = state
-    ctx = runtime.context
-    fields: list[ExtractedField] = ctx.extracted_fields.get("fields", [])
-
-    for f in fields:
-        if f.state == FieldState.UNREADABLE and f.value is not None:
-            raise ValueError(
-                f"Invariant 6 violation: UNREADABLE field {f.name} cannot have a value"
-            )
-
-    table_lines = [
-        "| Field Name | Read 1 (OCR) | Read 2 (Vision) | State | Value | Status |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- |",
-    ]
-    for f in fields:
-        r1 = f.read1_value or "—"
-        r2 = f.read2_value or "—"
-        val = f.value if f.value is not None else "—"
-        note = f.validator_error or f.state.value
-        table_lines.append(f"| {f.name} | {r1} | {r2} | {f.state.value} | {val} | {note} |")
-
-    ctx.response_text = "\n".join(table_lines)
-    ctx.generated_answer = {
-        "mode": "extraction",
-        "answer": ctx.response_text,
-        "fields": [f.to_dict() for f in fields],
-        "evidence_type": "visual",
-    }
-    return {"status": "extracted", "fields_valid": True}
-
+from app.core.extraction.subgraph import (  # noqa: E402, F401
+    build_extraction_subgraph,
+    node_classify_confidence,
+    node_dual_read_compare,
+    node_extract_fields,
+    node_validate_fields,
+)
 
 # --- 5. Conditional Edge Routing ---
 
@@ -2285,24 +2165,6 @@ def _route_from_validate(state: GraphState) -> str:
 
 
 # --- 6. Graph Builders ---
-
-
-def build_extraction_subgraph() -> StateGraph[GraphState, GraphRuntimeContext, Any, Any]:
-    """Build dedicated extraction subgraph ending at validate_fields (returns to main graph)."""
-    subgraph: StateGraph[GraphState, GraphRuntimeContext, Any, Any] = StateGraph(
-        GraphState, context_schema=GraphRuntimeContext
-    )
-    subgraph.add_node("extract_fields", node_extract_fields)
-    subgraph.add_node("dual_read_compare", node_dual_read_compare)
-    subgraph.add_node("classify_confidence", node_classify_confidence)
-    subgraph.add_node("validate_fields", node_validate_fields)
-
-    subgraph.add_edge(START, "extract_fields")
-    subgraph.add_edge("extract_fields", "dual_read_compare")
-    subgraph.add_edge("dual_read_compare", "classify_confidence")
-    subgraph.add_edge("classify_confidence", "validate_fields")
-    subgraph.add_edge("validate_fields", END)
-    return subgraph
 
 
 def build_knowledge_graph() -> StateGraph[GraphState, GraphRuntimeContext, Any, Any]:

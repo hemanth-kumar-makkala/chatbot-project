@@ -102,7 +102,7 @@ class MockRetriever(Retriever):
         return [
             TableCandidate(
                 id="mock-table-row-1",
-                document_title="accepted_plans.csv",
+                document_title="synthetic_plans_table.csv",
                 document_version_id="ver-syn-table",
                 sheet_name="Sheet1",
                 row_index=1,
@@ -114,7 +114,7 @@ class MockRetriever(Retriever):
             ),
             TableCandidate(
                 id="mock-table-row-2",
-                document_title="accepted_plans.csv",
+                document_title="synthetic_plans_table.csv",
                 document_version_id="ver-syn-table",
                 sheet_name="Sheet1",
                 row_index=2,

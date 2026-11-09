@@ -20,15 +20,21 @@ from app.api.deps import (
     get_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField
+from app.core.extraction.subgraph import build_extraction_subgraph
+from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState
 from app.core.ingestion.validation import validate_file
 from app.db.models import Conversation, ExtractionResult, Message, SessionDocument, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
 from app.ports.errors import FileValidationError, MalwareDetectedError
-from app.ports.types import SessionContext, TenantContext
-from app.wiring import create_malware_scanner
+from app.ports.types import SessionContext, TenantContext, UserRole
+from app.wiring import (
+    create_document_parser,
+    create_image_processor,
+    create_malware_scanner,
+    create_model_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -293,187 +299,68 @@ class SessionDocumentUploadResponse(BaseModel):
     page_image_url: str
 
 
-def extract_fields_from_document_file(
+async def extract_fields_from_document_file(
     file_path: Path,
     file_name: str,
     page_number: int = 1,
+    profile: str = "mock",
+    chat_model: str = "qwen3-vl:4b",
+    vision_model: str = "qwen3-vl:4b",
+    tenant_ctx: TenantContext | None = None,
 ) -> list[ExtractedField]:
-    """Run dual-read extraction and compare via normalized dual read compare.
+    """Run the real extraction subgraph using configured OCR and vision providers.
 
+    On mock profile, mock providers supply deterministic output through the same subgraph,
+    never through filename matching.
     Invariant 6: UNREADABLE fields receive state=UNREADABLE, value=None.
     """
-    text_content = ""
-    if file_path.suffix.lower() == ".pdf":
-        try:
-            import pypdfium2 as pdfium  # type: ignore[import-untyped]
+    raw_bytes = file_path.read_bytes()
 
-            pdf_doc = pdfium.PdfDocument(str(file_path))
-            if len(pdf_doc) >= page_number:
-                page = pdf_doc.get_page(page_number - 1)
-                text_page = page.get_textpage()
-                text_content = text_page.get_text_range()
-        except Exception:
-            text_content = ""
-
-    ocr_dict: dict[str, Any] = {}
-    vision_dict: dict[str, Any] = {}
-    conf_dict: dict[str, float] = {}
-
-    lower_name = file_name.lower()
-    combined_text = f"{file_name}\n{text_content}"
-
-    if "skewed" in lower_name:
-        ocr_dict = {
-            "patient_name": "Alex Morgan",
-            "attending_physician": "Dr. Evelyn Reed",
-            "prescription_dosage": "Take 1 capsule by mouth three times daily for 10 days.",
-            "chart_number": "MRN-4412-A",
-            "authorized_medication": "Amoxicillin 5oOmg",
-            "authorization_date": "2026-02-14",
-            "refill_count": "0",
-            "clinic_phone": "555-0145",
-            "prescriber_signature": None,
-            "prescriber_npi": None,
-        }
-        vision_dict = {
-            "patient_name": "Alex Morgan",
-            "attending_physician": "Dr. Evelyn Reed",
-            "prescription_dosage": "Take 1 capsule by mouth three times daily for 10 days.",
-            "chart_number": "MRN-4412-A",
-            "authorized_medication": "Amoxicillin 500mg",
-            "authorization_date": "2026-02-14",
-            "refill_count": "0",
-            "clinic_phone": "555-0145",
-            "prescriber_signature": "[unreadable]",
-            "prescriber_npi": None,
-        }
-        conf_dict = {
-            "patient_name": 0.98,
-            "attending_physician": 0.96,
-            "prescription_dosage": 0.95,
-            "chart_number": 0.92,
-            "authorized_medication": 0.74,
-            "authorization_date": 0.97,
-            "refill_count": 0.90,
-            "clinic_phone": 0.94,
-            "prescriber_signature": 0.40,
-            "prescriber_npi": 0.90,
-        }
-    elif "faint" in lower_name:
-        ocr_dict = {
-            "patient_name": "Jordan Taylor",
-            "procedure_ordered": "MRI lumbar spine",
-            "appointment_date": "2026-03-01",
-            "facility_location": "Imaging Suite B",
-            "referring_phone": "555-0170",
-            "clinical_justification": "With radiculopathy",
-            "pain_scale_score": "7/10",
-            "ordering_physician": "Dr. Evelyn Reed",
-            "prescriber_signature": None,
-            "prescriber_npi": None,
-        }
-        vision_dict = {
-            "patient_name": "Jordan Taylor",
-            "procedure_ordered": "MRI lumbar spine",
-            "appointment_date": "2026-03-01",
-            "facility_location": None,
-            "referring_phone": None,
-            "clinical_justification": (
-                "Persistent lower back pain radiating down left lower extremity"
-            ),
-            "pain_scale_score": "7/10",
-            "ordering_physician": None,
-            "prescriber_signature": "[unreadable]",
-            "prescriber_npi": None,
-        }
-        conf_dict = {
-            "patient_name": 0.97,
-            "procedure_ordered": 0.96,
-            "appointment_date": 0.97,
-            "facility_location": 0.88,
-            "referring_phone": 0.89,
-            "clinical_justification": 0.65,
-            "pain_scale_score": 0.95,
-            "ordering_physician": 0.85,
-            "prescriber_signature": 0.40,
-            "prescriber_npi": 0.90,
-        }
-    elif "invalid_npi" in lower_name:
-        ocr_dict = {
-            "patient_name": "Casey Bennett",
-            "authorized_medication": "Amoxicillin 500mg",
-            "authorization_date": "2026-02-14",
-            "chart_number": "MRN-1102-K",
-            "prescriber_npi": "1982736451",
-            "prescriber_signature": "Dr. Reed",
-        }
-        vision_dict = {
-            "patient_name": "Casey Bennett",
-            "authorized_medication": "Amoxicillin 500mg",
-            "authorization_date": "2026-02-14",
-            "chart_number": "MRN-1102-K",
-            "prescriber_npi": "1982736451",
-            "prescriber_signature": "Dr. Reed",
-        }
-        conf_dict = {"prescriber_npi": 0.99, "patient_name": 0.98}
-    elif "unreadable_field" in lower_name:
-        ocr_dict = {
-            "patient_name": "Taylor Hayes",
-            "authorized_medication": "Lisinopril 10mg",
-            "authorization_date": "2026-02-14",
-            "clinical_justification": None,
-            "prescriber_npi": "1234567893",
-        }
-        vision_dict = {
-            "patient_name": "Taylor Hayes",
-            "authorized_medication": "Lisinopril 10mg",
-            "authorization_date": "2026-02-14",
-            "clinical_justification": "[unreadable]",
-            "prescriber_npi": "1234567893",
-        }
-        conf_dict = {"clinical_justification": 0.35, "patient_name": 0.98}
-    elif "missing_field" in lower_name:
-        ocr_dict = {
-            "patient_name": "Morgan Bailey",
-            "authorized_medication": "Atorvastatin 20mg",
-            "authorization_date": "2026-02-14",
-            "secondary_insurance": None,
-            "emergency_override": None,
-        }
-        vision_dict = {
-            "patient_name": "Morgan Bailey",
-            "authorized_medication": "Atorvastatin 20mg",
-            "authorization_date": "2026-02-14",
-            "secondary_insurance": None,
-            "emergency_override": None,
-        }
-        conf_dict = {"patient_name": 0.98, "secondary_insurance": 0.90}
-    else:
-        m_name = re.search(r"patient[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", combined_text, re.I)
-        p_name = m_name.group(1).strip() if m_name else "Alex Morgan"
-        ocr_dict = {
-            "patient_name": p_name,
-            "authorized_medication": "Amoxicillin 500mg",
-            "authorization_date": "2026-02-14",
-            "chart_number": "MRN-4412-A",
-            "prescriber_signature": None,
-        }
-        vision_dict = {
-            "patient_name": p_name,
-            "authorized_medication": "Amoxicillin 500mg",
-            "authorization_date": "2026-02-14",
-            "chart_number": "MRN-4412-A",
-            "prescriber_signature": "[unreadable]",
-        }
-        conf_dict = {"patient_name": 0.98, "prescriber_signature": 0.40}
-
-    fields = dual_read_compare(
-        read1_ocr=ocr_dict,
-        read2_vision=vision_dict,
-        confidences=conf_dict,
-        document_title=file_name,
-        page_number=page_number,
+    doc_parser = create_document_parser(profile)
+    model_provider = create_model_provider(
+        profile,
+        chat_model=chat_model,
+        vision_model=vision_model,
     )
+    image_processor = create_image_processor(profile)
+
+    ports = GraphPorts(
+        model_provider=model_provider,
+        document_parser=doc_parser,
+        image_processor=image_processor,
+        chat_model=chat_model,
+        vision_model=vision_model,
+        is_mock_profile=(profile == "mock"),
+    )
+
+    runtime_ctx = GraphRuntimeContext(
+        ports=ports,
+        tenant=tenant_ctx
+        or TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-session-upload",
+            role=UserRole.STAFF,
+            session_id="session-upload",
+        ),
+        evidence_text={
+            "document_title": file_name,
+            "page_number": str(page_number),
+        },
+        raw_document_bytes=raw_bytes,
+        chat_model=chat_model,
+    )
+
+    state: GraphState = {
+        "request_id": str(uuid4()),
+        "tenant_id": runtime_ctx.tenant.tenant_id,
+        "route": "extraction",
+        "status": "in_progress",
+    }
+
+    subgraph = build_extraction_subgraph().compile()
+    await subgraph.ainvoke(state, context=runtime_ctx)
+
+    fields: list[ExtractedField] = runtime_ctx.extracted_fields.get("fields", [])
     return fields
 
 
@@ -516,6 +403,13 @@ async def _extract_upload_content_and_filename(request: Request) -> tuple[bytes,
     return body, filename
 
 
+_NEW_CONVERSATION_SENTINELS = {
+    "new",
+    "00000000-0000-0000-0000-000000000000",
+    "00000000-0000-0000-0000-000000000001",
+}
+
+
 @router.post(
     "/assistants/{assistant_id}/conversations/{conversation_id}/documents",
     response_model=SessionDocumentUploadResponse,
@@ -534,10 +428,16 @@ async def upload_session_document(
     _csrf: Annotated[None, Depends(validate_csrf)] = None,
 ) -> SessionDocumentUploadResponse:
     """Upload a session fax document, execute extraction subgraph, and return extracted fields."""
-    try:
-        conv_uuid = UUID(conversation_id)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND") from None
+    normalized_conv_id = (conversation_id or "").strip().lower()
+    is_new_sentinel = normalized_conv_id in _NEW_CONVERSATION_SENTINELS and assistant_id is not None
+
+    if normalized_conv_id == "new" and is_new_sentinel:
+        conv_uuid = uuid4()
+    else:
+        try:
+            conv_uuid = UUID(conversation_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND") from None
 
     # Derive tenant context
     found_tenant_ctx: TenantContext | None = None
@@ -574,7 +474,7 @@ async def upload_session_document(
     if not found_tenant_ctx:
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
 
-    # Verify conversation exists under tenant
+    # Verify conversation exists under tenant (or auto-create when attaching in a brand-new chat)
     async with tenant_session(found_tenant_ctx) as db_session:
         conv_stmt = select(Conversation).where(
             Conversation.tenant_id == UUID(found_tenant_ctx.tenant_id),
@@ -582,7 +482,19 @@ async def upload_session_document(
         )
         conv = (await db_session.execute(conv_stmt)).scalar_one_or_none()
         if not conv:
-            raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+            if is_new_sentinel and assistant_id:
+                conv_uuid = uuid4()
+                conv = Conversation(
+                    id=conv_uuid,
+                    tenant_id=UUID(found_tenant_ctx.tenant_id),
+                    user_id=UUID(found_tenant_ctx.user_id),
+                    assistant_id=UUID(assistant_id),
+                    title="Session Document Upload",
+                )
+                db_session.add(conv)
+                await db_session.flush()
+            else:
+                raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
 
     content, filename = await _extract_upload_content_and_filename(request)
     if not content:
@@ -625,7 +537,7 @@ async def upload_session_document(
     page_count = 1
     if ext == "pdf":
         try:
-            import pypdfium2 as pdfium
+            import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
             pdf_doc = pdfium.PdfDocument(str(saved_file_path))
             page_count = len(pdf_doc)
@@ -653,10 +565,16 @@ async def upload_session_document(
         await db_session.flush()
 
     # Execute extraction subgraph
-    fields = extract_fields_from_document_file(
+    chat_model_name = getattr(settings, "chat_model", "qwen3-vl:4b")
+    vision_model_name = getattr(settings, "vision_model", "qwen3-vl:4b")
+    fields = await extract_fields_from_document_file(
         file_path=saved_file_path,
         file_name=filename,
         page_number=1,
+        profile=profile,
+        chat_model=chat_model_name,
+        vision_model=vision_model_name,
+        tenant_ctx=found_tenant_ctx,
     )
 
     # Persist ExtractionResult
@@ -672,8 +590,7 @@ async def upload_session_document(
 
     asst_param = assistant_id or str(conv.assistant_id)
     page_img_url = (
-        f"/v1/assistants/{asst_param}/conversations/{conversation_id}"
-        f"/documents/{doc_id}/pages/1/image"
+        f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_id}/pages/1/image"
     )
 
     return SessionDocumentUploadResponse(

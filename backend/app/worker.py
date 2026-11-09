@@ -10,19 +10,21 @@ Follows:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from procrastinate import App, JobContext, PsycopgConnector
 from procrastinate.retry import RetryStrategy
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 
 from app.core.ingestion.pipeline import is_retryable_error
 from app.db.env_utils import load_dotenv
-from app.db.models import DocumentVersion
+from app.db.models import DocumentVersion, ExtractionResult, SessionDocument, Tenant
 from app.db.session import unscoped_session, worker_tenant_session
 from app.observability.tracing_guard import enforce_langsmith_tracing_disabled
 from app.ports.document_repository import DocumentRepository
@@ -97,7 +99,6 @@ async def run_split_document_job(
     """
     import uuid
 
-    from app.db.session import worker_tenant_session
     from app.ports.types import StorageKey, TenantContext, UserRole, WorkerContext
     from app.wiring import (
         create_document_repository,
@@ -600,3 +601,65 @@ async def failed_page_job_sweep_task(
     _ = timestamp
     result = await run_failed_page_job_sweep(context=context)
     return result.repaired_count
+
+
+@dataclass(frozen=True)
+class SessionDocumentSweepResult:
+    """Result metrics for the periodic expired session document retention sweep."""
+
+    deleted_documents_count: int
+    deleted_files_count: int
+
+
+async def run_expired_session_documents_sweep(
+    context: JobContext | None = None,
+) -> SessionDocumentSweepResult:
+    """Periodic sweep deleting expired 24-hour session documents and their files under RLS."""
+    _ = context
+    now = datetime.now(UTC)
+
+    async with unscoped_session() as session:
+        tenant_ids = (await session.execute(select(Tenant.id))).scalars().all()
+
+    deleted_docs = 0
+    deleted_files = 0
+
+    for tid in tenant_ids:
+        worker_ctx = WorkerContext(tenant_id=str(tid), job_id=str(uuid4()))
+        async with worker_tenant_session(worker_ctx) as session:
+            expired_stmt = select(SessionDocument).where(
+                SessionDocument.tenant_id == tid,
+                SessionDocument.retention_until <= now,
+            )
+            expired_rows = (await session.execute(expired_stmt)).scalars().all()
+            for sdoc in expired_rows:
+                if getattr(sdoc, "file_path", None):
+                    fpath = Path(sdoc.file_path)
+                    if fpath.exists():
+                        with contextlib.suppress(OSError):
+                            fpath.unlink()
+                            deleted_files += 1
+                await session.execute(
+                    delete(ExtractionResult).where(
+                        ExtractionResult.tenant_id == tid,
+                        ExtractionResult.session_document_id == sdoc.id,
+                    )
+                )
+                await session.delete(sdoc)
+                deleted_docs += 1
+
+    return SessionDocumentSweepResult(
+        deleted_documents_count=deleted_docs,
+        deleted_files_count=deleted_files,
+    )
+
+
+@app.periodic(cron="*/15 * * * *", periodic_id="expired_session_documents_sweep")
+@app.task(queue="builtin", pass_context=True)
+async def expired_session_documents_sweep_task(
+    context: JobContext,
+    timestamp: int = 0,
+) -> int:
+    _ = timestamp
+    result = await run_expired_session_documents_sweep(context=context)
+    return result.deleted_documents_count

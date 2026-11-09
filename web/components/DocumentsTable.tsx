@@ -194,22 +194,40 @@ export function DocumentsTable({
                               Review
                             </button>
                           ) : doc.status.toLowerCase() === "ready" ? (
-                            <span
-                              data-testid={`verified-badge-${doc.document_id}`}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "4px",
-                                padding: "4px 8px",
-                                fontSize: "var(--font-size-xs)",
-                                color: "var(--color-status-success-text)",
-                                backgroundColor: "var(--color-status-success-bg)",
-                                borderRadius: "var(--radius-sm)",
-                                fontWeight: 500,
-                              }}
-                            >
-                              ✓ All pages verified
-                            </span>
+                            <>
+                              <span
+                                data-testid={`verified-badge-${doc.document_id}`}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                  padding: "4px 8px",
+                                  fontSize: "var(--font-size-xs)",
+                                  color: "var(--color-status-success-text)",
+                                  backgroundColor: "var(--color-status-success-bg)",
+                                  borderRadius: "var(--radius-sm)",
+                                  fontWeight: 500,
+                                }}
+                              >
+                                ✓ All pages verified
+                              </span>
+                              <button
+                                type="button"
+                                data-testid={`inspect-btn-${doc.document_id}`}
+                                onClick={() => onReview(doc)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: "var(--radius-md)",
+                                  border: "1px solid var(--color-border)",
+                                  backgroundColor: "var(--color-bg-subtle)",
+                                  color: "var(--color-navy)",
+                                  fontWeight: 600,
+                                  fontSize: "var(--font-size-xs)",
+                                }}
+                              >
+                                Inspect
+                              </button>
+                            </>
                           ) : null}
 
                           {!isRetired ? (

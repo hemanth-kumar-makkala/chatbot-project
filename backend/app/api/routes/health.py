@@ -6,7 +6,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 
-from app.api.deps import require_platform_admin
+from app.api.config import ApiSettings
+from app.api.deps import get_api_settings, require_platform_admin
 from app.db.session import unscoped_session
 from app.ports.types import SessionContext
 
@@ -27,6 +28,7 @@ async def health_check() -> dict[str, str]:
 @router.get("/v1/admin/health")
 async def admin_health_check(
     session: Annotated[SessionContext, Depends(require_platform_admin)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
 ) -> dict[str, Any]:
     """Admin-only diagnostic endpoint disclosing database and profile status."""
     db_ok = False
@@ -43,7 +45,7 @@ async def admin_health_check(
 
     return {
         "status": "ok" if db_ok else "degraded",
-        "profile": "mock",
+        "profile": getattr(settings, "profile", "mock"),
         "database": "connected" if db_ok else "disconnected",
         "admin_user_id": session.user_id,
     }

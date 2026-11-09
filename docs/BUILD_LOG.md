@@ -3198,3 +3198,89 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `docs/reports/cache_answer_results.json`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
+
+---
+
+## 2026-11-09 — Integrity Fix: Replace Filename-Matched Extraction & Remove Hardcoded Fallbacks
+
+- **Goal**: Eliminate filename-matched fake field extraction in `backend/app/api/routes/conversations.py` (`extract_fields_from_document_file`) and audit/fix all other golden filename branching or hardcoded fallback content across `backend/app` and `web/`.
+- **What Was Built & Fixed**:
+  1. **`backend/app/core/extraction/subgraph.py` (New Module)**:
+     - Implemented `build_extraction_subgraph`, `node_extract_fields`, `node_dual_read_compare`, `node_classify_confidence`, `node_validate_fields`, `extract_fields_from_ocr_text`, and `parse_vision_json_reading`.
+     - `node_extract_fields` splits document pages via `ctx.ports.document_parser.split_pages`, extracts OCR text via `ctx.ports.document_parser.extract`, and invokes `ctx.ports.model_provider.read_page(role=ModelRole.VISION, ...)` for vision-capable models or mock profile, reconciling both readings through `dual_read_compare`.
+     - Removed hardcoded medication regex (`Amoxicillin|Amoxillin|MRI Lumbar Spine`) and hardcoded fallback dictionary (`{"patient_name": "Alex Morgan", "authorized_medication": "Amoxicillin 500mg"}`) previously in `backend/app/core/graph.py:2100-2145`.
+  2. **`backend/app/api/routes/conversations.py`**:
+     - Replaced the `if "skewed" in lower_name: ... elif "faint" in lower_name: ... else:` hardcoded dictionary branches in `extract_fields_from_document_file` with execution of `build_extraction_subgraph` wired via `create_document_parser`, `create_model_provider`, and `create_image_processor`.
+  3. **`backend/app/adapters/parsing/mock.py` & `backend/app/adapters/models/mock.py`**:
+     - Configured `MockDocumentParser.extract` and `MockModelProvider.read_page` to supply deterministic synthetic OCR and Vision readings through `build_extraction_subgraph`, exercising `FILLED_HIGH`, `FILLED_MEDIUM`, `CONFLICTING`, `INVALID`, `UNREADABLE`, and `NOT_PRESENT` states with zero filename branching and zero golden strings.
+  4. **Codebase-Wide Fixes Across `backend/app` and `web/`**:
+     - `backend/app/api/routes/questions.py`: Removed fake fallback citations (`"Clinic Policy 2023"` / `"Clinic Policy 2024"`) when `conflict_sources_list` is constructed.
+     - `backend/app/api/routes/health.py`: Replaced hardcoded `"profile": "mock"` in `/v1/admin/health` with `getattr(settings, "profile", "mock")`.
+     - `backend/app/core/rewrite.py`: Removed hardcoded `"Apex Health Insurance"` regex in `_extract_recent_topic` in favor of general prepositional noun-phrase extraction.
+     - `backend/app/core/normalization.py`: Replaced golden MRN comment example with generic pattern comment.
+     - `backend/app/adapters/retrieval/mock.py`: Replaced golden filename `"accepted_plans.csv"` with generic `"synthetic_plans_table.csv"`.
+     - `web/app/assistants/[assistantId]/page.tsx` & `web/components/SourcePanel.tsx`: Removed golden filename stem branching (`skewed_fax`, `faint_fax_2page`, `prior_auth_guide`, `front_desk_policy_v1/v2`, etc.) and wired live assistant visual thumbnails to the backend thumbnail route.
+- **Tests Added**:
+  - `backend/tests/unit/test_session_document_upload_safety.py::test_renamed_skewed_fax_upload_uses_extraction_subgraph_without_hardcoded_strings`: Uploads a renamed copy of `skewed_fax.pdf` (`arbitrary_intake_01.pdf`) and proves the response comes from `build_extraction_subgraph`, matches `skewed_fax.pdf` identically, includes all eval states, and contains zero hardcoded strings.
+  - `backend/tests/invariants/test_architecture_boundaries.py::TestRepoCodebaseScans::test_no_route_or_adapter_branches_on_golden_filenames_or_hardcoded_extractions`: Scans all `.py` files in `backend/app` and fails if any route, core module, or adapter (outside `safety_lock.py`) branches on golden filenames or contains hardcoded extraction/citation strings.
+  - `backend/tests/integration/test_session_document_extraction_route.py`: Updated upload test to upload renamed `arbitrary_intake_01.pdf` and assert subgraph states and absence of hardcoded strings.
+- **Verification**:
+  - All non-Postgres unit, invariant, and eval tests on `mock` profile: 501 passed, 0 failed, 0 errors (PostgreSQL/Docker service `com.docker.service` is stopped on the host machine, so the 6 DB-connecting test files were excluded per `.agents/rules/execution.md`).
+  - Frontend test suite (`vitest`): 41 passed across 5 suites (`chat_attach_live`, `extraction_view`, `ui2`, `ui3`, `ui4`).
+  - `uv --directory backend run pre-commit run --files ...`: all hooks passed.
+- **Files Created / Modified**:
+  - `backend/app/core/extraction/subgraph.py` (created)
+  - `backend/app/core/graph.py`
+  - `backend/app/api/routes/conversations.py`
+  - `backend/app/api/routes/questions.py`
+  - `backend/app/api/routes/health.py`
+  - `backend/app/core/rewrite.py`
+  - `backend/app/core/normalization.py`
+  - `backend/app/adapters/parsing/mock.py`
+  - `backend/app/adapters/models/mock.py`
+  - `backend/app/adapters/retrieval/mock.py`
+  - `backend/tests/unit/test_session_document_upload_safety.py`
+  - `backend/tests/invariants/test_architecture_boundaries.py`
+  - `backend/tests/integration/test_session_document_extraction_route.py`
+  - `web/app/assistants/[assistantId]/page.tsx`
+  - `web/components/SourcePanel.tsx`
+  - `docs/STATUS.md`
+  - `docs/BUILD_LOG.md`
+
+---
+
+## 2026-11-09 — Track 1: Fix Remaining Local Pipeline, Route & UI Defects
+
+- **Goal**: Resolve the 4 remaining local pipeline, route, worker, and UI defects identified in the project audit (`docs/reports/2026-11-11-project-audit.md` Sections 4 & 5).
+- **What Was Built & Fixed**:
+  1. **Chat Attach (`📎`) on Empty Conversation (`backend/app/api/routes/conversations.py`, `web/app/assistants/[assistantId]/page.tsx`)**:
+     - Updated `upload_session_document` so when `assistant_id` is provided and `conversation_id` is a new-chat sentinel (`"new"`, `"00000000-0000-0000-0000-000000000000"`, or `"00000000-0000-0000-0000-000000000001"`) that does not exist yet in `Conversation`, the route auto-creates a new `Conversation` row with a fresh `uuid4()` under `tenant_session(found_tenant_ctx)`, links `SessionDocument` and `ExtractionResult` to that new `conv_uuid`, and returns `conversation_id=str(conv_uuid)` and `page_image_url` referencing `conv_uuid`.
+     - Updated `handleLiveFileUpload` in `web/app/assistants/[assistantId]/page.tsx` to call `setConversationId(res.data.conversation_id)` when `conversationId` was previously `null`.
+  2. **SSE Streaming (`POST /v1/questions/stream`) Visual Context (`backend/app/api/routes/questions.py`)**:
+     - Updated `ask_question_stream` to query active visual chunks (`Chunk.evidence_type == "visual"`) inside the pre-stream DB transaction, load `page_images` and `page_ocr_confidences` from `storage` inside `event_generator()`, and pass them into `GraphRuntimeContext`, matching `ask_question`.
+  3. **Explain-Mode Named Document Scoping (`backend/app/core/graph.py`)**:
+     - Added `_doc_stem_tokens` and `_scope_explain_ids_to_named_document` in `backend/app/core/graph.py` and wired them into `node_generate` when `mode == "explain"`. When a summary question names a specific document (e.g., `"Summarize the outpatient prior authorization guide"` matching `prior_auth_guide.pdf`), `top_ids` is scoped to chunks from that target document before and after expanding neighbouring chunks, preventing cross-document source mixing.
+  4. **24-Hour Session Document Expiry Worker Sweep & Inspect UI Action (`backend/app/worker.py`, `web/components/DocumentsTable.tsx`)**:
+     - Implemented `SessionDocumentSweepResult`, `run_expired_session_documents_sweep`, and `@app.periodic(cron="*/15 * * * *", periodic_id="expired_session_documents_sweep")` in `backend/app/worker.py` to delete expired `SessionDocument` files from disk and remove their `ExtractionResult` and `SessionDocument` rows under `worker_tenant_session` where `retention_until <= now()`. Also removed a redundant local `from app.db.session import worker_tenant_session` import inside `run_split_document_job`.
+     - Updated `web/components/DocumentsTable.tsx` to render an `Inspect` button (`data-testid="inspect-btn-{id}"`) alongside the `✓ All pages verified` badge for `Ready` documents with 0 flagged pages.
+- **Tests Added**:
+  - `backend/tests/unit/test_session_document_upload_safety.py`:
+    - `test_upload_session_document_on_new_conversation_auto_creates_conversation`
+    - `test_ask_question_stream_populates_page_images_and_ocr_confidences`
+    - `test_expired_session_documents_sweep_deletes_expired_rows_and_files`
+  - `backend/tests/unit/test_source_fidelity.py`:
+    - `test_explain_mode_scopes_chunks_to_named_target_document`
+  - `web/__tests__/knowledge_page.test.tsx`:
+    - Verified `verified-badge-doc_4` and `inspect-btn-doc_4` both render on `Ready` documents with 0 flagged pages.
+- **Files Modified**:
+  - `backend/app/api/routes/conversations.py`
+  - `backend/app/api/routes/questions.py`
+  - `backend/app/core/graph.py`
+  - `backend/app/worker.py`
+  - `backend/tests/unit/test_session_document_upload_safety.py`
+  - `backend/tests/unit/test_source_fidelity.py`
+  - `web/app/assistants/[assistantId]/page.tsx`
+  - `web/components/DocumentsTable.tsx`
+  - `web/__tests__/knowledge_page.test.tsx`
+  - `docs/STATUS.md`
+  - `docs/BUILD_LOG.md`
