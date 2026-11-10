@@ -12,7 +12,16 @@ from sqlalchemy import text
 from app.adapters.auth.builtin import BuiltinAuthProvider
 from app.api.app import create_app
 from app.api.config import ApiSettings
-from app.db.models import Assistant, Document, DocumentVersion, Membership, Tenant, User
+from app.db.models import (
+    Assistant,
+    Chunk,
+    Document,
+    DocumentVersion,
+    Membership,
+    Page,
+    Tenant,
+    User,
+)
 from app.db.session import tenant_session, unscoped_session
 from app.ports.errors import ConfigurationError
 from app.ports.types import TenantContext, UserRole
@@ -283,7 +292,7 @@ class TestApiAuthAndTenantEndpoints:
             assert q_resp.status_code == 404
 
     async def test_post_questions_forged_tenant_id_in_request_is_ignored(
-        self, test_app, runtime_test_password: str
+        self, test_app, runtime_test_password: str, monkeypatch
     ) -> None:
         """Forged tenant_id in body or header is ignored; tenant derives strictly from assistant."""
         hasher = BuiltinAuthProvider()
@@ -333,10 +342,44 @@ class TestApiAuthAndTenantEndpoints:
                 status="ready",
                 file_extension="pdf",
             )
-            t_session.add_all([mem, asst, doc, ver])
+            page_id = uuid4()
+            page = Page(
+                id=page_id,
+                tenant_id=t_real_id,
+                document_version_id=ver_id,
+                page_number=1,
+                page_sha256="0" * 64,
+                page_type="digital_text",
+                image_key=f"{t_real_id}/page.png",
+            )
+            chunk_id = uuid4()
+            chunk = Chunk(
+                id=chunk_id,
+                tenant_id=t_real_id,
+                document_version_id=ver_id,
+                page_id=page_id,
+                text="The clinic hours are 9am to 5pm.",
+                language="en",
+                ts_config="english",
+                evidence_type="text",
+                is_active=True,
+            )
+            t_session.add_all([mem, asst, doc, ver, page])
+            await t_session.flush()
+            t_session.add(chunk)
             await t_session.flush()
             asst_id = str(asst.id)
             real_tenant_id = str(t_real_id)
+
+        from app.api.routes import questions
+
+        mock_graph = AsyncMock()
+        mock_graph.ainvoke.return_value = {
+            "status": "answered",
+            "evidence_ids": [str(chunk_id)],
+            "needs_vision": False,
+        }
+        monkeypatch.setattr(questions, "get_compiled_graph", lambda: mock_graph)
 
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -434,7 +477,7 @@ class TestApiAuthAndTenantEndpoints:
             assert detail[0]["type"] == "model_attributes_type"
 
     async def test_post_questions_shared_contract_fixture(
-        self, test_app, runtime_test_password: str
+        self, test_app, runtime_test_password: str, monkeypatch
     ) -> None:
         """Shared contract: posting fixture question_request.json returns 200."""
         fixture_path = (
@@ -495,9 +538,43 @@ class TestApiAuthAndTenantEndpoints:
                 status="ready",
                 file_extension="pdf",
             )
-            t_session.add_all([mem, asst, doc, ver])
+            page_id = uuid4()
+            page = Page(
+                id=page_id,
+                tenant_id=t_real_id,
+                document_version_id=ver_id,
+                page_number=1,
+                page_sha256="0" * 64,
+                page_type="digital_text",
+                image_key=f"{t_real_id}/page.png",
+            )
+            chunk_id = uuid4()
+            chunk = Chunk(
+                id=chunk_id,
+                tenant_id=t_real_id,
+                document_version_id=ver_id,
+                page_id=page_id,
+                text="Contract fixture clinic guide content.",
+                language="en",
+                ts_config="english",
+                evidence_type="text",
+                is_active=True,
+            )
+            t_session.add_all([mem, asst, doc, ver, page])
+            await t_session.flush()
+            t_session.add(chunk)
             await t_session.flush()
             asst_id = str(asst.id)
+
+        from app.api.routes import questions
+
+        mock_graph = AsyncMock()
+        mock_graph.ainvoke.return_value = {
+            "status": "answered",
+            "evidence_ids": [str(chunk_id)],
+            "needs_vision": False,
+        }
+        monkeypatch.setattr(questions, "get_compiled_graph", lambda: mock_graph)
 
         # Substitute the seeded assistant ID into fixture payload
         payload = dict(fixture_data)
@@ -568,6 +645,7 @@ class TestApiAuthAndTenantEndpoints:
             role=UserRole.CLIENT_ADMIN,
             session_id="setup-session",
         )
+        seeded_chunk_ids: list[str] = []
         async with tenant_session(ctx) as t_session:
             mem = Membership(tenant_id=t_id, user_id=u_id, role="staff")
             asst = Assistant(
@@ -580,12 +658,61 @@ class TestApiAuthAndTenantEndpoints:
             await t_session.flush()
             asst_id = str(asst.id)
 
+            for i in (1, 2):
+                doc = Document(
+                    tenant_id=t_id,
+                    title=f"Policy Document {i}",
+                )
+                t_session.add(doc)
+                await t_session.flush()
+                ver = DocumentVersion(
+                    tenant_id=t_id,
+                    document_id=doc.id,
+                    sha256=f"{i}" * 64,
+                    uploaded_by=u_id,
+                    status="ready",
+                    file_extension="pdf",
+                )
+                t_session.add(ver)
+                await t_session.flush()
+                doc.active_version_id = ver.id
+                page = Page(
+                    tenant_id=t_id,
+                    document_version_id=ver.id,
+                    page_number=1,
+                    page_sha256=f"{i}" * 64,
+                    page_type="digital_text",
+                    image_key=f"{t_id}/p_{i}.png",
+                )
+                t_session.add(page)
+                await t_session.flush()
+                chunk = Chunk(
+                    tenant_id=t_id,
+                    document_version_id=ver.id,
+                    page_id=page.id,
+                    text=f"Sample text content for policy {i}",
+                    language="en",
+                    ts_config="english",
+                    evidence_type="text",
+                    is_active=True,
+                )
+                t_session.add(chunk)
+                await t_session.flush()
+                seeded_chunk_ids.append(str(chunk.id))
+
+        mapped_evidence = [
+            seeded_chunk_ids[int(eid.replace("c", "")) - 1]
+            if eid.startswith("c") and eid[1:].isdigit()
+            else eid
+            for eid in mock_evidence
+        ]
+
         # Mock compiled graph output
         from app.api.routes import questions
 
         mock_result = {
             "status": mock_status,
-            "evidence_ids": mock_evidence,
+            "evidence_ids": mapped_evidence,
             "needs_vision": False,
         }
         if check_error_ref:
@@ -630,6 +757,85 @@ class TestApiAuthAndTenantEndpoints:
                 assert data["public_error_ref"] == "ERR-ABC123"
             else:
                 assert data["public_error_ref"] is None
+
+    async def test_unresolvable_evidence_id_never_produces_citation(
+        self,
+        test_app,
+        runtime_test_password: str,
+        monkeypatch,
+    ) -> None:
+        """Unresolvable evidence ID raises typed error and ends in safe_failure."""
+        hasher = BuiltinAuthProvider()
+        password = runtime_test_password
+        email = f"staff-{uuid4()}@example.com"
+
+        async with unscoped_session() as session:
+            t = Tenant(name="Tenant Unresolvable")
+            session.add(t)
+            await session.flush()
+            t_id = t.id
+
+            user = User(email=email, hashed_password=hasher.hash_password(password))
+            session.add(user)
+            await session.flush()
+            u_id = user.id
+
+        ctx = TenantContext(
+            tenant_id=str(t_id),
+            user_id=str(u_id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="setup-session",
+        )
+        async with tenant_session(ctx) as t_session:
+            mem = Membership(tenant_id=t_id, user_id=u_id, role="staff")
+            asst = Assistant(
+                tenant_id=t_id,
+                name="Assistant Unresolvable",
+                prompt_id="prompt-default",
+                prompt_version="1.0",
+            )
+            t_session.add_all([mem, asst])
+            await t_session.flush()
+            asst_id = str(asst.id)
+
+        # Mock compiled graph output with an unresolvable ID that doesn't exist in DB
+        from app.api.routes import questions
+
+        unresolvable_id = str(uuid4())
+        mock_result = {
+            "status": "answered",
+            "evidence_ids": [unresolvable_id],
+            "needs_vision": False,
+        }
+
+        mock_graph = AsyncMock()
+        mock_graph.ainvoke.return_value = mock_result
+        monkeypatch.setattr(questions, "get_compiled_graph", lambda: mock_graph)
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/v1/auth/login",
+                json={"email": email, "password": password},
+            )
+            csrf_token = str(client.cookies.get("csrf_token") or "")
+
+            q_resp = await client.post(
+                "/v1/questions",
+                headers={"X-CSRF-Token": csrf_token},
+                json={
+                    "assistant_id": asst_id,
+                    "question_text": "Test unresolvable citation",
+                },
+            )
+            assert q_resp.status_code == 200
+            data = q_resp.json()
+            assert data["status"] == "safe_failure"
+            assert data["sources"] == []
+            assert data["conflict_sources"] == []
+            assert data["citations"] == []
+            assert data["public_error_ref"] is not None
+            assert data["public_error_ref"].startswith("ERR-")
 
     async def test_create_app_missing_local_storage_path_raises_configuration_error(
         self, monkeypatch

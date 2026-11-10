@@ -26,4 +26,3 @@ RUN mkdir -p /var/lib/cka/storage
 EXPOSE 8000
 
 CMD ["uv", "run", "uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
-

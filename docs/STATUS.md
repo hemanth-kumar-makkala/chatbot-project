@@ -7,6 +7,39 @@
 - **Phase 3**: RAG Engine & Core Logic — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase3_baseline.json`: all 11 benchmark metrics recorded with zero cross-tenant leaks)
 - **Phase 4**: Scanned Document Ingestion & Vision Verification — **COMPLETED & VERIFIED** (Exit gate verified in `evals/reports/phase4_baseline.json`: false-fill rate on unreadable fields 0.0%, visual recovery Hit@5 100%, zero unreadable fields filled)
 - **Phase 5**: Security, Guardrails & Hardening — **COMPLETED & VERIFIED**
+  - **Model Layer Modernization: API Migration to NVIDIA Endpoint (`desktop-api`) & Addendum** — **COMPLETED & VERIFIED**
+    - **Architecture & Invariant Preservation**: Local generation models on the workstation moved to hosted OpenAI-compatible API endpoints (NVIDIA build endpoint) for `router`, `answer`, `vision`, `extract`, and `judge` roles, while `OllamaModelProvider` and `desktop-gpu.yaml` stay untouched. BGE-M3 embeddings, BGE reranker, and Docling OCR stay local on CPU. SHA-256 cloud safety lock remains active.
+    - **OpenAI-Compatible Adapter Hardening (`backend/app/adapters/models/openai_compatible.py`)**:
+      - Bounded retry with exponential backoff & jitter for HTTP 429 and transient 5xx, respecting `Retry-After` header and raising typed `ProviderRateLimited` (`status_code=429`, `code="PROVIDER_RATE_LIMITED"`).
+      - Client-side request pacing using token-bucket monotonic timer (`requests_per_minute`).
+      - Image scaling via `ImageProcessor` to configured max dimension (default 1536px) without upscaling small images.
+      - Token ceiling enforcement: `min(max_tokens, limit)` ensures engine limits win; non-positive/missing requested `max_tokens` raises typed `ConfigurationError("MISSING_MAX_TOKENS")`.
+      - Reasoning block stripping: removes `<think>...</think>` and `<thought>...</thought>` blocks before structured JSON parsing.
+    - **5-Role Independent Provider Routing (`backend/app/adapters/models/provider_router.py`)**:
+      - Independent dispatch across `ROUTER`, `ANSWER`, `VISION`, `EXTRACT`, and `JUDGE` roles.
+      - Startup check enforcing that judge model differs from answer model in `desktop-api` profile (`ConfigurationError("JUDGE_MODEL_SAME_AS_ANSWER")`).
+    - **Explicit Model Capabilities & Cloud Safety Lock (`backend/app/ports/model_provider.py`, `backend/app/core/safety_lock.py`)**:
+      - Profile model entries declare explicit flags `supports_vision`, `remote`, `baa_covered`, and `temperature`.
+      - Fail-closed capabilities: heuristics and name-matching removed from `is_cloud_model` and `is_vision_model`. Undeclared models raise typed `ConfigurationError("MODEL_CAPABILITIES_NOT_DECLARED")`.
+      - Immutable `capabilities_map` built at startup from profile in `wiring.py` keyed strictly by `(provider, model)` with exact matching (no case folding, no prefix stripping).
+      - Single source of truth: `ANSWER_MODEL`, `CHAT_MODEL`, and `VISION_MODEL` environment overrides removed. Startup fails with `DEPRECATED_MODEL_ENV_VAR` if any are set.
+      - Fail-closed judge: `node_assess_evidence` skips JUDGE call when all strong evidence belongs to a single document; when evidence spans >= 2 documents and JUDGE fails, times out, rate limits, or returns malformed JSON, routes directly to `safe_failure` (`ERR-JUDGE-FAILURE`) and never falls back to `RELIABLE_TEXT`.
+    - **Runtime Profile `desktop-api` (`backend/config/profiles/desktop-api.yaml`)**:
+      - Models: `router`, `answer`, `vision`, `extract` -> `nvidia/nemotron-3.5-super-vl-120b-a12b`; `judge` -> `mistralai/mistral-large-4-1t-a52b`.
+      - Temperature 0.0 and reasoning: false declared across all 5 roles; `requests_per_minute: 30` under `providers.nvidia`.
+      - Registered across `SYNTHETIC_LOCAL_PROFILES`, `create_document_parser`, `create_chunker`, `create_embedding_provider`, `create_retriever`, `create_reranker`, `create_exception_scrubber`, `create_model_provider`, and `ApiProfile` in `backend/app/api/config.py`.
+    - **Report Stamping Utility (`backend/app/observability/report_stamping.py`)**:
+      - Stamps evaluation reports with profile, model identifiers, CPU/RAM/OS/GPU hardware info, and git commit SHA resolved by direct `.git` file parsing without running the git binary.
+      - Wired into `compare_4b_vs_beam.py`, `run_phase4_extraction_eval.py`, and `evals/scoring/score.py`.
+    - **Proving Tests**:
+      - `backend/tests/unit/test_openai_compatible_provider.py` (10/10 pass)
+      - `backend/tests/unit/test_model_provider_router.py` (3/3 pass)
+      - `backend/tests/unit/test_desktop_api_profile.py` (12/12 pass)
+      - `backend/tests/unit/test_report_stamping.py` (3/3 pass)
+      - `backend/tests/unit/test_wiring_profile_guards.py` (41/41 pass)
+      - `backend/tests/unit/test_model_settings.py` (6/6 pass)
+      - `backend/tests/unit/test_cloud_safety_lock.py` (12/12 pass)
+      - `backend/tests/unit/test_evidence_gate_and_validation.py` (11/11 pass)
   - **Task 5.1: Input Validation, Output Guardrails & Rate Limits (`backend/app/core/guards/`)** — **COMPLETED & VERIFIED**
     - **Question Length Ceiling**: Enforces `MAX_QUESTION_LENGTH = 4000` characters at Node 1 (`guard_input`) and API schema level, returning `QUESTION_TOO_LONG_MESSAGE` (`"Your question is too long. Please shorten it to under 4,000 characters."`, `public_error_ref="ERR-INPUT-TOO-LONG"`) before reaching retrieval or model calls.
     - **Prompt-Injection Pattern Detection**: Normalizes zero-width characters, dotted/spaced letters, Base64 payloads, and leetspeak before checking deterministic patterns across 6 categories (`instruction_override`, `system_prompt_extraction`, `role_play_jailbreak`, `cross_tenant_data_probe`, `ungrounded_generation_bypass`, `encoded_or_obfuscated_override`). Refuses at Node 1 with `PROMPT_INJECTION_MESSAGE` (`"I can only answer questions about this client's documents."`, `public_error_ref="ERR-PROMPT-INJECTION"`). Operational logs record only `error_code=<matched_pattern>` and `error_type="PromptInjectionBlocked"` with zero user text (Invariant 9). Verified **0 false positives** across all 95 non-`INJECTION` golden questions in `evals/golden/questions.json` and 25 risky-word legitimate staff questions via `guard_question_input`.

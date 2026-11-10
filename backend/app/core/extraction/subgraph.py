@@ -68,17 +68,17 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 1. Patient Name
     m_label_pat = re.search(
-        r"Patient\s+Name\s*:\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)",
+        r"Patient\s+Name\s*:\s*([A-Z][a-zA-Z]+(?:[^\S\r\n]+[A-Z][a-zA-Z]+)+)",
         ocr_text,
     )
     m_pat = m_label_pat or re.search(
-        r"Patient\s+([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+)",
+        r"Patient\s+([A-Z][a-zA-Z]+[^\S\r\n]+[A-Z][a-zA-Z]+)",
         ocr_text,
     )
     if not m_pat:
         # Unlabeled leading two-word capitalized name before medication/MRN/date
         m_pat = re.search(
-            r"^\s*([A-Z][a-z]+\s+[A-Z][a-z]+)\b",
+            r"^\s*([A-Z][a-z]+[^\S\r\n]+[A-Z][a-z]+)\b",
             ocr_text.strip(),
         )
     if m_pat:

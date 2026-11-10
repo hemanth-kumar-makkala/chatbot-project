@@ -23,9 +23,9 @@ from typing import Any
 import pytest
 
 from app.core.graph import (
-    MAX_TOKENS_EXACT,
+    MAX_REQUEST_TOKENS_EXACT,
+    MAX_REQUEST_TOKENS_SHORT,
     MAX_TOKENS_EXPLAIN,
-    MAX_TOKENS_SHORT,
     MAX_TOKENS_TABLE,
     TOP_N_CHUNKS,
     GraphPorts,
@@ -148,6 +148,7 @@ class NeighbouringRetriever(Retriever):
                 page_id="p1",
                 document_version_id="v1",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(_tenant_ctx.tenant_id),
             )
             for cid in chunk_ids
         ]
@@ -169,13 +170,13 @@ class TestGenerateNodeSchemas:
 
     def test_token_cap_constants_are_named_integers(self) -> None:
         """Token caps per mode are named constants."""
-        assert isinstance(MAX_TOKENS_EXACT, int)
-        assert isinstance(MAX_TOKENS_SHORT, int)
+        assert isinstance(MAX_REQUEST_TOKENS_EXACT, int)
+        assert isinstance(MAX_REQUEST_TOKENS_SHORT, int)
         assert isinstance(MAX_TOKENS_EXPLAIN, int)
         assert isinstance(MAX_TOKENS_TABLE, int)
         assert isinstance(TOP_N_CHUNKS, int)
         assert TOP_N_CHUNKS >= 8
-        assert MAX_TOKENS_EXACT < MAX_TOKENS_SHORT < MAX_TOKENS_EXPLAIN
+        assert MAX_REQUEST_TOKENS_EXACT < MAX_REQUEST_TOKENS_SHORT < MAX_TOKENS_EXPLAIN
 
     def test_prompts_and_schemas_loaded_from_registry_yaml(self) -> None:
         """Requirement 1: Prompts and schemas loaded from prompts/registry.yaml."""
@@ -219,7 +220,7 @@ class TestGenerateNodeSchemas:
     async def test_exact_mode_uses_strict_token_cap(
         self, base_context: GraphRuntimeContext
     ) -> None:
-        """Requirement 2: exact mode enforces MAX_TOKENS_EXACT."""
+        """Requirement 2: exact mode enforces MAX_REQUEST_TOKENS_EXACT."""
         model = MockGenerationModel(
             output={
                 "mode": "exact",
@@ -236,7 +237,7 @@ class TestGenerateNodeSchemas:
         state: GraphState = {"request_id": "r1", "answer_mode": "exact", "evidence_ids": ["c1"]}
         res = await node_generate(state, type("MockRuntime", (), {"context": base_context})())
 
-        assert model.last_max_tokens == MAX_TOKENS_EXACT
+        assert model.last_max_tokens == MAX_REQUEST_TOKENS_EXACT
         assert res["status"] == "in_progress"
         assert base_context.response_text == "2026-PA-01"
 
@@ -244,7 +245,7 @@ class TestGenerateNodeSchemas:
     async def test_short_mode_uses_strict_token_cap(
         self, base_context: GraphRuntimeContext
     ) -> None:
-        """Requirement 2: short mode enforces MAX_TOKENS_SHORT."""
+        """Requirement 2: short mode enforces MAX_REQUEST_TOKENS_SHORT."""
         model = MockGenerationModel(
             output={
                 "mode": "short",
@@ -261,7 +262,7 @@ class TestGenerateNodeSchemas:
         state: GraphState = {"request_id": "r1", "answer_mode": "short", "evidence_ids": ["c1"]}
         res = await node_generate(state, type("MockRuntime", (), {"context": base_context})())
 
-        assert model.last_max_tokens == MAX_TOKENS_SHORT
+        assert model.last_max_tokens == MAX_REQUEST_TOKENS_SHORT
         assert res["status"] == "in_progress"
 
     @pytest.mark.asyncio

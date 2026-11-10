@@ -225,9 +225,11 @@ class TestRetrieverContract:
             page_id="pg-012",
             document_version_id="ver-003",
             evidence_type=EvidenceType.TEXT,
+            tenant_id="tenant-test-1",
         )
         assert ev.evidence_type == EvidenceType.TEXT
         assert ev.evidence_type.value == "text"
+        assert ev.tenant_id == "tenant-test-1"
 
 
 class TestStorageBackendContract:

@@ -15,6 +15,7 @@ ApiProfile = Literal[
     "dev-free-api",
     "cloud",
     "frontier",
+    "desktop-api",
 ]
 
 
@@ -69,20 +70,23 @@ def _default_session_upload_retention_hours() -> int | None:
     return None
 
 
-def _default_chat_model() -> str:
-    """Answer model setting, preferring ANSWER_MODEL with CHAT_MODEL compatibility."""
-    val = os.getenv("ANSWER_MODEL") or os.getenv("CHAT_MODEL")
-    if val is not None and val.strip():
-        return val.strip()
-    return "qwen3-vl:4b"
+DEPRECATED_MODEL_ENV_VARS: tuple[str, ...] = ("ANSWER_MODEL", "CHAT_MODEL", "VISION_MODEL")
 
 
-def _default_vision_model() -> str:
-    """Vision model setting, independent from the answer model."""
-    val = os.getenv("VISION_MODEL")
-    if val is not None and val.strip():
-        return val.strip()
-    return "qwen3-vl:4b"
+def check_deprecated_model_env_vars() -> None:
+    """Enforce that model selection comes exclusively from profile YAML.
+
+    Raises ConfigurationError if any legacy model environment override is set.
+    """
+    for var in DEPRECATED_MODEL_ENV_VARS:
+        if os.getenv(var) is not None:
+            from app.ports.errors import ConfigurationError
+
+            raise ConfigurationError(
+                f"Environment variable '{var}' is no longer supported. "
+                "Model configuration must come strictly from the profile YAML.",
+                error_code="DEPRECATED_MODEL_ENV_VAR",
+            )
 
 
 AuthProviderType = Literal["builtin", "jwt", "api_key"]
@@ -160,12 +164,12 @@ class ApiSettings(BaseModel):
         description="Retention window for chat session uploads in hours. Required; no default.",
     )
     chat_model: str = Field(
-        default_factory=_default_chat_model,
-        description="Answer-generation model (ANSWER_MODEL; CHAT_MODEL remains compatible).",
+        default="",
+        description="Answer-generation model resolved from profile.",
     )
     vision_model: str = Field(
-        default_factory=_default_vision_model,
-        description="Independent vision model selection (VISION_MODEL).",
+        default="",
+        description="Independent vision model selection resolved from profile.",
     )
     nvidia_base_url: str | None = Field(default_factory=lambda: _optional_env("NVIDIA_BASE_URL"))
     nvidia_api_key: SecretStr | None = Field(
@@ -199,6 +203,7 @@ class ApiSettings(BaseModel):
     )
 
     def __init__(self, **data: Any) -> None:
+        check_deprecated_model_env_vars()
         try:
             super().__init__(**data)
         except ValidationError as exc:
@@ -221,7 +226,14 @@ class ApiSettings(BaseModel):
 
         from pathlib import Path
 
-        if self.profile in ("mock", "office-cpu", "desktop-gpu", "home-gpu", "dev-free-api"):
+        if self.profile in (
+            "mock",
+            "office-cpu",
+            "desktop-gpu",
+            "home-gpu",
+            "dev-free-api",
+            "desktop-api",
+        ):
             resolved = Path(self.storage_dir.strip())
             if not resolved.is_dir():
                 raise ConfigurationError(

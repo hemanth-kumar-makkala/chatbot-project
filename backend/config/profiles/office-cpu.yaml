@@ -2,11 +2,11 @@
 # Office PC with no GPU. Small Ollama models running on CPU for short synthetic documents.
 profile: office-cpu
 models:
-  router:  { provider: ollama, model: "qwen2.5:3b" }
-  answer:  { provider: ollama, model: "qwen2.5:3b" }
-  vision:  { provider: ollama, model: "qwen2-vl:2b" }
-  extract: { provider: ollama, model: "qwen2-vl:2b" }
-  judge:   { provider: ollama, model: "llama3.2:3b" }
+  router:  { provider: ollama, model: "qwen2.5:3b", supports_vision: false, remote: false, baa_covered: false }
+  answer:  { provider: ollama, model: "qwen2.5:3b", supports_vision: false, remote: false, baa_covered: false }
+  vision:  { provider: ollama, model: "qwen2-vl:2b", supports_vision: true, remote: false, baa_covered: false }
+  extract: { provider: ollama, model: "qwen2-vl:2b", supports_vision: true, remote: false, baa_covered: false }
+  judge:   { provider: ollama, model: "llama3.2:3b", supports_vision: false, remote: false, baa_covered: false }
 embeddings: { provider: local, model: "BAAI/bge-m3", device: cpu }
 reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
 storage:    { backend: local, path: ./data/files }

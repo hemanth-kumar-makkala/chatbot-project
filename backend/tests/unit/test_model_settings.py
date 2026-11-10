@@ -15,15 +15,18 @@ from app.wiring import create_model_provider
 def test_answer_and_vision_models_read_independent_environment_settings(
     monkeypatch, tmp_path
 ) -> None:
-    monkeypatch.setenv("ANSWER_MODEL", "nvidia:mistralai/model")
-    monkeypatch.setenv("VISION_MODEL", "qwen3-vl:4b")
+    for var in ("ANSWER_MODEL", "VISION_MODEL", "CHAT_MODEL"):
+        monkeypatch.setenv(var, "deprecated-override")
+        with pytest.raises(ConfigurationError) as exc_info:
+            ApiSettings(profile="mock", storage_dir=str(tmp_path))
+        assert exc_info.value.error_code == "DEPRECATED_MODEL_ENV_VAR"
+        monkeypatch.delenv(var, raising=False)
+
     monkeypatch.setenv("NVIDIA_BASE_URL", "https://api.example/v1")
     monkeypatch.setenv("NVIDIA_API_KEY", "not-a-real-key")
 
     settings = ApiSettings(profile="mock", storage_dir=str(tmp_path))
 
-    assert settings.chat_model == "nvidia:mistralai/model"
-    assert settings.vision_model == "qwen3-vl:4b"
     assert settings.nvidia_base_url == "https://api.example/v1"
     assert isinstance(settings.nvidia_api_key, SecretStr)
     assert settings.nvidia_api_key.get_secret_value() == "not-a-real-key"

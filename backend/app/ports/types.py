@@ -50,6 +50,7 @@ class EvidenceId(BaseModel):
     page_id: str
     document_version_id: str
     evidence_type: EvidenceType
+    tenant_id: str
 
 
 class TableCandidate(BaseModel):
@@ -61,6 +62,7 @@ class TableCandidate(BaseModel):
     sheet_name: str
     row_index: int
     cells: dict[str, Any]
+    tenant_id: str
 
 
 class ModelRole(StrEnum):

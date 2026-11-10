@@ -16,12 +16,16 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+BACKEND_DIR = REPO_ROOT / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 DEFAULT_QUESTIONS_PATH = REPO_ROOT / "evals" / "golden" / "questions.json"
 DEFAULT_REPORTS_DIR = REPO_ROOT / "evals" / "reports"
 
@@ -264,10 +268,23 @@ def score_results(
         run_name or f"eval_run_{datetime.datetime.now(datetime.UTC).strftime('%Y%m%d_%H%M%S')}"
     )
 
+    try:
+        from app.observability.report_stamping import create_report_stamp
+
+        profile = os.getenv("APP_PROFILE", "mock")
+        telemetry_stamp = create_report_stamp(
+            profile=profile,
+            models_by_role={},
+            repo_root=REPO_ROOT,
+        )
+    except Exception:
+        telemetry_stamp = None
+
     report = {
         "run_name": actual_run_name,
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         "status": status,
+        "telemetry_stamp": telemetry_stamp,
         "overall": overall_summary,
         "categories": category_summaries,
         "questions": scored_questions,

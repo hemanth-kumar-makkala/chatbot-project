@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
@@ -34,7 +35,6 @@ from app.core.guards.input_guards import (
     guard_question_input,
 )
 from app.core.guards.output_guards import (
-    MAX_TOKENS_GENERAL,
     check_answer_token_ceiling,
     is_document_injection_sentence,
     sanitize_evidence_text,
@@ -63,9 +63,10 @@ from app.core.safety_lock import (
 from app.ports.document_parser import DocumentParser
 from app.ports.errors import (
     MalformedOutput,
+    TenantIsolationError,
 )
 from app.ports.image_processor import ImageProcessor
-from app.ports.model_provider import ModelProvider
+from app.ports.model_provider import ModelCapabilities, ModelProvider
 from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
 from app.ports.tracer import Tracer
@@ -89,10 +90,11 @@ RELIABLE_TEXT_THRESHOLD: float = 0.25
 WEAK_EVIDENCE_THRESHOLD: float = 0.0
 
 # Named token cap constants per answer mode (Node 7 generate)
-MAX_TOKENS_EXACT: int = 64
-MAX_TOKENS_SHORT: int = 150
+MAX_REQUEST_TOKENS_EXACT: int = 256
+MAX_REQUEST_TOKENS_SHORT: int = 512
 MAX_TOKENS_EXPLAIN: int = 768
 MAX_TOKENS_TABLE: int = 512
+MAX_REQUEST_TOKENS_GENERAL: int = 512
 TOP_N_CHUNKS: int = 8
 
 
@@ -251,14 +253,15 @@ class GraphState(TypedDict, total=False):
 class GraphPorts:
     """Collection of port adapters injected into graph runtime context."""
 
+    capabilities_map: Mapping[tuple[str, str], ModelCapabilities] = field(default_factory=dict)
     model_provider: ModelProvider | None = None
     retriever: Retriever | None = None
     reranker: Reranker | None = None
     tracer: Tracer | None = None
     image_processor: ImageProcessor | None = None
     document_parser: DocumentParser | None = None
-    chat_model: str = "qwen3-vl:4b"
-    vision_model: str = "qwen3-vl:4b"
+    chat_model: str = ""
+    vision_model: str = ""
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
     is_mock_profile: bool = False
     mock_vision_mode: str = "ok"  # "ok" or "fail"
@@ -302,11 +305,12 @@ class GraphRuntimeContext:
     extracted_fields: dict[str, Any] = field(default_factory=dict)
     candidate_scores: dict[str, float] = field(default_factory=dict)
     candidate_evidence_types: dict[str, str] = field(default_factory=dict)
+    candidate_document_ids: dict[str, str] = field(default_factory=dict)
     generated_answer: dict[str, Any] = field(default_factory=dict)
     active_document_count: int | None = None
     active_document_titles: list[str] = field(default_factory=list)
     active_document_hashes: list[str] = field(default_factory=list)
-    chat_model: str = "qwen3-vl:4b"
+    chat_model: str = ""
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
     evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
     rate_limit_exceeded: bool = False
@@ -429,15 +433,21 @@ async def node_guard_input(
 
         # Cloud model safety applies independently to both answer and vision selectors.
         effective_chat_model = runtime.context.chat_model or ports.chat_model
-        selected_models = dict.fromkeys((effective_chat_model, ports.vision_model))
+        selected_models = [
+            m for m in dict.fromkeys((effective_chat_model, ports.vision_model)) if m
+        ]
+        caps_map = ports.capabilities_map
         for effective_model in selected_models:
-            if not is_cloud_model(effective_model):
+            if not effective_model:
+                continue
+            if not is_cloud_model(effective_model, capabilities_map=caps_map):
                 continue
             try:
                 verify_cloud_model_safety_lock(
                     model_name=effective_model,
                     active_document_titles=runtime.context.active_document_titles,
                     active_document_hashes=runtime.context.active_document_hashes,
+                    capabilities_map=caps_map,
                 )
             except CloudModelSafetyLockError as lock_err:
                 logger.warning(
@@ -751,9 +761,14 @@ async def node_retrieve(
                     else str(e.evidence_type)
                 )
                 ctx.candidate_evidence_types[e.chunk_id] = ev_type_val
+                ctx.candidate_document_ids[e.chunk_id] = str(e.document_version_id)
                 ev_tid = getattr(e, "tenant_id", None)
-                if ev_tid:
-                    ctx.evidence_tenant_ids[e.chunk_id] = str(ev_tid)
+                if not ev_tid or str(ev_tid).strip() != str(ctx.tenant.tenant_id).strip():
+                    raise TenantIsolationError(
+                        f"Evidence chunk '{e.chunk_id}' has invalid tenant: {ev_tid}",
+                        error_code="EVIDENCE_TENANT_MISMATCH",
+                    )
+                ctx.evidence_tenant_ids[e.chunk_id] = str(ev_tid)
             if evidence_ids:
                 texts = await ports.retriever.get_evidence_text(
                     tenant_ctx=ctx.tenant,
@@ -792,6 +807,7 @@ async def node_retrieve(
                         if tc.id not in evidence_ids:
                             evidence_ids.append(tc.id)
                         ctx.candidate_evidence_types[tc.id] = "table"
+                        ctx.candidate_document_ids[tc.id] = str(tc.document_version_id)
                         ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
                         ctx.evidence_tenant_ids[tc.id] = str(ctx.tenant.tenant_id)
                         row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
@@ -965,151 +981,201 @@ async def node_assess_evidence(
             if len(strong_ids) >= 2 and (
                 ctx.active_document_count is None or ctx.active_document_count >= 2
             ):
-                candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
-                try:
-                    conflict_prompt = format_conflict_prompt(ctx.question_text, candidate_evidence)
-                    resp = await ports.model_provider.generate(
-                        role=ModelRole.JUDGE,
-                        messages=[
-                            ChatMessage(role="user", content=conflict_prompt),
-                            ChatMessage(role="assistant", content="</think>"),
-                        ],
-                        schema=ConflictDetectionOutput,
-                        max_tokens=256,
-                    )
-                    if resp.structured_output and resp.structured_output.get("has_conflict"):
-                        c_data = resp.structured_output
-                        q1 = str(c_data.get("quote1", "")).strip()
-                        q2 = str(c_data.get("quote2", "")).strip()
-                        v1 = str(c_data.get("value1", "")).strip()
-                        v2 = str(c_data.get("value2", "")).strip()
-                        d1_id = str(c_data.get("doc1_id", "")).strip()
-                        d2_id = str(c_data.get("doc2_id", "")).strip()
+                # Check document diversity across strong candidate chunks
+                strong_doc_ids: set[str] = set()
+                for eid in strong_ids:
+                    doc_id = ctx.candidate_document_ids.get(eid)
+                    if doc_id:
+                        strong_doc_ids.add(str(doc_id))
 
-                        c1_match = None
-                        c2_match = None
+                # Skip JUDGE call if all strong candidate evidence belongs to a single document
+                skip_judge = bool(strong_doc_ids and len(strong_doc_ids) == 1)
+                if not skip_judge:
+                    candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
+                    judge_failed = False
+                    try:
+                        conflict_prompt = format_conflict_prompt(
+                            ctx.question_text, candidate_evidence
+                        )
+                        resp = await ports.model_provider.generate(
+                            role=ModelRole.JUDGE,
+                            messages=[
+                                ChatMessage(role="user", content=conflict_prompt),
+                                ChatMessage(role="assistant", content="</think>"),
+                            ],
+                            schema=ConflictDetectionOutput,
+                            max_tokens=256,
+                        )
+                        if resp.structured_output is None:
+                            judge_failed = True
+                        elif resp.structured_output.get("has_conflict"):
+                            c_data = resp.structured_output
+                            q1 = str(c_data.get("quote1", "")).strip()
+                            q2 = str(c_data.get("quote2", "")).strip()
+                            v1 = str(c_data.get("value1", "")).strip()
+                            v2 = str(c_data.get("value2", "")).strip()
+                            d1_id = str(c_data.get("doc1_id", "")).strip()
+                            d2_id = str(c_data.get("doc2_id", "")).strip()
 
-                        for eid in strong_ids:
-                            chunk_t = evidence_dict[eid]
-                            doc_t = _extract_doc_title(chunk_t)
-                            if d1_id and (d1_id == eid or (doc_t and d1_id in doc_t)):
-                                c1_match = eid
-                                break
+                            c1_match = None
+                            c2_match = None
 
-                        for eid in strong_ids:
-                            if eid == c1_match:
-                                continue
-                            chunk_t = evidence_dict[eid]
-                            doc_t = _extract_doc_title(chunk_t)
-                            if d2_id and (d2_id == eid or (doc_t and d2_id in doc_t)):
-                                c2_match = eid
-                                break
-
-                        if not c1_match:
                             for eid in strong_ids:
                                 chunk_t = evidence_dict[eid]
-                                if (v1 and v1 in chunk_t) or (q1 and q1 in chunk_t):
+                                doc_t = _extract_doc_title(chunk_t)
+                                if d1_id and (d1_id == eid or (doc_t and d1_id in doc_t)):
                                     c1_match = eid
                                     break
 
-                        d1_doc = _extract_doc_title(evidence_dict[c1_match]) if c1_match else ""
-                        if not c2_match:
                             for eid in strong_ids:
                                 if eid == c1_match:
                                     continue
                                 chunk_t = evidence_dict[eid]
-                                cur_doc = _extract_doc_title(chunk_t)
-                                if d1_doc and cur_doc and d1_doc == cur_doc:
-                                    continue
-                                if (v2 and v2 in chunk_t) or (q2 and q2 in chunk_t):
+                                doc_t = _extract_doc_title(chunk_t)
+                                if d2_id and (d2_id == eid or (doc_t and d2_id in doc_t)):
                                     c2_match = eid
                                     break
 
-                        if c1_match and c2_match and c1_match != c2_match:
-                            q1_final = _find_exact_quote_in_chunk(q1, v1, evidence_dict[c1_match])
-                            q2_final = _find_exact_quote_in_chunk(q2, v2, evidence_dict[c2_match])
+                            if not c1_match:
+                                for eid in strong_ids:
+                                    chunk_t = evidence_dict[eid]
+                                    if (v1 and v1 in chunk_t) or (q1 and q1 in chunk_t):
+                                        c1_match = eid
+                                        break
 
-                            # Rule 2: Every quoted span must be an exact substring of the
-                            # stored chunk. Never show a paraphrase in quotation marks.
-                            if (
-                                q1_final
-                                and q2_final
-                                and q1_final in evidence_dict[c1_match]
-                                and q2_final in evidence_dict[c2_match]
-                            ):
-                                d1_name = (
-                                    _extract_doc_title(evidence_dict[c1_match]) or "Document 1"
+                            d1_doc = _extract_doc_title(evidence_dict[c1_match]) if c1_match else ""
+                            if not c2_match:
+                                for eid in strong_ids:
+                                    if eid == c1_match:
+                                        continue
+                                    chunk_t = evidence_dict[eid]
+                                    cur_doc = _extract_doc_title(chunk_t)
+                                    if d1_doc and cur_doc and d1_doc == cur_doc:
+                                        continue
+                                    if (v2 and v2 in chunk_t) or (q2 and q2 in chunk_t):
+                                        c2_match = eid
+                                        break
+
+                            if c1_match and c2_match and c1_match != c2_match:
+                                q1_final = _find_exact_quote_in_chunk(
+                                    q1, v1, evidence_dict[c1_match]
                                 )
-                                d2_name = (
-                                    _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
+                                q2_final = _find_exact_quote_in_chunk(
+                                    q2, v2, evidence_dict[c2_match]
                                 )
 
-                                # Task 2: Check document version order
-                                v_order = resolve_document_version_order(
-                                    d1_name,
-                                    evidence_dict[c1_match],
-                                    d2_name,
-                                    evidence_dict[c2_match],
-                                )
-                                if v_order is not None:
-                                    newer_idx, older_idx = v_order
-                                    if newer_idx == 1:
-                                        newer_doc, newer_quote, newer_val, newer_cid = (
-                                            d1_name,
-                                            q1_final,
-                                            v1,
-                                            c1_match,
+                                # Rule 2: Every quoted span must be an exact substring of the
+                                # stored chunk. Never show a paraphrase in quotation marks.
+                                if (
+                                    q1_final
+                                    and q2_final
+                                    and q1_final in evidence_dict[c1_match]
+                                    and q2_final in evidence_dict[c2_match]
+                                ):
+                                    d1_name = (
+                                        _extract_doc_title(evidence_dict[c1_match]) or "Document 1"
+                                    )
+                                    d2_name = (
+                                        _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
+                                    )
+
+                                    # Task 2: Check document version order
+                                    v_order = resolve_document_version_order(
+                                        d1_name,
+                                        evidence_dict[c1_match],
+                                        d2_name,
+                                        evidence_dict[c2_match],
+                                    )
+                                    if v_order is not None:
+                                        newer_idx, older_idx = v_order
+                                        if newer_idx == 1:
+                                            newer_doc, newer_quote, newer_val, newer_cid = (
+                                                d1_name,
+                                                q1_final,
+                                                v1,
+                                                c1_match,
+                                            )
+                                            older_doc, older_val, older_cid = (
+                                                d2_name,
+                                                v2,
+                                                c2_match,
+                                            )
+                                        else:
+                                            newer_doc, newer_quote, newer_val, newer_cid = (
+                                                d2_name,
+                                                q2_final,
+                                                v2,
+                                                c2_match,
+                                            )
+                                            older_doc, older_val, older_cid = (
+                                                d1_name,
+                                                v1,
+                                                c1_match,
+                                            )
+
+                                        ctx.response_text = format_version_conflict_answer(
+                                            newer_doc=newer_doc,
+                                            newer_quote=newer_quote,
+                                            newer_val=newer_val,
+                                            older_doc=older_doc,
+                                            older_val=older_val,
                                         )
-                                        older_doc, older_val, older_cid = d2_name, v2, c2_match
-                                    else:
-                                        newer_doc, newer_quote, newer_val, newer_cid = (
-                                            d2_name,
-                                            q2_final,
-                                            v2,
-                                            c2_match,
-                                        )
-                                        older_doc, older_val, older_cid = d1_name, v1, c1_match
+                                        ctx.generated_answer = {
+                                            "mode": "short",
+                                            "answer": ctx.response_text,
+                                            "evidence_ids": [newer_cid, older_cid],
+                                        }
+                                        return {
+                                            "evidence_state": "RESOLVED_CONFLICT",
+                                            "status": "answered",
+                                            "needs_vision": False,
+                                            "evidence_ids": [newer_cid, older_cid],
+                                        }
 
-                                    ctx.response_text = format_version_conflict_answer(
-                                        newer_doc=newer_doc,
-                                        newer_quote=newer_quote,
-                                        newer_val=newer_val,
-                                        older_doc=older_doc,
-                                        older_val=older_val,
+                                    ctx.response_text = (
+                                        f"Two documents disagree:\n"
+                                        f'- {v1} ({d1_name}): "{q1_final}"\n'
+                                        f'- {v2} ({d2_name}): "{q2_final}"'
                                     )
                                     ctx.generated_answer = {
                                         "mode": "short",
                                         "answer": ctx.response_text,
-                                        "evidence_ids": [newer_cid, older_cid],
+                                        "evidence_ids": [c1_match, c2_match],
                                     }
                                     return {
-                                        "evidence_state": "RESOLVED_CONFLICT",
-                                        "status": "answered",
+                                        "evidence_state": "CONFLICTING",
+                                        "status": "conflicting",
                                         "needs_vision": False,
-                                        "evidence_ids": [newer_cid, older_cid],
+                                        "evidence_ids": [c1_match, c2_match],
                                     }
+                    except Exception:
+                        judge_failed = True
 
-                                ctx.response_text = (
-                                    f"Two documents disagree:\n"
-                                    f'- {v1} ({d1_name}): "{q1_final}"\n'
-                                    f'- {v2} ({d2_name}): "{q2_final}"'
-                                )
-                                ctx.generated_answer = {
-                                    "mode": "short",
-                                    "answer": ctx.response_text,
-                                    "evidence_ids": [c1_match, c2_match],
-                                }
-                                return {
-                                    "evidence_state": "CONFLICTING",
-                                    "status": "conflicting",
-                                    "needs_vision": False,
-                                    "evidence_ids": [c1_match, c2_match],
-                                }
-                except Exception:
-                    logger.warning(
-                        "Conflict assessment model call failed; proceeding with single answer",
-                        exc_info=True,
-                    )
+                    if judge_failed:
+                        err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                        tenant_id = str(ctx.tenant.tenant_id)
+                        logger.warning(
+                            "Judge model call failed during multi-document conflict assessment",
+                            extra={
+                                "request_id": state.get("request_id", ""),
+                                "tenant_id": tenant_id,
+                                "node": "assess_evidence",
+                                "status": "safe_failure",
+                                "error_code": "JUDGE_FAILURE",
+                                "public_error_ref": err_ref,
+                            },
+                        )
+                        ctx.response_text = (
+                            "An error occurred while evaluating evidence. "
+                            f"Please quote reference {err_ref}."
+                        )
+                        return {
+                            "evidence_state": "SAFE_FAILURE",
+                            "status": "safe_failure",
+                            "public_error_ref": err_ref,
+                            "needs_vision": False,
+                            "evidence_ids": strong_ids,
+                        }
 
         if computed_ev_state == "CONFLICTING":
             if not ctx.response_text:
@@ -1121,7 +1187,8 @@ async def node_assess_evidence(
             }
         if computed_ev_state == "VISUAL_REQUIRED":
             effective_model = ports.vision_model
-            if not is_vision_model(effective_model):
+            caps_map = ports.capabilities_map
+            if effective_model and not is_vision_model(effective_model, capabilities_map=caps_map):
                 logger.info(
                     "Vision model '%s' has no vision capability; "
                     "skipping question-time vision reading and using OCR evidence.",
@@ -1274,7 +1341,7 @@ async def node_generate(
                         role=ModelRole.ANSWER,
                         messages=[ChatMessage(role="user", content=gen_prompt)],
                         schema=AnswerOutput,
-                        max_tokens=MAX_TOKENS_GENERAL,
+                        max_tokens=MAX_REQUEST_TOKENS_GENERAL,
                     )
                     if resp.structured_output:
                         content = resp.structured_output.get("answer", resp.content)
@@ -1312,15 +1379,15 @@ async def node_generate(
         lang = state.get("language", "en")
 
         if mode == "exact":
-            token_cap = MAX_TOKENS_EXACT
+            token_cap = MAX_REQUEST_TOKENS_EXACT
         elif mode == "short":
-            token_cap = MAX_TOKENS_SHORT
+            token_cap = MAX_REQUEST_TOKENS_SHORT
         elif mode == "explain":
             token_cap = MAX_TOKENS_EXPLAIN
         elif mode == "table":
             token_cap = MAX_TOKENS_TABLE
         else:
-            token_cap = MAX_TOKENS_SHORT
+            token_cap = MAX_REQUEST_TOKENS_SHORT
 
         if mode == "table":
             # Rule 1: The model must never write cell values.
@@ -1946,6 +2013,9 @@ async def node_validate(
                                     sheet_name=s_name.strip(),
                                     row_index=int(r_idx_s),
                                     cells=cells,
+                                    tenant_id=str(runtime.context.tenant.tenant_id)
+                                    if runtime.context.tenant
+                                    else "00000000-0000-0000-0000-000000000001",
                                 )
 
                 if tbl_candidates:
@@ -2150,6 +2220,8 @@ def _route_from_route(state: GraphState) -> str:
 
 
 def _route_from_assess_evidence(state: GraphState) -> str:
+    if state.get("status") == "safe_failure" or state.get("evidence_state") == "SAFE_FAILURE":
+        return "safe_failure"
     ev_state = state.get("evidence_state")
     if ev_state == "VISUAL_REQUIRED":
         return "vision_read"
@@ -2230,6 +2302,7 @@ def build_knowledge_graph() -> StateGraph[GraphState, GraphRuntimeContext, Any, 
         {
             "generate": "generate",
             "vision_read": "vision_read",
+            "safe_failure": "safe_failure",
             "respond": "respond",
         },
     )

@@ -31,10 +31,6 @@ from app.adapters.models.mock import MockModelProvider
 from app.adapters.retrieval.mock import MockRetriever
 from app.api.rate_limiter import check_question_rate_limit
 from app.core.graph import (
-    MAX_TOKENS_EXACT,
-    MAX_TOKENS_EXPLAIN,
-    MAX_TOKENS_SHORT,
-    MAX_TOKENS_TABLE,
     GraphPorts,
     GraphRuntimeContext,
     GraphState,
@@ -54,7 +50,11 @@ from app.core.guards.input_guards import (
     guard_question_input,
 )
 from app.core.guards.output_guards import (
+    MAX_TOKENS_EXACT,
+    MAX_TOKENS_EXPLAIN,
     MAX_TOKENS_GENERAL,
+    MAX_TOKENS_SHORT,
+    MAX_TOKENS_TABLE,
     check_answer_token_ceiling,
     match_document_injection_rule,
     sanitize_evidence_text,

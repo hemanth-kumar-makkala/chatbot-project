@@ -651,3 +651,60 @@ class RerankerOutputInvalidError(PortError):
             details=details,
         )
         self.code = code
+
+
+class ProviderRateLimited(PortError):
+    """Raised when an external model provider rate limit is exceeded and retries are exhausted."""
+
+    def __init__(
+        self,
+        message: str = "Provider rate limit exceeded; maximum retry attempts reached.",
+        error_code: str = "PROVIDER_RATE_LIMITED",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=429,
+            retryable=False,
+            details=details,
+        )
+        self.code = error_code
+
+
+class TenantIsolationError(PortError):
+    """Raised when evidence retrieved violates tenant isolation or lacks tenant scope."""
+
+    def __init__(
+        self,
+        message: str = "Evidence tenant does not match requesting tenant",
+        error_code: str = "EVIDENCE_TENANT_MISMATCH",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=403,
+            retryable=False,
+            details=details,
+        )
+        self.code = error_code
+
+
+class UnresolvableEvidenceError(PortError):
+    """Raised when cited evidence ID cannot be resolved to an active tenant chunk."""
+
+    def __init__(
+        self,
+        message: str = "Cited evidence ID cannot be resolved to an active tenant chunk",
+        error_code: str = "UNRESOLVABLE_EVIDENCE_ID",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=400,
+            retryable=False,
+            details=details,
+        )
+        self.code = error_code

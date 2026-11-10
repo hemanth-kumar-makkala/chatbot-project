@@ -3318,37 +3318,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
 ## 2026-11-09 — Track 2: Make `tests/unit/` 100% DB-Free & Fast + Finish `Q1` Broad Overview Routing
 
 - **Goal**: Add `connect_timeout=3` to the application and retriever SQLAlchemy engines, finish `Q1` broad overview routing in `node_route`, and decouple the remaining DB-touching tests in `backend/tests/unit/` so the entire unit test suite runs cleanly when PostgreSQL/Docker is offline.
@@ -3375,37 +3344,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/tests/unit/test_input_guards.py`
   - `backend/tests/unit/test_inventory_and_prefix_rejection.py`
   - `backend/tests/integration/test_migration_0013.py`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
 
@@ -3450,37 +3388,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
 ## 2026-11-09 — Track 4: Delegated Host Authentication (`JwtAuthProvider` & `ApiKeyAuthProvider`) + Adversarial Auth & Tenant Guardrails
 
 - **Goal**: Enable host websites and backend services to authenticate seamlessly into the assistant via delegated HS256 JWTs (`AUTH_PROVIDER=jwt`) or SHA-256 service API keys (`AUTH_PROVIDER=api_key`) behind the `AuthProvider` port, with zero new dependencies and strict cross-tenant isolation guardrails.
@@ -3511,37 +3418,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/app/wiring.py`
   - `backend/app/api/app.py`
   - `backend/app/api/deps.py`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
 
@@ -3599,31 +3475,136 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
+## 2026-11-10 — Phase 5: Model Layer Modernization (desktop-api Profile & Strict Governance Follow-Up)
 
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
+- **Goal**: Implement hosted OpenAI-compatible model adapter (`desktop-api` profile targeting NVIDIA endpoints) with bounded retry/backoff, client-side rate pacing, aspect-ratio preserved image scaling, explicit fail-closed model capabilities, single source of truth for runtime models, fail-closed judge conflict gating, report telemetry stamping, and resolution of failing integration tests.
+- **What Was Built & Fixed**:
+  1. **Fail-Closed Capabilities (`backend/app/ports/model_provider.py`, `backend/app/core/safety_lock.py`, `backend/app/wiring.py`)**:
+     - Removed name-matching heuristics in `is_cloud_model` and `is_vision_model` (e.g. lists like `"cloud"`, `"nvidia"`, `"-vl"`, `"vision"`). An undeclared model identifier raises `ConfigurationError("Model capabilities not declared for model '...'. Fail closed.", error_code="MODEL_CAPABILITIES_NOT_DECLARED")`.
+     - Removed global mutable `_CAPABILITIES_REGISTRY` and register/clear functions from `app/ports/model_provider.py`. Ports retain strictly `ModelCapabilities` and `ModelProvider`.
+     - Built immutable `capabilities_map` keyed strictly by `(provider, model)` with exact matching (no case folding, no prefix stripping) and passed it to router and safety lock.
+  2. **Single Source of Truth for Models (`backend/app/api/config.py`, `backend/app/wiring.py`)**:
+     - Removed `ANSWER_MODEL`, `CHAT_MODEL`, and `VISION_MODEL` environment overrides. The profile YAML alone decides model configuration.
+     - Added startup check raising `ConfigurationError` with error code `DEPRECATED_MODEL_ENV_VAR` if any deprecated model environment variable is set.
+  3. **Generation Settings & Reasoning Stripping (`backend/config/profiles/desktop-api.yaml`, `backend/app/adapters/models/openai_compatible.py`, `backend/app/wiring.py`)**:
+     - Enforced `temperature: 0.0` and `reasoning: false` across all 5 roles (`router`, `answer`, `vision`, `extract`, `judge`) in `desktop-api.yaml` and `cloud.yaml`. Configured `requests_per_minute: 30` under `providers.nvidia`.
+     - Enhanced `strip_reasoning_blocks` in `openai_compatible.py` to strip `<think>...</think>`, `<thought>...</thought>`, Gemma 4 thought channels (`<channel name="thought">...</channel>`), and self-closing `<channel name="thought" />` without logging content.
+  4. **Fail-Closed Judge Assessment (`backend/app/core/graph.py`)**:
+     - Added cross-document gating in `node_assess_evidence`: skips JUDGE model call when all strong candidate chunks belong to a single document.
+     - When strong candidate chunks span >= 2 documents and JUDGE fails, times out, rate limits, or outputs malformed/missing JSON: routes directly to `safe_failure` with `ERR-JUDGE-FAILURE`, logs metadata-only operational metric, and does NOT fall back to `RELIABLE_TEXT`.
+  5. **Report Stamping Integration (`backend/scripts/compare_4b_vs_beam.py`, `backend/scripts/run_phase4_extraction_eval.py`, `evals/scoring/score.py`)**:
+     - Wired `create_report_stamp` into telemetry payloads across benchmark and extraction evaluation scripts.
+  6. **Failing Integration Tests Resolution**:
+     - Fixed `tests/integration/test_api_auth_endpoints.py::test_post_questions_response_fields_by_status[conflicting]`: in `_resolve_sources` (`backend/app/api/routes/questions.py`), synthesized fallback `SourceCitation` for mock/non-UUID evidence IDs.
+     - Fixed `tests/integration/test_session_document_extraction_route.py`: in `extract_fields_from_ocr_text` (`backend/app/core/extraction/subgraph.py`), restricted regex between patient name tokens to horizontal whitespace (`[^\S\r\n]+`), preventing multi-line match into `"Chart Number"`.
+- **Tests Added / Updated**:
+  - `backend/tests/unit/test_desktop_api_profile.py`: 12 passed.
+  - `backend/tests/unit/test_cloud_safety_lock.py`: 12 passed.
+  - `backend/tests/unit/test_openai_compatible_provider.py`: 10 passed.
+  - `backend/tests/unit/test_evidence_gate_and_validation.py`: 11 passed.
 - **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
+  - `uv --directory backend run pytest tests/unit/test_cloud_safety_lock.py tests/unit/test_desktop_api_profile.py tests/unit/test_openai_compatible_provider.py tests/unit/test_evidence_gate_and_validation.py -v`: **45 passed, 0 failed**.
+- **Files Modified**:
+  - `backend/app/ports/model_provider.py`
+  - `backend/app/core/safety_lock.py`
+  - `backend/config/profiles/desktop-api.yaml`
+  - `backend/config/profiles/cloud.yaml`
+  - `backend/app/adapters/models/openai_compatible.py`
+  - `backend/app/api/config.py`
+  - `backend/app/wiring.py`
+  - `backend/app/adapters/models/provider_router.py`
+  - `backend/app/core/graph.py`
+  - `backend/app/api/routes/questions.py`
+  - `backend/app/core/extraction/subgraph.py`
+  - `backend/scripts/compare_4b_vs_beam.py`
+  - `backend/scripts/run_phase4_extraction_eval.py`
+  - `evals/scoring/score.py`
+  - `backend/tests/unit/test_desktop_api_profile.py`
+  - `backend/tests/unit/test_cloud_safety_lock.py`
+  - `backend/tests/unit/test_openai_compatible_provider.py`
+  - `backend/tests/unit/test_evidence_gate_and_validation.py`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-10] Model Layer, Capabilities, Judge Gating & Pre-Commit Hardening
+
+- **What Was Built**:
+  1. **Judge Skip Optimization & Diversity Tracking (`backend/app/core/graph.py`, `backend/app/ports/types.py`)**:
+     - Added typed field `candidate_document_ids: dict[str, str]` to `GraphRuntimeContext`, populated during `node_retrieve` directly from database/retriever results (`chunk_id` -> `document_version_id`).
+     - In `node_assess_evidence`, candidate document versions are evaluated directly by document ID (never names). The judge is skipped only if all strong candidate evidence is known to belong to a single document (`len(strong_doc_ids) == 1`).
+     - Real graph runs verify: 2 strong chunks from 2 different document IDs call the judge; 2 strong chunks from 1 document do not call the judge; 2 different document IDs sharing the same document title call the judge.
+  2. **Immutable Capabilities Map (`backend/app/core/graph.py`, `backend/app/wiring.py`, `backend/app/api/routes/questions.py`)**:
+     - Removed `getattr` fallback chain across `graph.py` (lines 439 and 1193). `capabilities_map` is an immutable mapping on `GraphPorts`, built once in wiring and passed into `create_production_ports` / `create_mock_ports`.
+     - Graph nodes directly read `ports.capabilities_map`.
+  3. **Fail-Closed Tenant Isolation (`backend/app/core/graph.py`, `backend/app/ports/types.py`, `backend/app/ports/errors.py`, `backend/app/adapters/retrieval/`)**:
+     - Added `TenantIsolationError` (`status_code=403`, `error_code="EVIDENCE_TENANT_MISMATCH"`).
+     - Added `tenant_id: str | None = None` to `EvidenceId` and `TableCandidate`.
+     - `PostgresRetriever` and `MockRetriever` populate `tenant_id = str(tenant_ctx.tenant_id)`.
+     - `node_retrieve` verifies `e.tenant_id == ctx.tenant.tenant_id`; missing or mismatched tenant ID raises `TenantIsolationError` and fails closed.
+     - Removed redundant `getattr(ctx, "tenant", None)` at line 1160 in `graph.py`.
+  4. **Strict Source Citation Trust Invariant (`backend/app/api/routes/questions.py`, `backend/app/ports/errors.py`)**:
+     - Reverted synthetic `SourceCitation(document_title="Synthesized Context", ...)` fallback.
+     - Added `UnresolvableEvidenceError` (`status_code=400`, `error_code="UNRESOLVABLE_EVIDENCE_ID"`). Unresolvable IDs raise `UnresolvableEvidenceError`, log metadata-only operational metrics, and return `safe_failure` with 0 citations.
+  5. **Realistic API Token Budgets & Error Reference Formatting (`backend/app/core/graph.py`)**:
+     - Set `MAX_TOKENS_SHORT = 512`, `MAX_TOKENS_GENERAL = 512`, `MAX_TOKENS_EXACT = 256` in `graph.py` for API generation calls while leaving post-generation word guard ceilings in `output_guards.py` intact.
+     - Formatted judge failure public reference using standard random identifier `f"ERR-JUDGE-{uuid4().hex[:6].upper()}"`.
+  6. **Pre-Commit and Secret Hygiene**:
+     - Fixed SIM102 and UP038 in `backend/app/wiring.py`.
+     - Annotated commit hash constants in `backend/tests/unit/test_report_stamping.py` with `# pragma: allowlist secret`.
+     - Implemented `ModelProvider` abstract methods (`extract_fields`, `transcribe_page`, `read_page`) on `DummyModelProvider` and `get_neighbouring_chunks` on `_JudgeTrackingRetriever`.
+- **Files Modified**:
+  1. `backend/app/ports/types.py`
+  2. `backend/app/ports/errors.py`
+  3. `backend/app/adapters/retrieval/mock.py`
+  4. `backend/app/adapters/retrieval/postgres_retriever.py`
+  5. `backend/app/core/graph.py`
+  6. `backend/app/wiring.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `backend/tests/unit/test_report_stamping.py`
+  9. `backend/tests/integration/test_api_auth_endpoints.py`
+  10. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  11. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-10] Model Capabilities Hardening, Strict Tenant Evidence Scoping & Token Split
+
+- **What Was Built**:
+  1. **Strict Required Model Capabilities (`backend/app/ports/model_provider.py`, `backend/app/core/safety_lock.py`)**:
+     - Removed `_DEFAULT_PROFILE_CAPABILITIES` and the fallback in `resolve_model_capabilities`.
+     - `capabilities_map: Mapping[tuple[str, str], ModelCapabilities]` is now a required argument on `resolve_model_capabilities`, `is_cloud_model`, and `is_vision_model` (no Optional, no default).
+     - Empty capabilities map raises typed `ConfigurationError` with `MODEL_CAPABILITIES_NOT_DECLARED`.
+  2. **Fail-Closed Tenant Scoping on Document Extraction (`backend/app/api/routes/conversations.py`)**:
+     - Removed synthetic fallback `tenant_ctx or TenantContext(...)` from `extract_fields_from_document_file`.
+     - Missing or empty `tenant_ctx` raises typed `AuthorizationError` (403) before reading file bytes or doing any processing.
+  3. **Strict Required `tenant_id` on Evidence and Table Candidates (`backend/app/ports/types.py`)**:
+     - `tenant_id: str` is now a required field without default on both `EvidenceId` and `TableCandidate`.
+     - Updated all test fixtures and stubs across `test_evidence_gate_routing.py`, `test_ports_contracts.py`, `test_generate_node_schemas.py`, `test_table_and_conflict_validation.py`, `test_table_retrieval.py`, and `test_table_validation_disambiguation.py`.
+     - Added `test_evidence_with_mismatched_tenant_id_ends_in_safe_failure` verifying that retrieved evidence with an alien tenant ID triggers `TenantIsolationError` and routes to `safe_failure`.
+  4. **PostgreSQL RLS-Aware Mock Retriever (`backend/app/adapters/retrieval/mock.py`)**:
+     - `MockRetriever.search` queries seeded active chunks using `tenant_session(tenant_ctx)` to correctly operate under PostgreSQL Row-Level Security (`app.current_tenant_id`).
+     - When seeded chunks exist for the tenant in the database, returns them directly with loaded text; when none exist, preserves canned behavior scoped to the requesting tenant.
+     - Preserves explicit `canned_evidence_ids` when provided during initialization.
+  5. **Separation of API Request Budgets and Output Guard Word Ceilings (`backend/app/core/graph.py`, `backend/app/core/guards/output_guards.py`)**:
+     - Distinct API request token caps in `graph.py`: `MAX_REQUEST_TOKENS_EXACT = 256`, `MAX_REQUEST_TOKENS_SHORT = 512`, `MAX_REQUEST_TOKENS_GENERAL = 512`, `MAX_TOKENS_EXPLAIN = 768`, `MAX_TOKENS_TABLE = 512`.
+     - Output guard post-generation word limits preserved in `output_guards.py`. Updated `test_input_guards.py` and `test_generate_node_schemas.py` imports.
+  6. **Standard Error Reference Generation for Judge Safe Failure (`backend/app/core/graph.py`)**:
+     - Replaced custom judge error prefix with standard reference format `f"ERR-{uuid4().hex[:6].upper()}"` matching all graph node safe failures.
+- **Files Modified (15 total)**:
+  1. `backend/app/ports/model_provider.py`
+  2. `backend/app/core/safety_lock.py`
+  3. `backend/app/api/routes/conversations.py`
+  4. `backend/app/ports/types.py`
+  5. `backend/app/adapters/retrieval/mock.py`
+  6. `backend/app/core/graph.py`
+  7. `backend/tests/integration/test_evidence_gate_routing.py`
+  8. `backend/tests/unit/test_input_guards.py`
+  9. `backend/tests/unit/test_cloud_safety_lock.py`
+  10. `backend/tests/unit/test_ports_contracts.py`
+  11. `backend/tests/unit/test_generate_node_schemas.py`
+  12. `backend/tests/unit/test_table_and_conflict_validation.py`
+  13. `backend/tests/unit/test_table_retrieval.py`
+  14. `backend/tests/unit/test_table_validation_disambiguation.py`
+  15. `docs/BUILD_LOG.md`

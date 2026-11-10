@@ -1,0 +1,42 @@
+# Runtime Profile: desktop-api (Hosted NVIDIA API for LLM/VLM generation roles)
+# Hardware: Intel Core i7-12700F, 32 GB RAM; CPU for BGE-M3 & reranker; API for generation
+profile: desktop-api
+models:
+  router:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  answer:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  vision:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  extract: { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  judge:   { provider: nvidia, model: "mistralai/mistral-large-4-1t-a52b", supports_vision: false, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+providers:
+  nvidia:
+    timeout_seconds: 60.0
+    max_retries: 3
+    max_total_wait_seconds: 20.0
+    requests_per_minute: 30
+    max_image_dimension: 1536
+generation_limits:
+  "nvidia:mistralai/mistral-large-4-1t-a52b":
+    router: 1024
+    answer: 4096
+    vision: 4096
+    extract: 4096
+    judge: 1024
+  "nvidia:*":
+    router: 1024
+    answer: 4096
+    vision: 4096
+    extract: 4096
+    judge: 1024
+embeddings:
+  provider: local
+  model: "BAAI/bge-m3"
+  revision: "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
+  device: cpu
+  max_seq_length: 8192
+reranker:
+  provider: local
+  model: "BAAI/bge-reranker-v2-m3"
+  revision: "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"  # pragma: allowlist secret
+  device: cpu
+storage:    { backend: local, path: ./data/files }
+queue:      { backend: procrastinate }

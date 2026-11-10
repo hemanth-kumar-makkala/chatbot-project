@@ -27,8 +27,8 @@ from app.core.ingestion.validation import validate_file
 from app.db.models import Conversation, ExtractionResult, Message, SessionDocument, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
-from app.ports.errors import FileValidationError, MalwareDetectedError
-from app.ports.types import SessionContext, TenantContext, UserRole
+from app.ports.errors import AuthorizationError, FileValidationError, MalwareDetectedError
+from app.ports.types import SessionContext, TenantContext
 from app.wiring import (
     create_document_parser,
     create_image_processor,
@@ -314,6 +314,12 @@ async def extract_fields_from_document_file(
     never through filename matching.
     Invariant 6: UNREADABLE fields receive state=UNREADABLE, value=None.
     """
+    if tenant_ctx is None or not tenant_ctx.tenant_id:
+        raise AuthorizationError(
+            "Tenant context is required for document extraction",
+            error_code="TENANT_CONTEXT_REQUIRED",
+        )
+
     raw_bytes = file_path.read_bytes()
 
     doc_parser = create_document_parser(profile)
@@ -335,13 +341,7 @@ async def extract_fields_from_document_file(
 
     runtime_ctx = GraphRuntimeContext(
         ports=ports,
-        tenant=tenant_ctx
-        or TenantContext(
-            tenant_id="00000000-0000-0000-0000-000000000001",
-            user_id="user-session-upload",
-            role=UserRole.STAFF,
-            session_id="session-upload",
-        ),
+        tenant=tenant_ctx,
         evidence_text={
             "document_title": file_name,
             "page_number": str(page_number),

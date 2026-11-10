@@ -42,6 +42,7 @@ from app.db.models import (
 from app.db.session import tenant_session
 from app.observability.logger import scrub_exception_for_log
 from app.ports.auth import AuthProvider
+from app.ports.errors import UnresolvableEvidenceError
 from app.ports.storage import StorageKey
 from app.ports.types import SessionContext
 from app.wiring import (
@@ -52,6 +53,7 @@ from app.wiring import (
     create_reranker,
     create_retriever,
     create_storage_backend,
+    load_and_validate_profile_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,11 +102,18 @@ async def _verify_active_documents_for_cloud_models(
     rows: Sequence[Any],
 ) -> list[str]:
     """Hash active files once and validate every selected cloud answer/vision model."""
-    cloud_models = list(
-        dict.fromkeys(
-            model for model in (settings.chat_model, settings.vision_model) if is_cloud_model(model)
-        )
+    ports = get_engine_ports(settings)
+    caps_map = getattr(ports, "capabilities_map", None) or getattr(
+        ports.model_provider, "capabilities_map", None
     )
+    models_to_check = [m for m in (settings.chat_model, settings.vision_model) if m]
+    cloud_models: list[str] = []
+    for m in models_to_check:
+        try:
+            if is_cloud_model(m, capabilities_map=caps_map):
+                cloud_models.append(m)
+        except Exception:
+            pass
     if not cloud_models:
         return []
     hashes = await _hash_active_stored_documents(settings, tenant_uuid, rows, cloud_models[0])
@@ -114,6 +123,7 @@ async def _verify_active_documents_for_cloud_models(
             model_name=model_name,
             active_document_titles=titles,
             active_document_hashes=hashes,
+            capabilities_map=caps_map,
         )
     return hashes
 
@@ -132,8 +142,8 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
     else:
         model_provider = create_model_provider(
             profile,
-            chat_model=settings.chat_model,
-            vision_model=settings.vision_model,
+            chat_model=settings.chat_model or None,
+            vision_model=settings.vision_model or None,
             nvidia_base_url=settings.nvidia_base_url,
             nvidia_api_key=(
                 settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
@@ -145,6 +155,8 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
                 else None
             ),
         )
+        profile_models = load_and_validate_profile_models(profile)
+        caps_map = profile_models.get("_capabilities_map", {})
         retriever = create_retriever(profile)
         reranker = None
         if profile in ("desktop-gpu", "home-gpu"):
@@ -155,6 +167,7 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             reranker=reranker,
             chat_model=settings.chat_model,
             vision_model=settings.vision_model,
+            capabilities_map=caps_map,
         )
 
     _ports_cache[cache_key] = ports
@@ -231,84 +244,97 @@ async def _resolve_sources(
         except (ValueError, TypeError):
             continue
 
-    if not chunk_uuids:
-        return sources_list
+    chunk_rows: list[Any] = []
+    table_rows: list[Any] = []
+    found_chunk_ids: set[UUID] = set()
 
-    chunk_stmt = (
-        select(
-            Chunk.id,
-            Chunk.page_id,
-            Chunk.document_version_id,
-            Chunk.evidence_type,
-            Document.title.label("document_title"),
-            Page.page_number,
-        )
-        .join(
-            DocumentVersion,
-            (DocumentVersion.id == Chunk.document_version_id)
-            & (DocumentVersion.tenant_id == Chunk.tenant_id),
-        )
-        .join(
-            Document,
-            (Document.id == DocumentVersion.document_id)
-            & (Document.tenant_id == DocumentVersion.tenant_id),
-        )
-        .join(
-            Page,
-            (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
-        )
-        .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
-    )
-    chunk_rows = (await db_session.execute(chunk_stmt)).all()
-    for crow in chunk_rows:
-        sources_list.append(
-            SourceCitation(
-                document_title=crow.document_title,
-                version="1",
-                page_number=crow.page_number,
-                version_id=str(crow.document_version_id),
-                evidence_type=crow.evidence_type,
-            )
-        )
-
-    # Also resolve any TableData rows
-    found_chunk_ids = {crow.id for crow in chunk_rows}
-    unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
-    if unresolved_uuids:
-        table_stmt = (
+    if chunk_uuids:
+        chunk_stmt = (
             select(
-                TableData.id,
-                TableData.document_version_id,
-                TableData.sheet_name,
-                TableData.row_index,
+                Chunk.id,
+                Chunk.page_id,
+                Chunk.document_version_id,
+                Chunk.evidence_type,
                 Document.title.label("document_title"),
+                Page.page_number,
             )
             .join(
                 DocumentVersion,
-                (DocumentVersion.id == TableData.document_version_id)
-                & (DocumentVersion.tenant_id == TableData.tenant_id),
+                (DocumentVersion.id == Chunk.document_version_id)
+                & (DocumentVersion.tenant_id == Chunk.tenant_id),
             )
             .join(
                 Document,
                 (Document.id == DocumentVersion.document_id)
                 & (Document.tenant_id == DocumentVersion.tenant_id),
             )
-            .where(
-                TableData.tenant_id == tenant_uuid,
-                TableData.id.in_(unresolved_uuids),
+            .join(
+                Page,
+                (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
             )
+            .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
         )
-        table_rows = (await db_session.execute(table_stmt)).all()
-        for trow in table_rows:
+        chunk_rows = list((await db_session.execute(chunk_stmt)).all())
+        for crow in chunk_rows:
             sources_list.append(
                 SourceCitation(
-                    document_title=trow.document_title,
+                    document_title=crow.document_title,
                     version="1",
-                    page_number=trow.row_index,
-                    version_id=str(trow.document_version_id),
-                    evidence_type="table",
+                    page_number=crow.page_number,
+                    version_id=str(crow.document_version_id),
+                    evidence_type=crow.evidence_type,
                 )
             )
+
+        # Also resolve any TableData rows
+        found_chunk_ids = {crow.id for crow in chunk_rows}
+        unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
+        if unresolved_uuids:
+            table_stmt = (
+                select(
+                    TableData.id,
+                    TableData.document_version_id,
+                    TableData.sheet_name,
+                    TableData.row_index,
+                    Document.title.label("document_title"),
+                )
+                .join(
+                    DocumentVersion,
+                    (DocumentVersion.id == TableData.document_version_id)
+                    & (DocumentVersion.tenant_id == TableData.tenant_id),
+                )
+                .join(
+                    Document,
+                    (Document.id == DocumentVersion.document_id)
+                    & (Document.tenant_id == DocumentVersion.tenant_id),
+                )
+                .where(
+                    TableData.tenant_id == tenant_uuid,
+                    TableData.id.in_(unresolved_uuids),
+                )
+            )
+            table_rows = list((await db_session.execute(table_stmt)).all())
+            for trow in table_rows:
+                sources_list.append(
+                    SourceCitation(
+                        document_title=trow.document_title,
+                        version="1",
+                        page_number=trow.row_index,
+                        version_id=str(trow.document_version_id),
+                        evidence_type="table",
+                    )
+                )
+
+    # Fail closed: never synthesize citations for unresolvable IDs
+    resolved_str_ids = {str(crow.id) for crow in chunk_rows} | {str(trow.id) for trow in table_rows}
+    unresolved_ids = [str(eid) for eid in evidence_ids if str(eid) not in resolved_str_ids]
+    if unresolved_ids:
+        raise UnresolvableEvidenceError(
+            f"Evidence IDs {unresolved_ids} cannot be resolved to active chunks "
+            f"for tenant {tenant_uuid}",
+            error_code="UNRESOLVABLE_EVIDENCE_ID",
+        )
+
     return sources_list
 
 
@@ -539,7 +565,28 @@ async def ask_question(
             evidence_ids = result["evidence_ids"]
 
         # 7. Resolve real source chips from database (Rule E.4)
-        sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
+        sources_list: list[SourceCitation] = []
+        try:
+            sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
+        except UnresolvableEvidenceError:
+            logger.error(
+                "Evidence ID could not be resolved to tenant chunk",
+                extra={
+                    "request_id": request_id,
+                    "tenant_id": tenant_ctx.tenant_id,
+                    "node": "resolve_sources",
+                    "status": "safe_failure",
+                    "error_code": "UNRESOLVABLE_EVIDENCE_ID",
+                },
+            )
+            err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+            status_val = "safe_failure"
+            answer_text = (
+                f"An error occurred while evaluating evidence. Please quote reference {err_ref}."
+            )
+            result["public_error_ref"] = err_ref
+            evidence_ids = []
+            sources_list = []
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
@@ -832,7 +879,29 @@ async def ask_question_stream(
             post_session.add(audit)
             await post_session.flush()
 
-            sources_list = await _resolve_sources(post_session, tenant_uuid, evidence_ids)
+            sources_list: list[SourceCitation] = []
+            try:
+                sources_list = await _resolve_sources(post_session, tenant_uuid, evidence_ids)
+            except UnresolvableEvidenceError:
+                logger.error(
+                    "Evidence ID could not be resolved to tenant chunk",
+                    extra={
+                        "request_id": request_id,
+                        "tenant_id": tenant_ctx.tenant_id,
+                        "node": "resolve_sources",
+                        "status": "safe_failure",
+                        "error_code": "UNRESOLVABLE_EVIDENCE_ID",
+                    },
+                )
+                err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                status_val = "safe_failure"
+                answer_text = (
+                    "An error occurred while evaluating evidence. "
+                    f"Please quote reference {err_ref}."
+                )
+                result["public_error_ref"] = err_ref
+                evidence_ids = []
+                sources_list = []
 
             conflict_sources_list: list[SourceCitation] = []
             if status_val == "conflicting":

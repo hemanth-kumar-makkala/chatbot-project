@@ -85,6 +85,7 @@ from app.db.session import (
     tenant_session,
     unscoped_session,
 )
+from app.observability.report_stamping import create_report_stamp
 from app.ports.types import TenantContext, UploadPayload, UserRole
 from app.wiring import create_upload_service
 from app.worker import app as worker_app
@@ -1319,8 +1320,18 @@ async def main() -> None:
                     # =========================================================
                     # BUILD AUTHORITATIVE MARKDOWN & JSON REPORTS
                     # =========================================================
+                    models_by_role = {
+                        "answer": ", ".join(tag for tag, _, _ in answer_model_specs),
+                        "vision": ", ".join(tag for tag, _ in vision_model_specs),
+                    }
+                    telemetry_stamp = create_report_stamp(
+                        profile=os.getenv("APP_PROFILE", "desktop-gpu"),
+                        models_by_role=models_by_role,
+                        repo_root=PROJECT_ROOT,
+                    )
                     report_json_data = {
                         "timestamp": datetime.now(UTC).isoformat(),
+                        "telemetry_stamp": telemetry_stamp,
                         "run_status": "complete",
                         "answer_models": [tag for tag, _, _ in answer_model_specs],
                         "vision_models": [tag for tag, _ in vision_model_specs],

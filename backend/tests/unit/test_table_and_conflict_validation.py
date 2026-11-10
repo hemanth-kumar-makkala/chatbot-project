@@ -71,6 +71,7 @@ async def test_table_answer_invented_row_id_rejected() -> None:
             "Payer Name": "Apex Health Insurance",
             "Deductible": "$250.00",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {"row-1": real_tc}
     ctx.evidence_text = {
@@ -104,6 +105,7 @@ async def test_table_answer_value_mismatch_rejected() -> None:
             "Payer Name": "Apex Health Insurance",
             "Deductible": "$250.00",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {"row-1": real_tc}
     ctx.evidence_text = {
@@ -144,6 +146,7 @@ async def test_table_answer_exact_stored_cells_accepted() -> None:
             sheet_name="Sheet1",
             row_index=idx,
             cells={"Payer Name": payer, "Plan Code": code, "Deductible": ded},
+            tenant_id="00000000-0000-0000-0000-000000000001",
         )
         ctx.table_candidates[rid] = tc
         ctx.evidence_text[rid] = (
@@ -222,6 +225,7 @@ async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_by
             sheet_name="Sheet1",
             row_index=idx,
             cells=r_data,
+            tenant_id="00000000-0000-0000-0000-000000000001",
         )
         tcs[rid] = tc
         ctx.evidence_text[rid] = (
