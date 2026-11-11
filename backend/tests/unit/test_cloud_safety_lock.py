@@ -229,6 +229,33 @@ async def test_cloud_lock_hashes_original_bytes_from_storage(
 
 
 @pytest.mark.asyncio
+async def test_verify_active_documents_fails_closed_when_capabilities_map_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """_verify_active_documents_for_cloud_models fails closed when
+    capabilities map is missing/empty.
+    """
+    empty_ports = GraphPorts(capabilities_map={})
+    monkeypatch.setattr(questions_route, "get_engine_ports", lambda _settings: empty_ports)
+
+    settings = ApiSettings(
+        profile="mock",
+        chat_model="nvidia:test-cloud-model",
+        storage_dir=str(tmp_path),
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        await questions_route._verify_active_documents_for_cloud_models(
+            settings,
+            UUID("00000000-0000-0000-0000-000000000001"),
+            [("doc.pdf", "version-1", "pdf")],
+        )
+
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
+
+
+@pytest.mark.asyncio
 async def test_node_guard_enforces_cloud_safety_for_vision_model() -> None:
     ctx = GraphRuntimeContext(
         ports=GraphPorts(

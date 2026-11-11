@@ -384,7 +384,14 @@ async def node_extract_fields(
         ]
 
         use_vision = ctx.ports.model_provider is not None and (
-            ctx.ports.is_mock_profile or is_vision_model(ctx.ports.vision_model)
+            ctx.ports.is_mock_profile
+            or (
+                bool(ctx.ports.vision_model)
+                and is_vision_model(
+                    ctx.ports.vision_model,
+                    capabilities_map=ctx.ports.capabilities_map,
+                )
+            )
         )
 
         for page in pages:

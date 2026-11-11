@@ -43,11 +43,18 @@ from app.ports.errors import (
     MalformedOutput,
     TransientIngestionError,
 )
+from app.ports.model_provider import ModelCapabilities
 from app.ports.types import (
     ChatMessage,
     ModelRole,
     PageReading,
 )
+
+DEFAULT_OLLAMA_CAPABILITIES: dict[tuple[str, str], ModelCapabilities] = {
+    ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+        supports_vision=True, remote=False, baa_covered=False
+    ),
+}
 
 EXPECTED_DIGEST = "sha256:a1b29c246319cdcb1f3842f36d29f198f737c0cf516ba1bcba34b1b974e87980"
 
@@ -115,7 +122,11 @@ class TestOllamaModelProviderUnit:
         """Missing OLLAMA_BASE_URL raises ConfigurationError with fixed message."""
         monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
         with pytest.raises(ConfigurationError) as exc_info:
-            OllamaModelProvider(profile="desktop-gpu", base_url=None)
+            OllamaModelProvider(
+                profile="desktop-gpu",
+                capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+                base_url=None,
+            )
 
         assert exc_info.value.message == "OLLAMA_BASE_URL environment variable is not set"
         assert exc_info.value.error_code == "CONFIGURATION_ERROR"
@@ -128,7 +139,11 @@ class TestOllamaModelProviderUnit:
         """Empty string OLLAMA_BASE_URL raises ConfigurationError."""
         monkeypatch.setenv("OLLAMA_BASE_URL", "   ")
         with pytest.raises(ConfigurationError) as exc_info:
-            OllamaModelProvider(profile="desktop-gpu", base_url=None)
+            OllamaModelProvider(
+                profile="desktop-gpu",
+                capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+                base_url=None,
+            )
 
         assert exc_info.value.message == "OLLAMA_BASE_URL environment variable is not set"
 
@@ -141,6 +156,7 @@ class TestOllamaModelProviderUnit:
         with pytest.raises(ConfigurationError) as exc_info:
             OllamaModelProvider(
                 profile="nonexistent",
+                capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
                 base_url="http://mock-ollama:11434",
                 config_path=missing_file,
             )
@@ -159,6 +175,7 @@ class TestOllamaModelProviderUnit:
         with pytest.raises(ConfigurationError) as exc_info:
             OllamaModelProvider(
                 profile="bad",
+                capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
                 base_url="http://mock-ollama:11434",
                 config_path=bad_file,
             )
@@ -210,6 +227,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -261,6 +279,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -282,15 +301,48 @@ class TestOllamaModelProviderUnit:
         config_path = tmp_path / "profile.yaml"
         config_path.write_text(
             "models:\n"
-            "  answer: {provider: ollama, model: 'qwen3-vl:4b'}\n"
-            "  router: {provider: ollama, model: 'qwen3-vl:4b'}\n"
-            "  vision: {provider: ollama, model: 'qwen3-vl:4b'}\n"
-            "  extract: {provider: ollama, model: 'qwen3-vl:4b'}\n"
-            "  judge: {provider: ollama, model: 'qwen3-vl:4b'}\n"
+            "  answer:\n"
+            "    provider: ollama\n"
+            "    model: 'qwen3-vl:4b'\n"
+            "    supports_vision: true\n"
+            "    remote: false\n"
+            "    baa_covered: false\n"
+            "  router:\n"
+            "    provider: ollama\n"
+            "    model: 'qwen3-vl:4b'\n"
+            "    supports_vision: true\n"
+            "    remote: false\n"
+            "    baa_covered: false\n"
+            "  vision:\n"
+            "    provider: ollama\n"
+            "    model: 'qwen3-vl:4b'\n"
+            "    supports_vision: true\n"
+            "    remote: false\n"
+            "    baa_covered: false\n"
+            "  extract:\n"
+            "    provider: ollama\n"
+            "    model: 'qwen3-vl:4b'\n"
+            "    supports_vision: true\n"
+            "    remote: false\n"
+            "    baa_covered: false\n"
+            "  judge:\n"
+            "    provider: ollama\n"
+            "    model: 'qwen3-vl:4b'\n"
+            "    supports_vision: true\n"
+            "    remote: false\n"
+            "    baa_covered: false\n"
             "generation_limits:\n"
             "  'beam:cloud': {answer: 1536}\n",
             encoding="utf-8",
         )
+        capabilities_map: dict[tuple[str, str], ModelCapabilities] = {
+            ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+                supports_vision=True, remote=False, baa_covered=False
+            ),
+            ("ollama", "beam:cloud"): ModelCapabilities(
+                supports_vision=False, remote=True, baa_covered=False
+            ),
+        }
         chat_payloads: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -306,6 +358,7 @@ class TestOllamaModelProviderUnit:
             for model in ("qwen3-vl:4b", "beam:cloud"):
                 provider = OllamaModelProvider(
                     profile="desktop-gpu",
+                    capabilities_map=capabilities_map,
                     base_url="http://ollama.test",
                     config_path=config_path,
                     http_client=client,
@@ -356,6 +409,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -390,6 +444,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -419,6 +474,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -449,6 +505,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -479,6 +536,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -509,6 +567,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -539,6 +598,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -581,6 +641,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -601,7 +662,11 @@ class TestOllamaModelProviderUnit:
     @pytest.mark.asyncio
     async def test_unimplemented_methods_raise_typed_error(self) -> None:
         """Methods not implemented yet raise typed error with fixed message."""
-        provider = OllamaModelProvider(profile="desktop-gpu", base_url="http://mock-ollama:11434")
+        provider = OllamaModelProvider(
+            profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+            base_url="http://mock-ollama:11434",
+        )
 
         with pytest.raises(OllamaMethodNotImplementedError) as exc3:
             await provider.extract_fields(
@@ -671,6 +736,7 @@ class TestOllamaModelProviderUnit:
         client = httpx.AsyncClient(transport=transport)
         provider = OllamaModelProvider(
             profile="desktop-gpu",
+            capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
             base_url="http://mock-ollama:11434",
             http_client=client,
         )
@@ -712,6 +778,7 @@ async def test_real_ollama_vision_transcription_desktop_gpu() -> None:
 
     provider = OllamaModelProvider(
         profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
         base_url=base_url,
     )
 

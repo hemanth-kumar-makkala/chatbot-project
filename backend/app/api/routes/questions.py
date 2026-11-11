@@ -4,7 +4,7 @@ import contextlib
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -42,7 +42,8 @@ from app.db.models import (
 from app.db.session import tenant_session
 from app.observability.logger import scrub_exception_for_log
 from app.ports.auth import AuthProvider
-from app.ports.errors import UnresolvableEvidenceError
+from app.ports.errors import ConfigurationError, UnresolvableEvidenceError
+from app.ports.model_provider import ModelCapabilities
 from app.ports.storage import StorageKey
 from app.ports.types import SessionContext
 from app.wiring import (
@@ -101,19 +102,39 @@ async def _verify_active_documents_for_cloud_models(
     tenant_uuid: UUID,
     rows: Sequence[Any],
 ) -> list[str]:
-    """Hash active files once and validate every selected cloud answer/vision model."""
+    """Hash active files once and validate every selected cloud role model."""
     ports = get_engine_ports(settings)
-    caps_map = getattr(ports, "capabilities_map", None) or getattr(
-        ports.model_provider, "capabilities_map", None
-    )
-    models_to_check = [m for m in (settings.chat_model, settings.vision_model) if m]
+    caps_map: Mapping[tuple[str, str], ModelCapabilities] = ports.capabilities_map
+    explicit_selectors = [
+        m
+        for m in (settings.chat_model, settings.vision_model, ports.chat_model, ports.vision_model)
+        if m
+    ]
+    if not caps_map:
+        if settings.profile != "mock" or explicit_selectors:
+            raise ConfigurationError(
+                message="Model capabilities map is not declared or missing in GraphPorts",
+                error_code="MODEL_CAPABILITIES_NOT_DECLARED",
+            )
+        return []
+
+    role_selectors: list[str] = []
+    if settings.profile != "mock":
+        profile_models = load_and_validate_profile_models(settings.profile)
+        for role_name in ("router", "answer", "vision", "extract", "judge"):
+            role_cfg = profile_models.get(role_name)
+            if isinstance(role_cfg, dict) and role_cfg.get("provider") and role_cfg.get("model"):
+                role_selectors.append(f"{role_cfg['provider']}:{role_cfg['model']}")
+
+    caps_selectors = [f"{prov}:{mod}" for prov, mod in caps_map]
+    models_to_check = list(dict.fromkeys([*explicit_selectors, *role_selectors, *caps_selectors]))
+    if not models_to_check:
+        return []
+
     cloud_models: list[str] = []
     for m in models_to_check:
-        try:
-            if is_cloud_model(m, capabilities_map=caps_map):
-                cloud_models.append(m)
-        except Exception:
-            pass
+        if is_cloud_model(m, capabilities_map=caps_map):
+            cloud_models.append(m)
     if not cloud_models:
         return []
     hashes = await _hash_active_stored_documents(settings, tenant_uuid, rows, cloud_models[0])
@@ -138,8 +159,19 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
 
     profile = settings.profile
     if profile == "mock":
-        ports = create_mock_ports()
+        profile_models = load_and_validate_profile_models("mock")
+        ports = create_mock_ports(capabilities_map=profile_models["_capabilities_map"])
     else:
+        profile_models = load_and_validate_profile_models(profile)
+        caps_map = profile_models["_capabilities_map"]
+        resolved_chat_model = (
+            settings.chat_model
+            or f"{profile_models['answer']['provider']}:{profile_models['answer']['model']}"
+        )
+        resolved_vision_model = (
+            settings.vision_model
+            or f"{profile_models['vision']['provider']}:{profile_models['vision']['model']}"
+        )
         model_provider = create_model_provider(
             profile,
             chat_model=settings.chat_model or None,
@@ -155,8 +187,6 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
                 else None
             ),
         )
-        profile_models = load_and_validate_profile_models(profile)
-        caps_map = profile_models.get("_capabilities_map", {})
         retriever = create_retriever(profile)
         reranker = None
         if profile in ("desktop-gpu", "home-gpu"):
@@ -165,8 +195,8 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             model_provider=model_provider,
             retriever=retriever,
             reranker=reranker,
-            chat_model=settings.chat_model,
-            vision_model=settings.vision_model,
+            chat_model=resolved_chat_model,
+            vision_model=resolved_vision_model,
             capabilities_map=caps_map,
         )
 
@@ -451,6 +481,8 @@ async def ask_question(
             )
         except CloudModelSafetyLockError as lock_err:
             raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        except ConfigurationError as cfg_err:
+            raise HTTPException(status_code=500, detail=str(cfg_err)) from cfg_err
 
         # 4. Load visual page metadata inside the pre-graph DB transaction
         page_images: dict[str, bytes] = {}
@@ -494,7 +526,7 @@ async def ask_question(
         active_document_count=doc_count,
         active_document_titles=active_doc_titles,
         active_document_hashes=active_doc_hashes,
-        chat_model=settings.chat_model,
+        chat_model=ports.chat_model or settings.chat_model,
         page_images=page_images,
         page_ocr_confidences=page_ocr_confidences,
     )
@@ -724,6 +756,8 @@ async def ask_question_stream(
             )
         except CloudModelSafetyLockError as lock_err:
             raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        except ConfigurationError as cfg_err:
+            raise HTTPException(status_code=500, detail=str(cfg_err)) from cfg_err
 
         visual_stmt = (
             select(Chunk.id, Page.image_key, Page.ocr_confidence)
@@ -769,7 +803,7 @@ async def ask_question_stream(
             active_document_count=doc_count,
             active_document_titles=active_doc_titles,
             active_document_hashes=active_doc_hashes,
-            chat_model=settings.chat_model,
+            chat_model=ports.chat_model or settings.chat_model,
             page_images=page_images,
             page_ocr_confidences=page_ocr_confidences,
         )

@@ -27,6 +27,7 @@ import logging
 import math
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from app.ports.errors import (
 )
 from app.ports.image_processor import ImageProcessor
 from app.ports.model_provider import (
+    ModelCapabilities,
     ModelProvider,
     is_cloud_model,
     is_vision_model,
@@ -295,6 +297,7 @@ class OllamaModelProvider(ModelProvider):
     def __init__(
         self,
         profile: str,
+        capabilities_map: Mapping[tuple[str, str], ModelCapabilities],
         base_url: str | None = None,
         config_path: Path | None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -326,6 +329,7 @@ class OllamaModelProvider(ModelProvider):
             self._base_url = env_url.rstrip("/")
 
         self._profile = profile
+        self._capabilities_map = capabilities_map
         self._models = _load_profile_models(profile=profile, config_path=config_path)
         self._generation_limits = _load_profile_generation_limits(
             profile=profile, config_path=config_path
@@ -340,7 +344,7 @@ class OllamaModelProvider(ModelProvider):
             self._models["router"] = cm
             self._models["judge"] = cm
             self._models["extract"] = cm
-            if is_vision_model(cm):
+            if is_vision_model(cm, capabilities_map=self._capabilities_map, provider="ollama"):
                 self._models["vision"] = cm
             # Note: If cm has no vision, vision role retains profile model (e.g. qwen3-vl:4b)
 
@@ -366,7 +370,7 @@ class OllamaModelProvider(ModelProvider):
         if model_name in self._model_digests:
             return self._model_digests[model_name]
 
-        if is_cloud_model(model_name):
+        if is_cloud_model(model_name, capabilities_map=self._capabilities_map, provider="ollama"):
             digest_val = f"cloud:{model_name}"
             self._model_digests[model_name] = digest_val
             return digest_val

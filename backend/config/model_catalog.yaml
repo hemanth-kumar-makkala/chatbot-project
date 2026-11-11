@@ -1,0 +1,262 @@
+# Curated Model & Provider Catalog
+# Single source of truth for UI provider cards, selectable per-assistant models,
+# explicit capability flags, generation settings, and client pacing/retry limits.
+version: "1.0"
+
+providers:
+  ollama:
+    display_name: "Ollama (Local)"
+    transport: ollama
+    coming_later: false
+    required_env:
+      - OLLAMA_BASE_URL
+    runtime_settings:
+      timeout_seconds: 120.0
+      max_retries: 0
+      max_total_wait_seconds: 0.0
+      requests_per_minute: 120
+      max_image_dimension: 1024
+    notes: "Local inference daemon. Only curated models currently downloaded in Ollama are selectable."
+    models:
+      - provider: ollama
+        model: "qwen3-vl:4b"
+        display_name: "Qwen 3 VL 4B (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer", "judge"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Multimodal local model from desktop-gpu profile (fits 6 GB VRAM)."
+      - provider: ollama
+        model: "qwen2.5:7b"
+        display_name: "Qwen 2.5 7B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only local model from home-gpu profile."
+      - provider: ollama
+        model: "qwen2-vl:7b"
+        display_name: "Qwen 2 VL 7B (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Multimodal local vision model from home-gpu profile."
+      - provider: ollama
+        model: "llama3.1:8b"
+        display_name: "Llama 3.1 8B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["judge", "answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only local judge/answer model from home-gpu profile."
+      - provider: ollama
+        model: "qwen2.5:3b"
+        display_name: "Qwen 2.5 3B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU text model from office-cpu profile."
+      - provider: ollama
+        model: "qwen2-vl:2b"
+        display_name: "Qwen 2 VL 2B (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU vision model from office-cpu profile."
+      - provider: ollama
+        model: "llama3.2:3b"
+        display_name: "Llama 3.2 3B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["judge", "answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU judge/text model from office-cpu profile."
+
+  gemini:
+    display_name: "Google Gemini (AI Studio)"
+    transport: openai_compatible
+    coming_later: false
+    required_env:
+      - GEMINI_API_KEY
+      - GEMINI_BASE_URL
+    runtime_settings:
+      timeout_seconds: 60.0
+      max_retries: 3
+      max_total_wait_seconds: 20.0
+      requests_per_minute: 10
+      max_image_dimension: 1536
+    notes: "OpenAI-compatible Google AI Studio endpoint (synthetic test data only; no BAA)."
+    models:
+      - provider: gemini
+        model: "gemini-3.5-flash"
+        display_name: "Gemini 3.5 Flash"
+        supports_vision: true
+        remote: true
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Fast multimodal answer model via AI Studio (synthetic test data only)."
+      - provider: gemini
+        model: "gemini-3.5-flash-lite"
+        display_name: "Gemini 3.5 Flash Lite"
+        supports_vision: false
+        remote: true
+        baa_covered: false
+        allowed_roles: ["judge"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Lightweight text-only judge model via AI Studio (synthetic test data only)."
+
+  nvidia:
+    display_name: "NVIDIA Build API"
+    transport: openai_compatible
+    coming_later: false
+    required_env:
+      - NVIDIA_API_KEY
+      - NVIDIA_BASE_URL
+    runtime_settings:
+      timeout_seconds: 60.0
+      max_retries: 3
+      max_total_wait_seconds: 20.0
+      requests_per_minute: 30
+      max_image_dimension: 1536
+    notes: "OpenAI-compatible NVIDIA build endpoint (synthetic test data only; no BAA)."
+    models:
+      - provider: nvidia
+        model: "mistralai/mistral-large-4-1t-a52b"
+        display_name: "Mistral Large 4 1T (NVIDIA)"
+        supports_vision: false
+        remote: true
+        baa_covered: false
+        allowed_roles: ["answer", "judge"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only large frontier model on NVIDIA endpoint (synthetic test data only)."
+
+  inception:
+    display_name: "Inception Labs"
+    transport: openai_compatible
+    coming_later: false
+    required_env:
+      - INCEPTION_API_KEY
+      - INCEPTION_BASE_URL
+    runtime_settings:
+      timeout_seconds: 60.0
+      max_retries: 3
+      max_total_wait_seconds: 20.0
+      requests_per_minute: 30
+      max_image_dimension: 1536
+    notes: "Text-only OpenAI-compatible placeholder provider; no curated models configured yet."
+    models: []
+
+  openai:
+    display_name: "OpenAI"
+    transport: openai_compatible
+    coming_later: false
+    required_env:
+      - OPENAI_API_KEY
+      - OPENAI_BASE_URL
+    runtime_settings:
+      timeout_seconds: 60.0
+      max_retries: 3
+      max_total_wait_seconds: 20.0
+      requests_per_minute: 30
+      max_image_dimension: 1536
+    notes: "OpenAI-compatible placeholder provider; no curated models configured yet."
+    models: []
+
+  anthropic:
+    display_name: "Anthropic Claude"
+    transport: native_coming_later
+    coming_later: true
+    required_env: []
+    runtime_settings: null
+    notes: "Coming later (requires dedicated native Anthropic Messages API adapter)."
+    models: []
+
+  vertex:
+    display_name: "Google Vertex AI (BAA)"
+    transport: native_coming_later
+    coming_later: true
+    required_env: []
+    runtime_settings: null
+    notes: "Coming later (requires GCP Vertex AI SDK adapter under BAA)."
+    models: []

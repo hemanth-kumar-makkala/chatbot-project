@@ -34,6 +34,7 @@ from app.wiring import (
     create_image_processor,
     create_malware_scanner,
     create_model_provider,
+    load_and_validate_profile_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -304,9 +305,14 @@ async def extract_fields_from_document_file(
     file_name: str,
     page_number: int = 1,
     profile: str = "mock",
-    chat_model: str = "qwen3-vl:4b",
-    vision_model: str = "qwen3-vl:4b",
+    chat_model: str | None = None,
+    vision_model: str | None = None,
     tenant_ctx: TenantContext | None = None,
+    *,
+    nvidia_base_url: str | None = None,
+    nvidia_api_key: str | None = None,
+    inception_base_url: str | None = None,
+    inception_api_key: str | None = None,
 ) -> list[ExtractedField]:
     """Run the real extraction subgraph using configured OCR and vision providers.
 
@@ -322,20 +328,32 @@ async def extract_fields_from_document_file(
 
     raw_bytes = file_path.read_bytes()
 
+    profile_models = load_and_validate_profile_models(profile)
+    caps_map = profile_models["_capabilities_map"]
+    answer_cfg = profile_models["answer"]
+    extract_cfg = profile_models["extract"]
+    resolved_chat_model = chat_model or f"{answer_cfg['provider']}:{answer_cfg['model']}"
+    resolved_vision_model = vision_model or f"{extract_cfg['provider']}:{extract_cfg['model']}"
+
     doc_parser = create_document_parser(profile)
     model_provider = create_model_provider(
         profile,
-        chat_model=chat_model,
-        vision_model=vision_model,
+        chat_model=chat_model or None,
+        vision_model=vision_model or None,
+        nvidia_base_url=nvidia_base_url,
+        nvidia_api_key=nvidia_api_key,
+        inception_base_url=inception_base_url,
+        inception_api_key=inception_api_key,
     )
     image_processor = create_image_processor(profile)
 
     ports = GraphPorts(
+        capabilities_map=caps_map,
         model_provider=model_provider,
         document_parser=doc_parser,
         image_processor=image_processor,
-        chat_model=chat_model,
-        vision_model=vision_model,
+        chat_model=resolved_chat_model,
+        vision_model=resolved_vision_model,
         is_mock_profile=(profile == "mock"),
     )
 
@@ -347,7 +365,7 @@ async def extract_fields_from_document_file(
             "page_number": str(page_number),
         },
         raw_document_bytes=raw_bytes,
-        chat_model=chat_model,
+        chat_model=resolved_chat_model,
     )
 
     state: GraphState = {
@@ -565,8 +583,8 @@ async def upload_session_document(
         await db_session.flush()
 
     # Execute extraction subgraph
-    chat_model_name = getattr(settings, "chat_model", "qwen3-vl:4b")
-    vision_model_name = getattr(settings, "vision_model", "qwen3-vl:4b")
+    chat_model_name = settings.chat_model or None
+    vision_model_name = settings.vision_model or None
     fields = await extract_fields_from_document_file(
         file_path=saved_file_path,
         file_name=filename,
@@ -575,6 +593,14 @@ async def upload_session_document(
         chat_model=chat_model_name,
         vision_model=vision_model_name,
         tenant_ctx=found_tenant_ctx,
+        nvidia_base_url=settings.nvidia_base_url,
+        nvidia_api_key=(
+            settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+        ),
+        inception_base_url=settings.inception_base_url,
+        inception_api_key=(
+            settings.inception_api_key.get_secret_value() if settings.inception_api_key else None
+        ),
     )
 
     # Persist ExtractionResult

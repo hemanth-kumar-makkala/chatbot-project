@@ -3608,3 +3608,120 @@ Append-only record of all completed tasks, architectural choices, and test recor
   13. `backend/tests/unit/test_table_retrieval.py`
   14. `backend/tests/unit/test_table_validation_disambiguation.py`
   15. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Capabilities Map Callers and Evidence Gate Test Alignment
+
+- **Task**: Model Layer Wiring and Capabilities Map Finalization
+- **What Was Built**:
+  1. **Capabilities Map Injection for Ollama Provider (`backend/app/adapters/models/ollama.py`, `backend/app/wiring.py`)**:
+     - Added `capabilities_map: Mapping[tuple[str, str], ModelCapabilities] | None = None` parameter to `OllamaModelProvider.__init__`.
+     - In `backend/app/wiring.py`, updated `create_model_provider` and provider caching to pass `capabilities_map=profile_models.get("_capabilities_map")` to `OllamaModelProvider`.
+     - Added helper `_load_profile_capabilities` in `ollama.py` to resolve declared capabilities from wiring or profile YAML for standalone instances.
+     - Updated `OllamaModelProvider._get_model_digest` (line 369) to pass `capabilities_map=self._capabilities_map, provider="ollama"` to `is_cloud_model`.
+     - Updated `OllamaModelProvider.__init__` (line 343) to pass `capabilities_map=self._capabilities_map, provider="ollama"` to `is_vision_model` when inspecting configured chat models.
+  2. **Extraction Subgraph Vision Model Inspection (`backend/app/core/extraction/subgraph.py`)**:
+     - Updated `use_vision` check at line 387 to pass `capabilities_map=ctx.ports.capabilities_map` to `is_vision_model(ctx.ports.vision_model)`.
+  3. **Evidence Gate and Validation Test Alignment (`backend/tests/unit/test_evidence_gate_and_validation.py`)**:
+     - Updated `test_node_assess_evidence_fails_closed_when_judge_fails` to assert the standard public error reference regex pattern (`^ERR-[0-9A-F]{6}$`) instead of the legacy `ERR-JUDGE-` prefix.
+     - Rewrote `test_node_retrieve_fails_closed_when_evidence_lacks_tenant_id` to assert that `EvidenceId` raises a Pydantic `ValidationError` when constructed without `tenant_id` or with `tenant_id=None`.
+- **Files Modified (5 total)**:
+  1. `backend/app/adapters/models/ollama.py`
+  2. `backend/app/wiring.py`
+  3. `backend/app/core/extraction/subgraph.py`
+  4. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run ruff check` passed with zero errors across all modified files.
+  - `uv run ruff format --check` confirmed clean code formatting.
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Required Capabilities Map on Ollama Adapter & Test Setup Fixes
+
+- **Task**: Enforce Required Capabilities Map on Ollama Adapter & Repair Test Setup
+- **What Was Built**:
+  1. **Strict Required `capabilities_map` on Ollama Adapter (`backend/app/adapters/models/ollama.py`)**:
+     - Made `capabilities_map: Mapping[tuple[str, str], ModelCapabilities]` a required constructor parameter on `OllamaModelProvider` (no default, no `| None = None`).
+     - Removed `_load_profile_capabilities`; adapters strictly consume injected dependencies and never import or call wiring.
+     - Enforced fail-closed behavior on `is_vision_model` without swallowing `ConfigurationError`.
+  2. **Direct Key Access in Wiring (`backend/app/wiring.py`)**:
+     - Replaced all `.get("_capabilities_map")` calls with direct key access `profile_models["_capabilities_map"]`.
+  3. **Ollama Provider Unit Test Setup Corrections (`backend/tests/unit/test_ollama_provider.py`)**:
+     - Identified origin of `supports_vision=False` on `qwen3-vl:4b`: the test fixture in `test_model_specific_token_limits_override_only_configured_model` (lines 301-312) which created a minimal profile without capability flags.
+     - Corrected the mock profile YAML in that test fixture to explicitly declare `supports_vision: true, remote: false, baa_covered: false` for all roles on `qwen3-vl:4b`.
+     - Explicitly declared `("ollama", "beam:cloud")` with `supports_vision: false, remote: true, baa_covered: false` in `capabilities_map`.
+     - Injected `capabilities_map` across all 18 `OllamaModelProvider` unit test instantiations.
+  4. **Ollama Generate Unit Test Setup Corrections (`backend/tests/unit/test_ollama_generate.py`)**:
+     - Injected `DEFAULT_OLLAMA_CAPABILITIES` across all 5 `OllamaModelProvider` test instantiations.
+- **Files Modified (5 total)**:
+  1. `backend/app/adapters/models/ollama.py`
+  2. `backend/app/wiring.py`
+  3. `backend/tests/unit/test_ollama_provider.py`
+  4. `backend/tests/unit/test_ollama_generate.py`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run ruff check` and `uv run ruff format --check` passed cleanly across all modified files.
+  - Unit tests in `test_ollama_provider.py`, `test_ollama_generate.py`, `test_wiring_profile_guards.py`, and `test_evidence_gate_and_validation.py` all pass.
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Typed Capabilities Map in Questions Route & Fail-Closed Test
+
+- **Task**: Eliminate Optional/Fallback Capabilities Map in Questions Route
+- **What Was Built**:
+  1. **Strict Typed `capabilities_map` on Questions Route (`backend/app/api/routes/questions.py`)**:
+     - Removed `getattr(ports, "capabilities_map", None)` and fallback logic.
+     - Directly accessed the typed, required `ports.capabilities_map: Mapping[tuple[str, str], ModelCapabilities]`.
+     - Raised `ConfigurationError` (`MODEL_CAPABILITIES_NOT_DECLARED`) if the capabilities map is empty or missing.
+     - Handled `ConfigurationError` in question dispatch route handlers to fail closed with HTTP 500.
+     - Updated `get_engine_ports` for mock profile to load capabilities directly via `load_and_validate_profile_models("mock")["_capabilities_map"]`.
+  2. **Fail-Closed Unit Test (`backend/tests/unit/test_cloud_safety_lock.py`)**:
+     - Added `test_verify_active_documents_fails_closed_when_capabilities_map_missing` verifying `ConfigurationError` (`MODEL_CAPABILITIES_NOT_DECLARED`) when `capabilities_map` is missing/empty.
+- **Files Modified (3 total)**:
+  1. `backend/app/api/routes/questions.py`
+  2. `backend/tests/unit/test_cloud_safety_lock.py`
+  3. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run --project backend mypy backend/app/api/routes/questions.py backend/tests/unit/test_cloud_safety_lock.py backend/app/core/graph.py` reported `Success: no issues found in 3 source files`.
+  - `pre-commit run mypy --all-files` passed cleanly across all 236 repository files.
+
+---
+
+### [2026-11-11] Model Providers & Per-Assistant Selection — Stage 1: Catalog, Provider Status API & Pre-Stage Safety Fixes
+
+- **Task**: Implement Model Catalog & Provider Status/Test API (Stage 1) plus Safety Lock & Extraction Fallback Fixes
+- **What Was Built**:
+  1. **Questions Route Safety Lock Fix (`backend/app/api/routes/questions.py`)**:
+     - Fixed `_verify_active_documents_for_cloud_models` and `get_engine_ports` so active role models (`router`, `answer`, `vision`, `extract`, `judge`) are resolved from the runtime profile and `capabilities_map` even when `settings.chat_model` is empty (`""`), preventing cloud safety lock bypasses on `desktop-api` and enforcing checks across all active roles including `judge`.
+  2. **Conversations Extraction Fallback Removal (`backend/app/api/routes/conversations.py`)**:
+     - Removed hardcoded `"qwen3-vl:4b"` parameter defaults in `extract_fields_from_document_file` and `getattr(..., "qwen3-vl:4b")` in `upload_session_document`.
+     - Extraction now resolves `answer`/`extract` models, `capabilities_map`, and hosted credentials from the configured runtime profile via `load_and_validate_profile_models` and `create_model_provider`.
+  3. **Curated Model Catalog & Status Adapter (`backend/config/model_catalog.yaml`, `backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`, `backend/app/api/config.py`, `backend/app/wiring.py`)**:
+     - Created curated `model_catalog.yaml` declaring explicit capability flags, governance properties, temperature, reasoning, generation limits, and client pacing/retry settings for `ollama`, `gemini` (`requests_per_minute: 10`), `nvidia` (`mistralai/mistral-large-4-1t-a52b`), `inception`, `openai`, `anthropic` (`coming_later`), and `vertex` (`coming_later`).
+     - Added optional env settings in `ApiSettings` (`OLLAMA_BASE_URL`, `GEMINI_BASE_URL`, `GEMINI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`) without fallback defaults.
+     - Implemented fail-closed catalog validation, Ollama `/api/tags` short-timeout probe (filtering to downloaded curated models and treating unreachable daemon as `not_connected`), and single-request provider connection probing.
+  4. **Provider Status & Probe API (`backend/app/api/routes/models.py`, `backend/app/api/app.py`)**:
+     - `GET /v1/models/providers`: Restricted to `client_admin` and `platform_admin` (denies `staff` with HTTP 403); returns statuses, missing `.env` setting names (never values), and models with governance badges (`local`, `cloud_test_data_only`, `cloud_with_baa`).
+     - `POST /v1/models/providers/{provider}/test-connection`: Restricted to `platform_admin` + CSRF; runs one tiny probe returning `{ ok, error_code }` with zero secret or raw payload exposure.
+- **Files Created (6)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/app/ports/model_catalog.py`
+  3. `backend/app/adapters/models/catalog.py`
+  4. `backend/app/api/routes/models.py`
+  5. `backend/tests/unit/test_model_catalog.py`
+  6. `backend/tests/integration/test_model_providers_api.py`
+  *(6 files created; 7 files edited = 13 total)*
+- **Files Edited (7)**:
+  1. `backend/app/api/config.py`
+  2. `backend/app/wiring.py`
+  3. `backend/app/api/app.py`
+  4. `backend/app/api/routes/questions.py`
+  5. `backend/app/api/routes/conversations.py`
+  6. `docs/STATUS.md`
+  7. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models"`: 14 passed.
+  - `uv run mypy` & `uv run ruff check` / `format` passed across all Stage 1 files.
+  - Architecture boundary invariants verified cleanly via `tests/invariants/test_architecture_boundaries.py`.

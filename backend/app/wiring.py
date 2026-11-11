@@ -36,6 +36,7 @@ from app.ports.document_splitter import DocumentSplitter
 from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.image_processor import ImageProcessor
 from app.ports.malware_scanner import MalwareScanner
+from app.ports.model_catalog import ProvidersStatusResponse, ProviderTestConnectionResponse
 from app.ports.model_provider import ModelCapabilities, ModelProvider
 from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
@@ -832,6 +833,7 @@ def create_model_provider(
             profile=profile,
             chat_model=answer_override or profile_models["answer"]["model"],
             vision_model=vision_override or profile_models["vision"]["model"],
+            capabilities_map=profile_models["_capabilities_map"],
         )
 
     if profile in ("office-cpu", "dev-free-api", "cloud") and not any(
@@ -944,9 +946,17 @@ def create_model_provider(
 
             ollama_inst: ModelProvider
             if role_key == "vision":
-                ollama_inst = OllamaModelProvider(profile=profile, vision_model=model_name)
+                ollama_inst = OllamaModelProvider(
+                    profile=profile,
+                    vision_model=model_name,
+                    capabilities_map=profile_models["_capabilities_map"],
+                )
             else:
-                ollama_inst = OllamaModelProvider(profile=profile, chat_model=model_name)
+                ollama_inst = OllamaModelProvider(
+                    profile=profile,
+                    chat_model=model_name,
+                    capabilities_map=profile_models["_capabilities_map"],
+                )
             hosted_providers_cache[cache_key] = ollama_inst
             return ollama_inst
 
@@ -979,7 +989,7 @@ def create_model_provider(
     if len(unique_instances) == 1:
         return next(iter(unique_instances))
 
-    caps_map = profile_models.get("_capabilities_map")
+    caps_map = profile_models["_capabilities_map"]
 
     from app.adapters.models.provider_router import ModelProviderRouter
 
@@ -1108,3 +1118,28 @@ def create_exception_scrubber(profile: str) -> ExceptionScrubber:
     from app.adapters.scrubbing.presidio import PresidioExceptionScrubber
 
     return PresidioExceptionScrubber()
+
+
+async def get_model_provider_statuses(
+    settings: Any,
+    config_path: Path | None = None,
+) -> ProvidersStatusResponse:
+    """Inspect model provider connection statuses and selectable curated models."""
+    from app.adapters.models.catalog import inspect_providers_status
+
+    return await inspect_providers_status(settings=settings, config_path=config_path)
+
+
+async def test_model_provider_connection(
+    provider_id: str,
+    settings: Any,
+    config_path: Path | None = None,
+) -> ProviderTestConnectionResponse:
+    """Execute single tiny connection test request for a configured provider."""
+    from app.adapters.models.catalog import probe_provider_connection
+
+    return await probe_provider_connection(
+        provider_id=provider_id,
+        settings=settings,
+        config_path=config_path,
+    )

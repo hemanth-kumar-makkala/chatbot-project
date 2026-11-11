@@ -27,11 +27,18 @@ from app.core.prompts import AnswerOutput
 from app.ports.errors import (
     MalformedOutput,
 )
+from app.ports.model_provider import ModelCapabilities
 from app.ports.types import (
     ChatMessage,
     ModelResponse,
     ModelRole,
 )
+
+DEFAULT_OLLAMA_CAPABILITIES: dict[tuple[str, str], ModelCapabilities] = {
+    ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+        supports_vision=True, remote=False, baa_covered=False
+    ),
+}
 
 
 class SampleAnswerSchema(BaseModel):
@@ -90,7 +97,11 @@ async def test_generate_structured_json_success(monkeypatch: pytest.MonkeyPatch)
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=_create_mock_transport(handler))
-    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client)
+    provider = OllamaModelProvider(
+        profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+        http_client=client,
+    )
 
     result = await provider.generate(
         role=ModelRole.ANSWER,
@@ -139,7 +150,12 @@ async def test_generate_retries_on_transient_timeout(monkeypatch: pytest.MonkeyP
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=_create_mock_transport(handler))
-    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client, timeout_seconds=1.0)
+    provider = OllamaModelProvider(
+        profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+        http_client=client,
+        timeout_seconds=1.0,
+    )
 
     result = await provider.generate(
         role=ModelRole.ANSWER,
@@ -175,7 +191,11 @@ async def test_generate_raises_malformed_output_on_invalid_json(
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=_create_mock_transport(handler))
-    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client)
+    provider = OllamaModelProvider(
+        profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+        http_client=client,
+    )
 
     with pytest.raises(MalformedOutput) as exc_info:
         await provider.generate(
@@ -225,7 +245,11 @@ async def test_no_thinking_text_leaks_to_answer_or_confidence(
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=_create_mock_transport(handler))
-    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client)
+    provider = OllamaModelProvider(
+        profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+        http_client=client,
+    )
 
     result = await provider.generate(
         role=ModelRole.ANSWER,
@@ -278,7 +302,11 @@ async def test_generate_handles_truncated_explain_mode_json(
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=_create_mock_transport(handler))
-    provider = OllamaModelProvider(profile="desktop-gpu", http_client=client)
+    provider = OllamaModelProvider(
+        profile="desktop-gpu",
+        capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
+        http_client=client,
+    )
 
     result = await provider.generate(
         role=ModelRole.ANSWER,

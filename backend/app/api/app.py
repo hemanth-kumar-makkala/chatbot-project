@@ -19,6 +19,7 @@ from app.api.routes import (
     feedback,
     health,
     knowledge,
+    models,
     questions,
     tenants,
 )
@@ -160,5 +161,6 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app.include_router(questions.router)
     app.include_router(conversations.router)
     app.include_router(feedback.router)
+    app.include_router(models.router)
 
     return app

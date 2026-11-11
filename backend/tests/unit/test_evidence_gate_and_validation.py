@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -452,8 +453,8 @@ async def test_node_assess_evidence_fails_closed_when_judge_fails(
     res = await node_assess_evidence(state, MockRuntime())  # type: ignore[arg-type]
     assert res["status"] == "safe_failure"
     assert res["evidence_state"] == "SAFE_FAILURE"
-    assert res["public_error_ref"].startswith("ERR-JUDGE-")
-    assert "ERR-JUDGE-" in base_context.response_text
+    assert re.match(r"^ERR-[0-9A-F]{6}$", res["public_error_ref"])
+    assert res["public_error_ref"] in base_context.response_text
 
 
 class _JudgeTrackingRetriever(Retriever):
@@ -701,33 +702,26 @@ async def test_real_graph_run_judge_called_for_two_documents_sharing_same_title(
     assert len(judge_calls) == 1
 
 
-@pytest.mark.asyncio
-async def test_node_retrieve_fails_closed_when_evidence_lacks_tenant_id(
-    base_context: GraphRuntimeContext,
-) -> None:
-    """An evidence item without a tenant_id raises TenantIsolationError."""
-    retriever = DummyRetriever()
+def test_node_retrieve_fails_closed_when_evidence_lacks_tenant_id() -> None:
+    """EvidenceId cannot be built without tenant_id (Pydantic ValidationError)."""
+    from pydantic import ValidationError
 
-    async def _search_no_tenant(*args: Any, **kwargs: Any) -> list[EvidenceId]:
-        _ = (args, kwargs)
-        return [
-            EvidenceId(
-                chunk_id="chunk-no-tenant",
-                page_id="page-1",
-                document_version_id="ver-1",
-                evidence_type=EvidenceType.TEXT,
-                tenant_id=None,
-            )
-        ]
+    with pytest.raises(ValidationError):
+        EvidenceId(  # type: ignore[call-arg]
+            chunk_id="chunk-no-tenant",
+            page_id="page-1",
+            document_version_id="ver-1",
+            evidence_type=EvidenceType.TEXT,
+        )
 
-    retriever.search = _search_no_tenant  # type: ignore[method-assign]
-    base_context.ports = GraphPorts(retriever=retriever)
-
-    class MockRuntime:
-        context = base_context
-
-    with pytest.raises(TenantIsolationError):
-        await node_retrieve({"request_id": "r1"}, MockRuntime())  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        EvidenceId(
+            chunk_id="chunk-no-tenant",
+            page_id="page-1",
+            document_version_id="ver-1",
+            evidence_type=EvidenceType.TEXT,
+            tenant_id=None,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.asyncio
