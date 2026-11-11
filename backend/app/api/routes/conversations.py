@@ -309,6 +309,8 @@ async def extract_fields_from_document_file(
     vision_model: str | None = None,
     tenant_ctx: TenantContext | None = None,
     *,
+    gemini_base_url: str | None = None,
+    gemini_api_key: str | None = None,
     nvidia_base_url: str | None = None,
     nvidia_api_key: str | None = None,
     inception_base_url: str | None = None,
@@ -340,6 +342,8 @@ async def extract_fields_from_document_file(
         profile,
         chat_model=chat_model or None,
         vision_model=vision_model or None,
+        gemini_base_url=gemini_base_url,
+        gemini_api_key=gemini_api_key,
         nvidia_base_url=nvidia_base_url,
         nvidia_api_key=nvidia_api_key,
         inception_base_url=inception_base_url,
@@ -593,6 +597,10 @@ async def upload_session_document(
         chat_model=chat_model_name,
         vision_model=vision_model_name,
         tenant_ctx=found_tenant_ctx,
+        gemini_base_url=settings.gemini_base_url,
+        gemini_api_key=(
+            settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+        ),
         nvidia_base_url=settings.nvidia_base_url,
         nvidia_api_key=(
             settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None

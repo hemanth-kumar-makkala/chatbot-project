@@ -176,6 +176,10 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             profile,
             chat_model=settings.chat_model or None,
             vision_model=settings.vision_model or None,
+            gemini_base_url=settings.gemini_base_url,
+            gemini_api_key=(
+                settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+            ),
             nvidia_base_url=settings.nvidia_base_url,
             nvidia_api_key=(
                 settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None

@@ -345,14 +345,14 @@ async def test_conversations_extract_has_no_qwen_default_and_uses_profile_extrac
             file_name="fax.pdf",
             profile="desktop-api",
             tenant_ctx=tenant_ctx,
-            nvidia_base_url="https://api.example/v1",
-            nvidia_api_key="nv-test-key",  # pragma: allowlist secret
+            gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            gemini_api_key="gm-test-key",  # pragma: allowlist secret
         )
 
     assert len(captured_ports) == 1
     ports = captured_ports[0]
-    assert ports.vision_model == "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b"
-    assert ports.chat_model == "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b"
+    assert ports.vision_model == "gemini:gemini-3.5-flash"
+    assert ports.chat_model == "gemini:gemini-3.5-flash"
     assert "qwen3-vl:4b" not in str(mock_cmp.call_args)
 
 
@@ -365,8 +365,8 @@ async def test_upload_session_document_does_not_fallback_to_qwen_on_desktop_api(
         profile="desktop-api",
         storage_dir=str(tmp_path),
         session_upload_retention_hours=24,
-        nvidia_base_url="https://api.example/v1",
-        nvidia_api_key=SecretStr("nv-test-key"),
+        gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        gemini_api_key=SecretStr("gm-test-key"),
     )
     assert settings.chat_model == ""
     assert settings.vision_model == ""

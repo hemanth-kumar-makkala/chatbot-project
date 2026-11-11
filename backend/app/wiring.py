@@ -36,7 +36,11 @@ from app.ports.document_splitter import DocumentSplitter
 from app.ports.embedding_provider import EmbeddingProvider
 from app.ports.image_processor import ImageProcessor
 from app.ports.malware_scanner import MalwareScanner
-from app.ports.model_catalog import ProvidersStatusResponse, ProviderTestConnectionResponse
+from app.ports.model_catalog import (
+    ProviderCatalogConfig,
+    ProvidersStatusResponse,
+    ProviderTestConnectionResponse,
+)
 from app.ports.model_provider import ModelCapabilities, ModelProvider
 from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
@@ -696,6 +700,8 @@ def create_model_provider(
     chat_model: str | None = None,
     *,
     vision_model: str | None = None,
+    gemini_base_url: str | None = None,
+    gemini_api_key: str | None = None,
     nvidia_base_url: str | None = None,
     nvidia_api_key: str | None = None,
     inception_base_url: str | None = None,
@@ -726,48 +732,54 @@ def create_model_provider(
             error_code="UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
         )
 
+    hosted_param_map: dict[str, tuple[tuple[str, str | None], tuple[str, str | None]]] = {
+        "gemini": (("GEMINI_BASE_URL", gemini_base_url), ("GEMINI_API_KEY", gemini_api_key)),
+        "nvidia": (("NVIDIA_BASE_URL", nvidia_base_url), ("NVIDIA_API_KEY", nvidia_api_key)),
+        "inception": (
+            ("INCEPTION_BASE_URL", inception_base_url),
+            ("INCEPTION_API_KEY", inception_api_key),
+        ),
+    }
+
+    def _resolve_hosted_credentials(
+        provider_name: str, *, allow_env_fallback: bool
+    ) -> tuple[str, str]:
+        (url_env, raw_url), (key_env, raw_key) = hosted_param_map[provider_name]
+        b_url = raw_url or (os.getenv(url_env) if allow_env_fallback else None)
+        a_key = raw_key or (os.getenv(key_env) if allow_env_fallback else None)
+        missing: list[str] = []
+        if not b_url or not b_url.strip():
+            missing.append(url_env)
+        if not a_key or not a_key.strip():
+            missing.append(key_env)
+        if missing or b_url is None or a_key is None:
+            raise ConfigurationError(
+                message=f"Missing hosted model settings: {', '.join(missing)}",
+                error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
+            )
+        return b_url, a_key
+
     def _validate_remote_selector(selector: str | None) -> None:
         if not selector or ":" not in selector:
             return
         p_name, _, m_name = selector.partition(":")
-        if p_name not in ("nvidia", "inception"):
+        if p_name not in hosted_param_map:
             return
         if not m_name.strip():
             raise ConfigurationError(
                 message="Hosted model selector is missing its model identifier",
                 error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
             )
-        if p_name == "nvidia":
-            b_url = nvidia_base_url or (
-                os.getenv("NVIDIA_BASE_URL") if profile == "desktop-api" else None
-            )
-            a_key = nvidia_api_key or (
-                os.getenv("NVIDIA_API_KEY") if profile == "desktop-api" else None
-            )
-            missing = [
-                name
-                for name, value in (("NVIDIA_BASE_URL", b_url), ("NVIDIA_API_KEY", a_key))
-                if not value or not value.strip()
-            ]
-        else:
-            b_url = inception_base_url
-            a_key = inception_api_key
-            missing = [
-                name
-                for name, value in (("INCEPTION_BASE_URL", b_url), ("INCEPTION_API_KEY", a_key))
-                if not value or not value.strip()
-            ]
-        if missing:
-            raise ConfigurationError(
-                message=f"Missing hosted model settings: {', '.join(missing)}",
-                error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
-            )
+        _resolve_hosted_credentials(
+            p_name,
+            allow_env_fallback=(profile == "desktop-api" and p_name in ("gemini", "nvidia")),
+        )
 
     _validate_remote_selector(chat_model)
     _validate_remote_selector(vision_model)
 
     if profile in ("office-cpu", "dev-free-api", "cloud") and (
-        chat_model is None or not chat_model.startswith(("nvidia:", "inception:"))
+        chat_model is None or not chat_model.startswith(("gemini:", "nvidia:", "inception:"))
     ):
         raise ConfigurationError(
             f"Local model provider is not implemented for profile '{profile}'.",
@@ -792,6 +804,28 @@ def create_model_provider(
         generation_limits = _load_profile_generation_limits(profile, profile_config_path)
 
     providers_config: dict[str, Any] = profile_data.get("providers", {})
+    raw_catalog_providers = profile_data.get("catalog_providers", [])
+    if not isinstance(raw_catalog_providers, list) or not all(
+        isinstance(item, str) and item.strip() for item in raw_catalog_providers
+    ):
+        raise ConfigurationError(
+            "Profile 'catalog_providers' must be a list of non-empty provider names.",
+            error_code="PROFILE_CATALOG_PROVIDERS_INVALID",
+        )
+    catalog_provider_names: set[str] = set(raw_catalog_providers)
+    catalog_by_provider: dict[str, ProviderCatalogConfig] = {}
+    if catalog_provider_names:
+        from app.adapters.models.catalog import load_model_catalog
+
+        catalog_by_provider = {entry.provider: entry for entry in load_model_catalog()}
+        for cat_provider in sorted(catalog_provider_names):
+            cat_entry = catalog_by_provider.get(cat_provider)
+            if cat_entry is None or cat_entry.runtime_settings is None:
+                raise ConfigurationError(
+                    f"Catalog provider '{cat_provider}' is missing runtime_settings "
+                    "in model_catalog.yaml.",
+                    error_code="CATALOG_PROVIDER_CONFIGURATION_MISSING",
+                )
 
     answer_override = chat_model
     vision_override = vision_model
@@ -837,7 +871,8 @@ def create_model_provider(
         )
 
     if profile in ("office-cpu", "dev-free-api", "cloud") and not any(
-        cfg["provider"] in ("nvidia", "inception", "openai_compatible")
+        isinstance(cfg, dict)
+        and cfg.get("provider") in ("gemini", "nvidia", "inception", "openai_compatible")
         for cfg in profile_models.values()
     ):
         raise ConfigurationError(
@@ -855,7 +890,7 @@ def create_model_provider(
         if model_override:
             if ":" in model_override:
                 p_name, _, m_name = model_override.partition(":")
-                if p_name in ("nvidia", "inception", "mock", "ollama"):
+                if p_name in ("gemini", "nvidia", "inception", "mock", "ollama"):
                     provider_name = p_name
                     model_name = m_name
                 else:
@@ -867,56 +902,67 @@ def create_model_provider(
         if cache_key in hosted_providers_cache:
             return hosted_providers_cache[cache_key]
 
-        if provider_name in ("nvidia", "inception"):
-            if provider_name == "nvidia":
-                base_url = nvidia_base_url or os.getenv("NVIDIA_BASE_URL")
-                api_key = nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-                missing = [
-                    name
-                    for name, value in (
-                        ("NVIDIA_BASE_URL", base_url),
-                        ("NVIDIA_API_KEY", api_key),
+        if provider_name in hosted_param_map:
+            base_url, api_key = _resolve_hosted_credentials(provider_name, allow_env_fallback=True)
+
+            if provider_name in catalog_provider_names:
+                cat_entry = catalog_by_provider[provider_name]
+                if cat_entry.runtime_settings is None:
+                    raise ConfigurationError(
+                        f"Catalog provider '{provider_name}' is missing runtime_settings "
+                        "in model_catalog.yaml.",
+                        error_code="CATALOG_PROVIDER_CONFIGURATION_MISSING",
                     )
-                    if not value or not value.strip()
-                ]
-            else:
-                base_url = inception_base_url or os.getenv("INCEPTION_BASE_URL")
-                api_key = inception_api_key or os.getenv("INCEPTION_API_KEY")
-                missing = [
-                    name
-                    for name, value in (
-                        ("INCEPTION_BASE_URL", base_url),
-                        ("INCEPTION_API_KEY", api_key),
-                    )
-                    if not value or not value.strip()
-                ]
-            if missing:
-                raise ConfigurationError(
-                    message=f"Missing hosted model settings: {', '.join(missing)}",
-                    error_code="HOSTED_MODEL_CONFIGURATION_MISSING",
+                model_spec = next(
+                    (spec for spec in cat_entry.models if spec.model == model_name),
+                    None,
                 )
+                if model_spec is None:
+                    raise ConfigurationError(
+                        f"Model '{model_name}' for provider '{provider_name}' is not declared "
+                        "in model_catalog.yaml.",
+                        error_code="CATALOG_MODEL_NOT_FOUND",
+                    )
+                rt = cat_entry.runtime_settings
+                timeout_seconds = rt.timeout_seconds
+                max_retries = rt.max_retries
+                max_total_wait_seconds = rt.max_total_wait_seconds
+                requests_per_minute = rt.requests_per_minute
+                max_image_dimension = rt.max_image_dimension
+                reasoning = bool(role_cfg.get("reasoning", model_spec.reasoning))
+                temperature = float(role_cfg.get("temperature", model_spec.temperature))
+                profile_limits = (
+                    generation_limits.get(f"{provider_name}:{model_name}")
+                    or generation_limits.get(model_name)
+                    or generation_limits.get(f"{provider_name}:*")
+                )
+                configured_limits: dict[str, int] = (
+                    dict(profile_limits)
+                    if profile_limits
+                    else {str(k): int(v) for k, v in model_spec.generation_limits.items()}
+                )
+            else:
+                provider_cfg = providers_config.get(provider_name, {})
+                timeout_seconds = float(provider_cfg.get("timeout_seconds", 60.0))
+                max_retries = int(provider_cfg.get("max_retries", 3))
+                max_total_wait_seconds = float(provider_cfg.get("max_total_wait_seconds", 20.0))
+                requests_per_minute = int(provider_cfg.get("requests_per_minute", 30))
+                max_image_dimension = int(provider_cfg.get("max_image_dimension", 1536))
+                reasoning = bool(role_cfg.get("reasoning", provider_cfg.get("reasoning", False)))
+                temperature = float(role_cfg.get("temperature", 0.0))
 
-            provider_cfg = providers_config.get(provider_name, {})
-            timeout_seconds = float(provider_cfg.get("timeout_seconds", 60.0))
-            max_retries = int(provider_cfg.get("max_retries", 3))
-            max_total_wait_seconds = float(provider_cfg.get("max_total_wait_seconds", 20.0))
-            requests_per_minute = int(provider_cfg.get("requests_per_minute", 30))
-            max_image_dimension = int(provider_cfg.get("max_image_dimension", 1536))
-            reasoning = bool(role_cfg.get("reasoning", provider_cfg.get("reasoning", False)))
-            temperature = float(role_cfg.get("temperature", 0.0))
-
-            configured_limits = (
-                generation_limits.get(f"{provider_name}:{model_name}")
-                or generation_limits.get(model_name)
-                or generation_limits.get(f"{provider_name}:*", {})
-            )
+                configured_limits = (
+                    generation_limits.get(f"{provider_name}:{model_name}")
+                    or generation_limits.get(model_name)
+                    or generation_limits.get(f"{provider_name}:*", {})
+                )
 
             from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
 
             openai_inst: ModelProvider = OpenAICompatibleModelProvider(
                 model_name=model_name,
-                base_url=base_url or "",
-                api_key=api_key or "",
+                base_url=base_url,
+                api_key=api_key,
                 timeout_seconds=timeout_seconds,
                 max_retries=max_retries,
                 max_total_wait_seconds=max_total_wait_seconds,

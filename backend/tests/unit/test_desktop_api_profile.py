@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
+from app.adapters.models.provider_router import ModelProviderRouter
 from app.core.safety_lock import (
+    GOLDEN_SYNTHETIC_HASHES_BY_NAME,
     CloudModelSafetyLockError,
     is_cloud_model,
     is_vision_model,
@@ -15,26 +18,36 @@ from app.core.safety_lock import (
 )
 from app.ports.errors import ConfigurationError
 from app.ports.model_provider import ModelCapabilities
+from app.ports.types import ModelRole
 from app.wiring import (
+    create_model_provider,
     load_and_validate_profile_models,
 )
 
 
 def test_desktop_api_profile_resolves_all_roles_from_yaml() -> None:
     profile_data = load_and_validate_profile_models("desktop-api")
-    assert "router" in profile_data
-    assert "answer" in profile_data
-    assert "vision" in profile_data
-    assert "extract" in profile_data
-    assert "judge" in profile_data
+    for role in ("router", "answer", "vision", "extract", "judge"):
+        assert role in profile_data
 
-    # Check models and capability flags
-    assert profile_data["answer"]["model"] == "nvidia/nemotron-3.5-super-vl-120b-a12b"
-    assert profile_data["answer"]["remote"] is True
-    assert profile_data["answer"]["baa_covered"] is False
-    assert profile_data["judge"]["model"] == "mistralai/mistral-large-4-1t-a52b"
+    # router, answer, vision, extract resolve to gemini/gemini-3.5-flash
+    for role in ("router", "answer", "vision", "extract"):
+        assert profile_data[role]["provider"] == "gemini"
+        assert profile_data[role]["model"] == "gemini-3.5-flash"
+        assert profile_data[role]["supports_vision"] is True
+        assert profile_data[role]["remote"] is True
+        assert profile_data[role]["baa_covered"] is False
+        assert profile_data[role]["temperature"] == 0.0
+        assert profile_data[role]["reasoning"] is False
+
+    # judge resolves to gemini/gemini-3.5-flash-lite
+    assert profile_data["judge"]["provider"] == "gemini"
+    assert profile_data["judge"]["model"] == "gemini-3.5-flash-lite"
+    assert profile_data["judge"]["supports_vision"] is False
     assert profile_data["judge"]["remote"] is True
     assert profile_data["judge"]["baa_covered"] is False
+    assert profile_data["judge"]["temperature"] == 0.0
+    assert profile_data["judge"]["reasoning"] is False
 
 
 def test_missing_role_fails_startup_with_typed_error(tmp_path: Path) -> None:
@@ -421,3 +434,105 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
         is_vision_model("google/gemma-4-31b-it", capabilities_map=resolved["_capabilities_map"])
         is True
     )
+
+
+def test_desktop_api_builds_gemini_providers_for_all_five_roles_from_catalog() -> None:
+    """Stage 1b: desktop-api references catalog_providers=[gemini] and builds all 5 roles."""
+    profile_path = Path(__file__).resolve().parents[2] / "config" / "profiles" / "desktop-api.yaml"
+    raw_profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    assert raw_profile.get("catalog_providers") == ["gemini"]
+    # Keep nvidia block intact for later, and ensure zero duplicated gemini block in profile
+    assert "nvidia" in raw_profile.get("providers", {})
+    assert "gemini" not in raw_profile.get("providers", {})
+
+    router = create_model_provider(
+        "desktop-api",
+        gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        gemini_api_key="gm-unit-test-placeholder",  # pragma: allowlist secret
+    )
+    assert isinstance(router, ModelProviderRouter)
+
+    for role in (ModelRole.ROUTER, ModelRole.ANSWER, ModelRole.VISION, ModelRole.EXTRACT):
+        prov = router.get_provider(role)
+        assert isinstance(prov, OpenAICompatibleModelProvider)
+        assert prov._model_name == "gemini-3.5-flash"
+        assert (
+            prov._url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        )
+        assert prov._requests_per_minute == 10
+        assert prov._max_retries == 3
+        assert prov._timeout_seconds == 60.0
+        assert prov._max_total_wait_seconds == 20.0
+        assert prov._max_image_dimension == 1536
+        assert prov._strip_reasoning is True
+        assert prov._temperature == 0.0
+        assert prov._output_token_limits == {
+            "router": 1024,
+            "answer": 4096,
+            "vision": 4096,
+            "extract": 4096,
+            "judge": 1024,
+        }
+
+    judge_prov = router.get_provider(ModelRole.JUDGE)
+    assert isinstance(judge_prov, OpenAICompatibleModelProvider)
+    assert judge_prov._model_name == "gemini-3.5-flash-lite"
+    assert judge_prov._requests_per_minute == 10
+    assert judge_prov._max_retries == 3
+    assert judge_prov._timeout_seconds == 60.0
+    assert judge_prov._max_total_wait_seconds == 20.0
+    assert judge_prov._max_image_dimension == 1536
+    assert judge_prov._strip_reasoning is True
+    assert judge_prov._temperature == 0.0
+    assert judge_prov._output_token_limits["judge"] == 1024
+
+
+def test_desktop_api_missing_gemini_credentials_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage 1b: missing GEMINI_API_KEY or GEMINI_BASE_URL fails closed at startup."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_BASE_URL", raising=False)
+
+    with pytest.raises(ConfigurationError) as exc_key:
+        create_model_provider(
+            "desktop-api",
+            gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            gemini_api_key=None,
+        )
+    assert exc_key.value.error_code == "HOSTED_MODEL_CONFIGURATION_MISSING"
+    assert "GEMINI_API_KEY" in str(exc_key.value)
+
+    with pytest.raises(ConfigurationError) as exc_url:
+        create_model_provider(
+            "desktop-api",
+            gemini_base_url=None,
+            gemini_api_key="gm-unit-test-placeholder",  # pragma: allowlist secret
+        )
+    assert exc_url.value.error_code == "HOSTED_MODEL_CONFIGURATION_MISSING"
+    assert "GEMINI_BASE_URL" in str(exc_url.value)
+
+
+def test_desktop_api_safety_lock_applies_to_both_gemini_models() -> None:
+    """Stage 1b: SHA-256 cloud safety lock blocks non-golden docs for both Gemini models."""
+    resolved = load_and_validate_profile_models("desktop-api")
+    caps_map = resolved["_capabilities_map"]
+
+    for model_name in ("gemini:gemini-3.5-flash", "gemini:gemini-3.5-flash-lite"):
+        assert is_cloud_model(model_name, capabilities_map=caps_map) is True
+        # Permits valid golden synthetic hash
+        verify_cloud_model_safety_lock(
+            model_name=model_name,
+            active_document_titles=["prior_auth_guide.pdf"],
+            active_document_hashes=[GOLDEN_SYNTHETIC_HASHES_BY_NAME["prior_auth_guide.pdf"]],
+            capabilities_map=caps_map,
+        )
+        # Blocks non-golden document hash
+        with pytest.raises(CloudModelSafetyLockError) as exc_lock:
+            verify_cloud_model_safety_lock(
+                model_name=model_name,
+                active_document_titles=["Work_Tracker_FINAL.xlsx"],
+                active_document_hashes=["0" * 64],
+                capabilities_map=caps_map,
+            )
+        assert "Work_Tracker_FINAL.xlsx" in str(exc_lock.value)

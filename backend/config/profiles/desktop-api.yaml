@@ -1,12 +1,14 @@
-# Runtime Profile: desktop-api (Hosted NVIDIA API for LLM/VLM generation roles)
+# Runtime Profile: desktop-api (Hosted Gemini API active; NVIDIA retained)
 # Hardware: Intel Core i7-12700F, 32 GB RAM; CPU for BGE-M3 & reranker; API for generation
 profile: desktop-api
+catalog_providers:
+  - gemini
 models:
-  router:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
-  answer:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
-  vision:  { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
-  extract: { provider: nvidia, model: "nvidia/nemotron-3.5-super-vl-120b-a12b", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
-  judge:   { provider: nvidia, model: "mistralai/mistral-large-4-1t-a52b", supports_vision: false, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  router:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  answer:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  vision:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  extract: { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  judge:   { provider: gemini, model: "gemini-3.5-flash-lite", supports_vision: false, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
 providers:
   nvidia:
     timeout_seconds: 60.0

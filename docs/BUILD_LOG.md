@@ -3725,3 +3725,33 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `uv run python -m pytest tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models"`: 14 passed.
   - `uv run mypy` & `uv run ruff check` / `format` passed across all Stage 1 files.
   - Architecture boundary invariants verified cleanly via `tests/invariants/test_architecture_boundaries.py`.
+
+---
+
+### [2026-11-11] Model Providers & Per-Assistant Selection — Stage 1b: `desktop-api` Gemini Runtime Migration
+
+- **Task**: Switch `desktop-api` profile to run live chat and extraction on Gemini (`gemini-3.5-flash` and `gemini-3.5-flash-lite`) via `OpenAICompatibleModelProvider`, pulling Gemini runtime and generation settings strictly from `backend/config/model_catalog.yaml`.
+- **What Was Built**:
+  1. **Runtime Profile Update (`backend/config/profiles/desktop-api.yaml`)**:
+     - Added `catalog_providers: [gemini]` so Gemini client settings (`requests_per_minute: 10`, `timeout_seconds: 60.0`, `max_retries: 3`, `max_total_wait_seconds: 20.0`, `max_image_dimension: 1536`, `generation_limits`) live strictly in `backend/config/model_catalog.yaml` with zero duplicate block in the profile.
+     - Updated `router`, `answer`, `vision`, `extract` roles to `gemini` / `gemini-3.5-flash` (`supports_vision: true`, `remote: true`, `baa_covered: false`, `temperature: 0.0`, `reasoning: false`) and `judge` role to `gemini` / `gemini-3.5-flash-lite` (`supports_vision: false`, `remote: true`, `baa_covered: false`, `temperature: 0.0`, `reasoning: false`), retaining the `nvidia` blocks intact for later.
+  2. **Factory & API Route Wiring (`backend/app/wiring.py`, `backend/app/api/routes/questions.py`, `backend/app/api/routes/conversations.py`)**:
+     - Added `gemini_base_url` and `gemini_api_key` support and unified hosted provider credential resolution across `gemini`, `nvidia`, and `inception` in `create_model_provider` with fail-closed `HOSTED_MODEL_CONFIGURATION_MISSING` errors.
+     - Added `catalog_providers` validation and catalog lookup in `create_model_provider` so declared catalog providers pull validated `ProviderRuntimeSettings` and `CatalogModelSpec.generation_limits` directly from `load_model_catalog()`, failing closed with `PROFILE_CATALOG_PROVIDERS_INVALID`, `CATALOG_PROVIDER_CONFIGURATION_MISSING`, or `CATALOG_MODEL_NOT_FOUND` on misconfiguration.
+     - Passed `settings.gemini_base_url` and `settings.gemini_api_key` into `create_model_provider` from `get_engine_ports` (`questions.py`) and `upload_session_document` / `extract_fields_from_document_file` (`conversations.py`).
+  3. **Tests (`backend/tests/unit/test_desktop_api_profile.py`, `backend/tests/unit/test_model_catalog.py`, `backend/tests/integration/test_model_providers_api.py`)**:
+     - Updated `desktop-api` fixture assertions from `nvidia` to `gemini` and added Stage 1b tests proving 5-role Gemini provider construction from catalog settings, fail-closed startup on missing `GEMINI_API_KEY` or `GEMINI_BASE_URL`, and SHA-256 cloud safety lock enforcement for both `gemini:gemini-3.5-flash` and `gemini:gemini-3.5-flash-lite`.
+- **Files Created (0)**: None.
+- **Files Edited (9)**:
+  1. `backend/config/profiles/desktop-api.yaml`
+  2. `backend/app/wiring.py`
+  3. `backend/app/api/routes/questions.py`
+  4. `backend/app/api/routes/conversations.py`
+  5. `backend/tests/unit/test_desktop_api_profile.py`
+  6. `backend/tests/unit/test_model_catalog.py`
+  7. `backend/tests/integration/test_model_providers_api.py`
+  8. `docs/STATUS.md`
+  9. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_desktop_api_profile.py tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models" -v`: 29 passed in 16.32s (`test_desktop_api_profile.py` 15 passed, `test_model_catalog.py` 9 passed, `test_model_providers_api.py` 5 passed).
+  - `uv run --project backend pre-commit run --files ...`: passed across all 9 files.

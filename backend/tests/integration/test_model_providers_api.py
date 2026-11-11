@@ -407,8 +407,8 @@ async def test_questions_route_desktop_api_refuses_non_golden_doc_even_when_chat
         session_upload_retention_hours=24,
         cookie_secure=False,
         cors_origins=["http://localhost:3000"],
-        nvidia_base_url="https://api.example/v1",
-        nvidia_api_key=SecretStr("nv-dummy-test-key"),
+        gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        gemini_api_key=SecretStr("gm-dummy-test-key"),
     )
     # Normal desktop-api state: chat_model and vision_model are empty strings
     assert settings.chat_model == ""
