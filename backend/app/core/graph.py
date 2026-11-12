@@ -539,6 +539,7 @@ async def node_route(
         computed_route = "knowledge"
         computed_mode = "short"
         computed_lang = "en"
+        router_fallback = False
 
         # Knowledge-base inventory check (Rule 3c: no model call)
         import re
@@ -567,6 +568,16 @@ async def node_route(
                 ctx.response_text = (
                     "This assistant has no documents yet. Add files in Data sources to get started."
                 )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": False,
+                    },
+                )
                 return {
                     "route": "general",
                     "status": "refusal",
@@ -588,6 +599,16 @@ async def node_route(
                 ctx.response_text = (
                     "This assistant has no documents yet. Add files in Data sources to get started."
                 )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": False,
+                    },
+                )
                 return {
                     "route": "general",
                     "status": "refusal",
@@ -603,6 +624,16 @@ async def node_route(
                 f"This assistant has information from the following documents:\n"
                 f"{docs_formatted}\n\n"
                 f"Key topics and headings:\n{sections_formatted}"
+            )
+            logger.info(
+                "Query routed",
+                extra={
+                    "request_id": state.get("request_id", ""),
+                    "node": "route",
+                    "route": "general",
+                    "answer_mode": computed_mode,
+                    "router_fallback": False,
+                },
             )
             return {
                 "route": "general",
@@ -639,9 +670,11 @@ async def node_route(
                     "falling back to short mode and knowledge route",
                     exc_info=True,
                 )
+                router_fallback = True
                 computed_route = "knowledge"
                 computed_mode = "short"
         else:
+            router_fallback = True
             if any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
                 computed_route = "extraction"
             elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
@@ -711,6 +744,16 @@ async def node_route(
             else:
                 titles = ports.mock_titles or ["General Guide", "Policy Document"]
             ctx.response_text = f"Please clarify. Top matching topics: {', '.join(titles)}"
+            logger.info(
+                "Query routed",
+                extra={
+                    "request_id": state.get("request_id", ""),
+                    "node": "route",
+                    "route": "clarify",
+                    "answer_mode": computed_mode,
+                    "router_fallback": router_fallback,
+                },
+            )
             return {
                 "route": "clarify",
                 "answer_mode": computed_mode,
@@ -719,6 +762,16 @@ async def node_route(
                 "response_message_id": str(uuid4()),
             }
 
+        logger.info(
+            "Query routed",
+            extra={
+                "request_id": state.get("request_id", ""),
+                "node": "route",
+                "route": computed_route,
+                "answer_mode": computed_mode,
+                "router_fallback": router_fallback,
+            },
+        )
         return {
             "route": computed_route,
             "answer_mode": computed_mode,
@@ -1325,6 +1378,284 @@ async def node_vision_read(
     return await _execute_with_telemetry("vision_read", 6, state, runtime, _action)
 
 
+_TABLE_STOPWORDS = frozenset(
+    {
+        "what",
+        "which",
+        "where",
+        "when",
+        "who",
+        "whom",
+        "whose",
+        "why",
+        "how",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "does",
+        "did",
+        "can",
+        "could",
+        "would",
+        "should",
+        "will",
+        "may",
+        "might",
+        "must",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "under",
+        "between",
+        "our",
+        "your",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "there",
+        "here",
+        "any",
+        "all",
+        "each",
+        "some",
+        "give",
+        "tell",
+        "show",
+        "list",
+        "find",
+        "check",
+        "get",
+        "need",
+        "needed",
+        "only",
+        "just",
+        "also",
+        "more",
+        "most",
+        "than",
+        "then",
+    }
+)
+
+_TABLE_GENERIC_TERMS = frozenset(
+    {
+        "table",
+        "tables",
+        "spreadsheet",
+        "spreadsheets",
+        "row",
+        "rows",
+        "sheet",
+        "column",
+        "columns",
+        "value",
+        "values",
+        "turnaround",
+        "time",
+        "times",
+        "sla",
+        "slas",
+        "schedule",
+        "schedules",
+        "accepted",
+        "plan",
+        "plans",
+        "policy",
+        "policies",
+        "insurance",
+        "fee",
+        "fees",
+        "copay",
+        "copays",
+        "deductible",
+        "liaison",
+        "contact",
+        "info",
+        "information",
+        "details",
+    }
+)
+
+
+def _extract_table_query_tokens(question: str) -> list[str]:
+    """Extract ordered unique content tokens from a table lookup question."""
+    import re
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"[A-Za-z0-9_-]{3,}", question):
+        tok = raw.lower()
+        if tok in _TABLE_STOPWORDS or tok in seen:
+            continue
+        seen.add(tok)
+        tokens.append(tok)
+    return tokens
+
+
+def _select_matching_table_rows(
+    question: str,
+    avail_table: dict[str, TableCandidate],
+    candidate_ids: list[str],
+    *,
+    max_rows: int = 5,
+) -> tuple[list[str], list[str]]:
+    """Select matching table rows and detect query terms absent from the table.
+
+    Returns:
+        (selected_row_ids, missing_terms)
+    """
+    import re
+
+    dedup_ids = list(dict.fromkeys(rid for rid in candidate_ids if rid in avail_table))
+    if not dedup_ids:
+        return [], []
+
+    q_tokens = _extract_table_query_tokens(question)
+    corpus_texts: list[str] = []
+    corpus_words: set[str] = set()
+    for tc in avail_table.values():
+        parts = [tc.document_title, tc.sheet_name, tc.caption or ""]
+        for k, v in tc.cells.items():
+            parts.append(str(k))
+            if v is not None:
+                parts.append(str(v))
+        for part in parts:
+            low = part.lower()
+            corpus_texts.append(low)
+            for w in re.findall(r"[a-z0-9_-]{3,}", low):
+                corpus_words.add(w)
+                if len(w) > 3 and w.endswith("s"):
+                    corpus_words.add(w[:-1])
+
+    missing_terms: list[str] = []
+    for tok in q_tokens:
+        if tok in _TABLE_GENERIC_TERMS:
+            continue
+        singular = tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+        in_words = tok in corpus_words or singular in corpus_words
+        in_sub = any(tok in text_part for text_part in corpus_texts)
+        if not in_words and not in_sub:
+            missing_terms.append(tok)
+
+    # Score candidate rows by specific cell value matches
+    specific_tokens = [tok for tok in q_tokens if tok not in _TABLE_GENERIC_TERMS]
+    scores: dict[str, int] = {}
+    for rid in dedup_ids:
+        tc = avail_table[rid]
+        cell_vals_lower = " ".join(str(v).lower() for v in tc.cells.values() if v is not None)
+        cell_keys_lower = " ".join(str(k).lower() for k in tc.cells)
+        row_score = 0
+        for tok in specific_tokens:
+            if tok in cell_vals_lower:
+                row_score += 2
+            elif tok in cell_keys_lower:
+                row_score += 1
+        scores[rid] = row_score
+
+    max_score = max(scores.values(), default=0)
+    min_score = min(scores.values(), default=0)
+
+    if max_score > 0 and max_score > min_score:
+        matched_ids = [rid for rid in dedup_ids if scores[rid] == max_score]
+    else:
+        matched_ids = list(dedup_ids)
+
+    if missing_terms:
+        # When an urgency-like term is missing, prefer expedited/priority rows first as closest.
+        def _closest_priority(rid: str) -> tuple[int, int]:
+            vals = " ".join(
+                str(v).lower() for v in avail_table[rid].cells.values() if v is not None
+            )
+            is_fast = any(w in vals for w in ("expedited", "stat", "rush", "emergency", "priority"))
+            return (-scores[rid], 0 if is_fast else 1)
+
+        matched_ids.sort(key=_closest_priority)
+        matched_ids = matched_ids[:max_rows]
+    elif len(matched_ids) > max_rows and max_score == 0:
+        matched_ids = matched_ids[:max_rows]
+
+    return matched_ids, missing_terms
+
+
+def _format_table_answer_text(
+    avail_table: dict[str, TableCandidate],
+    selected_ids: list[str],
+    missing_terms: list[str],
+) -> str:
+    """Build a short direct table answer from matching stored rows only."""
+
+    def _display_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+    row_lines: list[str] = []
+    for rid in selected_ids:
+        tc = avail_table[rid]
+        pairs = [
+            f"{k}: {_display_cell(v)}"
+            for k, v in tc.cells.items()
+            if v is not None and str(v).strip() != ""
+        ]
+        if not pairs:
+            pairs = [f"{k}: {_display_cell(v)}" for k, v in tc.cells.items()]
+        row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
+
+    if missing_terms:
+        terms_str = ", ".join(f"'{t}'" for t in missing_terms)
+        intro = (
+            f"Note: The table does not list {terms_str} directly. "
+            "Closest matching rows from stored data:"
+        )
+        return "\n".join([intro, *row_lines])
+
+    return "\n".join(row_lines)
+
+
+def _quoted_values_exist_in_cited_rows(
+    ans_text: str,
+    cited_ids: list[str],
+    tbl_candidates: dict[str, TableCandidate],
+) -> bool:
+    """Ensure every double-quoted literal in a table answer exists in cited row cells."""
+    import re
+
+    quoted_literals = re.findall(r'"([^"]+)"', ans_text)
+    if not quoted_literals:
+        return True
+    cited_cell_values = [
+        str(val).strip().lower()
+        for cid in cited_ids
+        if cid in tbl_candidates
+        for val in tbl_candidates[cid].cells.values()
+        if val is not None and str(val).strip() != ""
+    ]
+    for q_lit in quoted_literals:
+        q_clean = q_lit.strip().lower()
+        if not q_clean:
+            continue
+        if not any(q_clean in cell_v for cell_v in cited_cell_values):
+            return False
+    return True
+
+
 async def node_generate(
     state: GraphState,
     runtime: Runtime[GraphRuntimeContext],
@@ -1506,24 +1837,13 @@ async def node_generate(
                     "evidence_ids": selected_ids,
                 }
 
-            # Build a readable table deterministically from stored cells only.
-            selected_ids = list(dict.fromkeys(selected_ids))
-            headers = list(
-                dict.fromkeys(header for rid in selected_ids for header in avail_table[rid].cells)
+            # Select matching rows only and build short direct answer from stored cells.
+            selected_ids, missing_terms = _select_matching_table_rows(
+                ctx.question_text,
+                avail_table,
+                selected_ids,
             )
-
-            def _display_cell(value: Any) -> str:
-                if value is None:
-                    return ""
-                return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
-
-            header_line = "| " + " | ".join(headers) + " |"
-            separator_line = "| " + " | ".join("---" for _ in headers) + " |"
-            row_lines = [
-                "| " + " | ".join(_display_cell(tc.cells.get(header)) for header in headers) + " |"
-                for tc in (avail_table[rid] for rid in selected_ids)
-            ]
-            content = "\n".join([header_line, separator_line, *row_lines])
+            content = _format_table_answer_text(avail_table, selected_ids, missing_terms)
             ctx.response_text = content
             ctx.generated_answer = {
                 "mode": "table",
@@ -2037,11 +2357,20 @@ async def node_validate(
                     if is_valid and ans_text:
                         import re
 
-                        row_blocks = re.findall(
-                            r"(?:\[Document:\s*[^,]+,\s*)?\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[(?:Document:|Sheet:)|\s*;|$)",
-                            ans_text,
+                        if not _quoted_values_exist_in_cited_rows(
+                            ans_text, cited_ids, tbl_candidates
+                        ):
+                            is_valid = False
+
+                        row_blocks = (
+                            re.findall(
+                                r"(?:\[Document:\s*[^,]+,\s*)?\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[(?:Document:|Sheet:)|\s*;|$)",
+                                ans_text,
+                            )
+                            if is_valid
+                            else []
                         )
-                        if row_blocks:
+                        if is_valid and row_blocks:
                             for sheet_name, row_idx_str, row_content in row_blocks:
                                 row_idx = int(row_idx_str)
                                 matching_tcs = [
@@ -2094,7 +2423,7 @@ async def node_validate(
                                         break
                                 if not is_valid:
                                     break
-                        else:
+                        elif is_valid:
                             # Natural language table answer
                             found_stored_val = False
                             for cid in cited_ids:

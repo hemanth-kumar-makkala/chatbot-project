@@ -178,6 +178,14 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
             provider_val.get("reasoning_off_params"),
             allow_none=False,
         )
+        raw_num_ctx = provider_val.get("num_ctx")
+        if raw_num_ctx is not None and (
+            not isinstance(raw_num_ctx, int) or isinstance(raw_num_ctx, bool) or raw_num_ctx <= 0
+        ):
+            raise ConfigurationError(
+                "Provider entry num_ctx must be a positive integer.",
+                error_code="MODEL_CATALOG_INVALID",
+            )
 
         try:
             provider_entry = ProviderCatalogConfig.model_validate(
@@ -188,6 +196,7 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                     "coming_later": coming_later,
                     "structured_output_mode": raw_structured_mode,
                     "reasoning_off_params": parsed_reasoning_off,
+                    "num_ctx": raw_num_ctx,
                     "required_env": provider_val.get("required_env", []),
                     "runtime_settings": runtime_settings,
                     "notes": provider_val.get("notes", ""),

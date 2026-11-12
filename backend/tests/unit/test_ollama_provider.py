@@ -51,7 +51,7 @@ from app.ports.types import (
 )
 
 DEFAULT_OLLAMA_CAPABILITIES: dict[tuple[str, str], ModelCapabilities] = {
-    ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+    ("ollama", "qwen3-vl:4b-instruct"): ModelCapabilities(
         supports_vision=True, remote=False, baa_covered=False
     ),
 }
@@ -196,7 +196,7 @@ class TestOllamaModelProviderUnit:
         # Mean logprob over text tokens = (-0.1 + -0.2 + -0.3) / 3 = -0.2
         # Expected confidence = exp(-0.2) ~= 0.8187307530779818
         mock_generate_payload: dict[str, Any] = {
-            "model": "qwen3-vl:4b",
+            "model": "qwen3-vl:4b-instruct",
             "response": "Patient report normal",
             "logprobs": [
                 {"token": "<think>", "logprob": -3.0},
@@ -210,7 +210,7 @@ class TestOllamaModelProviderUnit:
         mock_tags_payload: dict[str, Any] = {
             "models": [
                 {
-                    "name": "qwen3-vl:4b",
+                    "name": "qwen3-vl:4b-instruct",
                     "digest": EXPECTED_DIGEST,
                 }
             ]
@@ -240,7 +240,7 @@ class TestOllamaModelProviderUnit:
 
         assert isinstance(reading, PageReading)
         assert reading.reading == "Patient report normal"
-        assert reading.model_id == "qwen3-vl:4b"
+        assert reading.model_id == "qwen3-vl:4b-instruct"
         assert reading.model_version == EXPECTED_DIGEST
         assert reading.confidence is not None
 
@@ -251,7 +251,7 @@ class TestOllamaModelProviderUnit:
     async def test_transcribe_page_strips_think_blocks(self) -> None:
         """transcribe_page strips <think>...</think> blocks from response."""
         mock_generate_payload: dict[str, Any] = {
-            "model": "qwen3-vl:4b",
+            "model": "qwen3-vl:4b-instruct",
             "response": "<think>\nInternal thinking process\n</think>PRIOR AUTHORIZATION APPROVED",
             "logprobs": [
                 {"token": "PRIOR", "logprob": -0.05},
@@ -262,7 +262,7 @@ class TestOllamaModelProviderUnit:
         mock_tags_payload: dict[str, Any] = {
             "models": [
                 {
-                    "name": "qwen3-vl:4b",
+                    "name": "qwen3-vl:4b-instruct",
                     "digest": EXPECTED_DIGEST,
                 }
             ]
@@ -303,31 +303,31 @@ class TestOllamaModelProviderUnit:
             "models:\n"
             "  answer:\n"
             "    provider: ollama\n"
-            "    model: 'qwen3-vl:4b'\n"
+            "    model: 'qwen3-vl:4b-instruct'\n"
             "    supports_vision: true\n"
             "    remote: false\n"
             "    baa_covered: false\n"
             "  router:\n"
             "    provider: ollama\n"
-            "    model: 'qwen3-vl:4b'\n"
+            "    model: 'qwen3-vl:4b-instruct'\n"
             "    supports_vision: true\n"
             "    remote: false\n"
             "    baa_covered: false\n"
             "  vision:\n"
             "    provider: ollama\n"
-            "    model: 'qwen3-vl:4b'\n"
+            "    model: 'qwen3-vl:4b-instruct'\n"
             "    supports_vision: true\n"
             "    remote: false\n"
             "    baa_covered: false\n"
             "  extract:\n"
             "    provider: ollama\n"
-            "    model: 'qwen3-vl:4b'\n"
+            "    model: 'qwen3-vl:4b-instruct'\n"
             "    supports_vision: true\n"
             "    remote: false\n"
             "    baa_covered: false\n"
             "  judge:\n"
             "    provider: ollama\n"
-            "    model: 'qwen3-vl:4b'\n"
+            "    model: 'qwen3-vl:4b-instruct'\n"
             "    supports_vision: true\n"
             "    remote: false\n"
             "    baa_covered: false\n"
@@ -336,7 +336,7 @@ class TestOllamaModelProviderUnit:
             encoding="utf-8",
         )
         capabilities_map: dict[tuple[str, str], ModelCapabilities] = {
-            ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+            ("ollama", "qwen3-vl:4b-instruct"): ModelCapabilities(
                 supports_vision=True, remote=False, baa_covered=False
             ),
             ("ollama", "beam:cloud"): ModelCapabilities(
@@ -349,13 +349,13 @@ class TestOllamaModelProviderUnit:
             if request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             chat_payloads.append(json.loads(request.content))
             return httpx.Response(200, json={"message": {"content": "ok"}, "eval_count": 1})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            for model in ("qwen3-vl:4b", "beam:cloud"):
+            for model in ("qwen3-vl:4b-instruct", "beam:cloud"):
                 provider = OllamaModelProvider(
                     profile="desktop-gpu",
                     capabilities_map=capabilities_map,
@@ -387,7 +387,7 @@ class TestOllamaModelProviderUnit:
                     json={
                         "models": [
                             {
-                                "name": "qwen3-vl:4b",
+                                "name": "qwen3-vl:4b-instruct",
                                 "digest": EXPECTED_DIGEST,
                             }
                         ]
@@ -397,7 +397,7 @@ class TestOllamaModelProviderUnit:
                 return httpx.Response(
                     200,
                     json={
-                        "model": "qwen3-vl:4b",
+                        "model": "qwen3-vl:4b-instruct",
                         "response": "Page text",
                         "logprobs": [],
                         "done": True,
@@ -426,7 +426,7 @@ class TestOllamaModelProviderUnit:
     async def test_transcribe_page_empty_or_missing_logprobs_returns_none_confidence(self) -> None:
         """Missing or empty logprobs yields None confidence for vision_confidence_missing."""
         mock_payload: dict[str, Any] = {
-            "model": "qwen3-vl:4b",
+            "model": "qwen3-vl:4b-instruct",
             "response": "Page content with missing confidence signal",
             "logprobs": [],
             "done": True,
@@ -436,7 +436,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             return httpx.Response(200, json=mock_payload)
 
@@ -466,7 +466,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             raise httpx.ReadTimeout("Connection timed out")
 
@@ -497,7 +497,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             raise httpx.ConnectError("Failed to connect to host")
 
@@ -528,7 +528,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             return httpx.Response(500, text="Internal Ollama Error")
 
@@ -559,7 +559,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             return httpx.Response(200, text="<html>502 Bad Gateway</html>")
 
@@ -590,7 +590,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             return httpx.Response(200, json={"done": True})
 
@@ -617,7 +617,7 @@ class TestOllamaModelProviderUnit:
         """read_page formats prompt with question, scales image, and returns PageReading."""
         captured_payload: dict[str, Any] = {}
         mock_generate_payload = {
-            "model": "qwen3-vl:4b",
+            "model": "qwen3-vl:4b-instruct",
             "response": "<think>scanning</think>Intake fax line: 555-0199",
             "logprobs": [
                 {"token": "Intake", "logprob": -0.05},
@@ -630,7 +630,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             if request.method == "POST" and request.url.path == "/api/generate":
                 captured_payload = json.loads(request.content.decode("utf-8"))
@@ -681,13 +681,25 @@ class TestOllamaModelProviderUnit:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """create_model_provider returns OllamaModelProvider for desktop-gpu and home-gpu only."""
+        """Verify create_model_provider wiring for desktop-gpu and home-gpu."""
+        from app.adapters.models.provider_router import ModelProviderRouter
         from app.wiring import create_model_provider
 
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
         provider_desktop = create_model_provider("desktop-gpu")
-        assert isinstance(provider_desktop, OllamaModelProvider)
+        assert isinstance(provider_desktop, ModelProviderRouter)
+        expected_models = {
+            ModelRole.ROUTER: "qwen3:8b",
+            ModelRole.ANSWER: "qwen3:8b",
+            ModelRole.VISION: "qwen3-vl:4b-instruct",
+            ModelRole.EXTRACT: "qwen3-vl:4b-instruct",
+            ModelRole.JUDGE: "qwen3-vl:4b-instruct",
+        }
+        for role, expected_model in expected_models.items():
+            role_provider = provider_desktop.get_provider(role)
+            assert isinstance(role_provider, OllamaModelProvider)
+            assert role_provider._models[role.value] == expected_model
 
         provider_home = create_model_provider("home-gpu")
         assert isinstance(provider_home, OllamaModelProvider)
@@ -717,7 +729,7 @@ class TestOllamaModelProviderUnit:
             if request.method == "GET" and request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "qwen3-vl:4b", "digest": EXPECTED_DIGEST}]},
+                    json={"models": [{"name": "qwen3-vl:4b-instruct", "digest": EXPECTED_DIGEST}]},
                 )
             if request.method == "POST" and request.url.path == "/api/generate":
                 body = json.loads(request.content)

@@ -89,6 +89,35 @@ def test_format_version_conflict_answer():
     assert "Note: An older version" in answer
 
 
+def test_format_version_conflict_answer_strips_trailing_punctuation():
+    """Fix 5: trailing punctuation on quoted values is stripped so no '.,' or '..' appears."""
+    answer = format_version_conflict_answer(
+        newer_doc="policy_v2.pdf",
+        newer_quote="Appointments cancelled within 24 hours incur a fee.",
+        newer_val="24 hours.",
+        older_doc="policy_v1.pdf",
+        older_val="rescheduled.",
+    )
+    assert ".," not in answer
+    assert ".." not in answer
+    assert (
+        "Note: An older version (policy_v1.pdf) stated rescheduled, "
+        "while the newer version (policy_v2.pdf) specifies 24 hours."
+    ) in answer
+
+    answer_mixed = format_version_conflict_answer(
+        newer_doc="policy_v2.pdf",
+        newer_quote="Call 555-0102!",
+        newer_val="555-0102!",
+        older_doc="policy_v1.pdf",
+        older_val="555-0101;",
+    )
+    assert ";," not in answer_mixed
+    assert "!." not in answer_mixed
+    assert "stated 555-0101," in answer_mixed
+    assert "specifies 555-0102." in answer_mixed
+
+
 @pytest.mark.asyncio
 async def test_node_assess_evidence_resolves_version_conflict():
     """node_assess_evidence answers from newer version when version order is determined."""

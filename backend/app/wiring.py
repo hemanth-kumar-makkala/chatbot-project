@@ -584,7 +584,7 @@ def load_and_validate_profile_models(
     - Each role declares provider, model, supports_vision, remote, and baa_covered.
     - Remote models require explicit 'temperature' setting per role.
     - Vision and extract roles require supports_vision == True.
-    - Judge model must differ from answer model in desktop-api and remote profiles.
+    - Judge model must differ from answer model in every non-mock profile.
     - Builds immutable capabilities map keyed by (provider, model) with strict matching.
     """
     import os
@@ -679,16 +679,13 @@ def load_and_validate_profile_models(
         )
 
     # Distinct judge check: fail if judge resolves to same provider and model as answer
-    is_desktop_api_or_conflict = (
-        profile in ("desktop-api", "conflict_profile") or "desktop-api" in profile
-    )
-    both_remote = models_dict["judge"]["remote"] and models_dict["answer"]["remote"]
-    if (is_desktop_api_or_conflict or both_remote) and (
-        models_dict["judge"]["provider"] == models_dict["answer"]["provider"]
+    if (
+        profile != "mock"
+        and models_dict["judge"]["provider"] == models_dict["answer"]["provider"]
         and models_dict["judge"]["model"] == models_dict["answer"]["model"]
     ):
         raise ConfigurationError(
-            message="Judge model must differ from answer model in desktop-api profile",
+            message="Judge model must differ from answer model",
             error_code="JUDGE_MODEL_SAME_AS_ANSWER",
         )
 
@@ -847,7 +844,8 @@ def create_model_provider(
         return MockModelProvider()
 
     pure_ollama = (
-        all(
+        not catalog_provider_names
+        and all(
             isinstance(cfg, dict) and cfg.get("provider") == "ollama"
             for k, cfg in profile_models.items()
             if not k.startswith("_")
@@ -883,6 +881,59 @@ def create_model_provider(
 
     hosted_providers_cache: dict[str, ModelProvider] = {}
 
+    def _resolve_catalog_settings(
+        provider_name: str,
+        model_name: str,
+        role_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve validated catalog settings and effective parameters for one role."""
+        cat_entry = catalog_by_provider[provider_name]
+        if cat_entry.runtime_settings is None:
+            raise ConfigurationError(
+                f"Catalog provider '{provider_name}' is missing runtime_settings "
+                "in model_catalog.yaml.",
+                error_code="CATALOG_PROVIDER_CONFIGURATION_MISSING",
+            )
+        model_spec = next(
+            (spec for spec in cat_entry.models if spec.model == model_name),
+            None,
+        )
+        if model_spec is None:
+            raise ConfigurationError(
+                f"Model '{model_name}' for provider '{provider_name}' is not declared "
+                "in model_catalog.yaml.",
+                error_code="CATALOG_MODEL_NOT_FOUND",
+            )
+        rt = cat_entry.runtime_settings
+        profile_limits = (
+            generation_limits.get(f"{provider_name}:{model_name}")
+            or generation_limits.get(model_name)
+            or generation_limits.get(f"{provider_name}:*")
+        )
+        configured_limits: dict[str, int] = (
+            dict(profile_limits)
+            if profile_limits
+            else {str(k): int(v) for k, v in model_spec.generation_limits.items()}
+        )
+        effective_off_params = (
+            model_spec.reasoning_off_params
+            if model_spec.reasoning_off_params is not None
+            else cat_entry.reasoning_off_params
+        )
+        return {
+            "timeout_seconds": rt.timeout_seconds,
+            "max_retries": rt.max_retries,
+            "max_total_wait_seconds": rt.max_total_wait_seconds,
+            "requests_per_minute": rt.requests_per_minute,
+            "max_image_dimension": rt.max_image_dimension,
+            "reasoning": bool(role_cfg.get("reasoning", model_spec.reasoning)),
+            "temperature": float(role_cfg.get("temperature", model_spec.temperature)),
+            "configured_limits": configured_limits,
+            "structured_output_mode": cat_entry.structured_output_mode,
+            "reasoning_off_params": dict(effective_off_params),
+            "num_ctx": cat_entry.num_ctx,
+        }
+
     def get_or_create_provider(role_key: str, model_override: str | None = None) -> ModelProvider:
         role_cfg = profile_models[role_key]
         provider_name = role_cfg["provider"]
@@ -907,48 +958,17 @@ def create_model_provider(
             base_url, api_key = _resolve_hosted_credentials(provider_name, allow_env_fallback=True)
 
             if provider_name in catalog_provider_names:
-                cat_entry = catalog_by_provider[provider_name]
-                if cat_entry.runtime_settings is None:
-                    raise ConfigurationError(
-                        f"Catalog provider '{provider_name}' is missing runtime_settings "
-                        "in model_catalog.yaml.",
-                        error_code="CATALOG_PROVIDER_CONFIGURATION_MISSING",
-                    )
-                model_spec = next(
-                    (spec for spec in cat_entry.models if spec.model == model_name),
-                    None,
-                )
-                if model_spec is None:
-                    raise ConfigurationError(
-                        f"Model '{model_name}' for provider '{provider_name}' is not declared "
-                        "in model_catalog.yaml.",
-                        error_code="CATALOG_MODEL_NOT_FOUND",
-                    )
-                rt = cat_entry.runtime_settings
-                timeout_seconds = rt.timeout_seconds
-                max_retries = rt.max_retries
-                max_total_wait_seconds = rt.max_total_wait_seconds
-                requests_per_minute = rt.requests_per_minute
-                max_image_dimension = rt.max_image_dimension
-                reasoning = bool(role_cfg.get("reasoning", model_spec.reasoning))
-                temperature = float(role_cfg.get("temperature", model_spec.temperature))
-                profile_limits = (
-                    generation_limits.get(f"{provider_name}:{model_name}")
-                    or generation_limits.get(model_name)
-                    or generation_limits.get(f"{provider_name}:*")
-                )
-                configured_limits: dict[str, int] = (
-                    dict(profile_limits)
-                    if profile_limits
-                    else {str(k): int(v) for k, v in model_spec.generation_limits.items()}
-                )
-                structured_output_mode: StructuredOutputMode = cat_entry.structured_output_mode
-                effective_off_params = (
-                    model_spec.reasoning_off_params
-                    if model_spec.reasoning_off_params is not None
-                    else cat_entry.reasoning_off_params
-                )
-                reasoning_off_params: dict[str, Any] = dict(effective_off_params)
+                resolved = _resolve_catalog_settings(provider_name, model_name, role_cfg)
+                timeout_seconds = resolved["timeout_seconds"]
+                max_retries = resolved["max_retries"]
+                max_total_wait_seconds = resolved["max_total_wait_seconds"]
+                requests_per_minute = resolved["requests_per_minute"]
+                max_image_dimension = resolved["max_image_dimension"]
+                reasoning = resolved["reasoning"]
+                temperature = resolved["temperature"]
+                configured_limits = resolved["configured_limits"]
+                structured_output_mode: StructuredOutputMode = resolved["structured_output_mode"]
+                reasoning_off_params: dict[str, Any] = resolved["reasoning_off_params"]
             else:
                 provider_cfg = providers_config.get(provider_name, {})
                 timeout_seconds = float(provider_cfg.get("timeout_seconds", 60.0))
@@ -1003,19 +1023,31 @@ def create_model_provider(
                 )
             from app.adapters.models.ollama import OllamaModelProvider
 
-            ollama_inst: ModelProvider
+            ollama_kwargs: dict[str, Any] = {
+                "profile": profile,
+                "capabilities_map": profile_models["_capabilities_map"],
+                "config_path": profile_config_path,
+            }
+            if provider_name in catalog_provider_names:
+                resolved = _resolve_catalog_settings(provider_name, model_name, role_cfg)
+                if resolved["num_ctx"] is None:
+                    raise ConfigurationError(
+                        "Catalog provider 'ollama' is missing num_ctx in model_catalog.yaml.",
+                        error_code="CATALOG_PROVIDER_CONFIGURATION_MISSING",
+                    )
+                ollama_kwargs["timeout_seconds"] = resolved["timeout_seconds"]
+                ollama_kwargs["structured_output_mode"] = resolved["structured_output_mode"]
+                ollama_kwargs["reasoning"] = resolved["reasoning"]
+                ollama_kwargs["reasoning_off_params"] = resolved["reasoning_off_params"]
+                ollama_kwargs["num_ctx"] = resolved["num_ctx"]
+                ollama_kwargs["temperature"] = resolved["temperature"]
+
             if role_key == "vision":
-                ollama_inst = OllamaModelProvider(
-                    profile=profile,
-                    vision_model=model_name,
-                    capabilities_map=profile_models["_capabilities_map"],
-                )
+                ollama_kwargs["vision_model"] = model_name
             else:
-                ollama_inst = OllamaModelProvider(
-                    profile=profile,
-                    chat_model=model_name,
-                    capabilities_map=profile_models["_capabilities_map"],
-                )
+                ollama_kwargs["chat_model"] = model_name
+
+            ollama_inst: ModelProvider = OllamaModelProvider(**ollama_kwargs)
             hosted_providers_cache[cache_key] = ollama_inst
             return ollama_inst
 

@@ -239,9 +239,11 @@ class QuestionRequest(BaseModel):
 class SourceCitation(BaseModel):
     document_title: str
     version: str
-    page_number: int
+    page_number: int | None = None
     version_id: str | None = None
     evidence_type: str = "text"
+    sheet_name: str | None = None
+    row_number: int | None = None
 
 
 class QuestionResponse(BaseModel):
@@ -250,6 +252,7 @@ class QuestionResponse(BaseModel):
     conversation_id: str
     message_id: str
     status: str
+    route: str | None = None
     answer: str
     answer_mode: str | None = None
     evidence_state: str | None = None
@@ -259,6 +262,11 @@ class QuestionResponse(BaseModel):
     conflict_sources: list[SourceCitation] = []
     public_error_ref: str | None = None
     rewritten_question: str | None = None
+
+
+def _should_include_sources(status_val: str, route_val: str | None) -> bool:
+    """Return True only when responses may display document source citations."""
+    return status_val not in ("refusal", "clarify") and route_val != "general"
 
 
 async def _resolve_sources(
@@ -353,9 +361,11 @@ async def _resolve_sources(
                     SourceCitation(
                         document_title=trow.document_title,
                         version="1",
-                        page_number=trow.row_index,
+                        page_number=None,
                         version_id=str(trow.document_version_id),
                         evidence_type="table",
+                        sheet_name=trow.sheet_name,
+                        row_number=trow.row_index,
                     )
                 )
 
@@ -595,34 +605,37 @@ async def ask_question(
         if "status" in result:
             status_val = result["status"]
 
+        route_val: str | None = result.get("route")
         ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
         evidence_ids: list[str] = []
-        if "evidence_ids" in result and status_val not in ("refusal", "clarify"):
+        if "evidence_ids" in result and _should_include_sources(status_val, route_val):
             evidence_ids = result["evidence_ids"]
 
         # 7. Resolve real source chips from database (Rule E.4)
         sources_list: list[SourceCitation] = []
-        try:
-            sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
-        except UnresolvableEvidenceError:
-            logger.error(
-                "Evidence ID could not be resolved to tenant chunk",
-                extra={
-                    "request_id": request_id,
-                    "tenant_id": tenant_ctx.tenant_id,
-                    "node": "resolve_sources",
-                    "status": "safe_failure",
-                    "error_code": "UNRESOLVABLE_EVIDENCE_ID",
-                },
-            )
-            err_ref = f"ERR-{uuid4().hex[:6].upper()}"
-            status_val = "safe_failure"
-            answer_text = (
-                f"An error occurred while evaluating evidence. Please quote reference {err_ref}."
-            )
-            result["public_error_ref"] = err_ref
-            evidence_ids = []
-            sources_list = []
+        if evidence_ids:
+            try:
+                sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
+            except UnresolvableEvidenceError:
+                logger.error(
+                    "Evidence ID could not be resolved to tenant chunk",
+                    extra={
+                        "request_id": request_id,
+                        "tenant_id": tenant_ctx.tenant_id,
+                        "node": "resolve_sources",
+                        "status": "safe_failure",
+                        "error_code": "UNRESOLVABLE_EVIDENCE_ID",
+                    },
+                )
+                err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                status_val = "safe_failure"
+                answer_text = (
+                    "An error occurred while evaluating evidence. "
+                    f"Please quote reference {err_ref}."
+                )
+                result["public_error_ref"] = err_ref
+                evidence_ids = []
+                sources_list = []
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
@@ -638,6 +651,7 @@ async def ask_question(
             conversation_id=str(conv_uuid),
             message_id=str(asst_msg.id),
             status=status_val,
+            route=route_val,
             answer=answer_text,
             answer_mode=result.get("answer_mode"),
             evidence_state=result.get("evidence_state"),
@@ -893,8 +907,9 @@ async def ask_question_stream(
             token = word + (" " if i < len(words) - 1 else "")
             yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
 
+        route_val: str | None = result.get("route")
         evidence_ids = (
-            result.get("evidence_ids", []) if status_val not in ("refusal", "clarify") else []
+            result.get("evidence_ids", []) if _should_include_sources(status_val, route_val) else []
         )
 
         async with tenant_session(tenant_ctx) as post_session:
@@ -954,6 +969,7 @@ async def ask_question_stream(
                 "conversation_id": str(conv_uuid),
                 "message_id": str(asst_msg.id),
                 "status": status_val,
+                "route": route_val,
                 "answer": answer_text,
                 "answer_mode": result.get("answer_mode"),
                 "evidence_state": result.get("evidence_state"),

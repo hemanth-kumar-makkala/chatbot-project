@@ -100,6 +100,47 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     });
   });
 
+  it("renders table source chip with sheet name and row number and never Page N", async () => {
+    vi.mocked(api.askQuestion).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        request_id: "req-table-1",
+        tenant_id: "ten-1",
+        conversation_id: "conv-1",
+        message_id: "msg-table-1",
+        status: "answered",
+        answer: "[Sheet: Turnaround, Row: 3] Payer Name: Apex Health Insurance, Standard SLA: 24 Hours",
+        answer_mode: "table",
+        citations: ["t1"],
+        evidence_type: "table",
+        sources: [
+          {
+            document_title: "pa_turnaround_times.xlsx",
+            version: "1",
+            page_number: null,
+            sheet_name: "Turnaround",
+            row_number: 3,
+            evidence_type: "table",
+          },
+        ],
+      },
+    });
+
+    await renderChatPage();
+
+    const input = await screen.findByPlaceholderText(/Ask a question/i);
+    fireEvent.change(input, { target: { value: "turnaround time?" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+    await waitFor(() => {
+      const chip = screen.getByTestId("source-chip-pa_turnaround_times.xlsx");
+      expect(chip).toHaveTextContent("Sheet: Turnaround");
+      expect(chip).toHaveTextContent("Row 3");
+      expect(chip.textContent).not.toMatch(/Page\s*\d+/i);
+    });
+  });
+
   it("renders visual badge when evidence_type is visual", async () => {
     vi.mocked(api.askQuestion).mockResolvedValue({
       ok: true,
@@ -136,7 +177,7 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     });
   });
 
-  it("renders refusal response", async () => {
+  it("renders refusal response with no source chips and no-evidence message", async () => {
     vi.mocked(api.askQuestion).mockResolvedValue({
       ok: true,
       status: 200,
@@ -146,8 +187,16 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
         conversation_id: "conv-1",
         message_id: "msg-3",
         status: "refusal",
-        answer: "I am unable to answer this question because insufficient validated evidence was found.",
+        answer: "I couldn't confirm that from the documents.",
         citations: [],
+        sources: [
+          {
+            document_title: "Leaked Source",
+            version: "1",
+            page_number: 1,
+            evidence_type: "text",
+          },
+        ],
       },
     });
 
@@ -158,9 +207,48 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/insufficient validated evidence/i)).toBeInTheDocument();
+      expect(screen.getByText(/I couldn't confirm that from the documents/i)).toBeInTheDocument();
+      expect(screen.getByText(/No supporting evidence found in the documents/i)).toBeInTheDocument();
       expect(screen.getByText(/Refusal/i)).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("chat-source-chips")).not.toBeInTheDocument();
+  });
+
+  it("renders general-route reply with no source chips", async () => {
+    vi.mocked(api.askQuestion).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        request_id: "req-gen-1",
+        tenant_id: "ten-1",
+        conversation_id: "conv-1",
+        message_id: "msg-gen-1",
+        status: "answered",
+        route: "general",
+        answer: "Subject: Prior Authorization Follow-up\n\nHello Clinic Team,",
+        citations: [],
+        sources: [
+          {
+            document_title: "Should Not Render",
+            version: "1",
+            page_number: 1,
+            evidence_type: "text",
+          },
+        ],
+      },
+    });
+
+    await renderChatPage();
+
+    const input = await screen.findByPlaceholderText(/Ask a question/i);
+    fireEvent.change(input, { target: { value: "draft an email" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-general-draft")).toBeInTheDocument();
+      expect(screen.getByText(/Prior Authorization Follow-up/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("chat-source-chips")).not.toBeInTheDocument();
   });
 
   it("renders conflicting evidence with both sources", async () => {

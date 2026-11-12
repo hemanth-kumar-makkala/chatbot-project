@@ -236,3 +236,70 @@ async def test_table_citations_rls_isolation() -> None:
         assert rows[0].table_index == 0
         assert rows[0].row_data["cells"]["Drug"] == "Metformin"
         assert rows[0].row_data["unreadable"] == []
+
+
+@pytest.mark.asyncio
+async def test_table_ingestion_service_on_conflict_do_update_updates_rows_idempotently() -> None:
+    """Fix 2: Re-ingestion updates existing row_data cleanly without duplicates."""
+    ctx, tenant_id, version_id = await _seed_tenant_and_version(title="pa_turnaround_times.xlsx")
+
+    def _build_pa_xlsx(title_text: str, expedited_sla: str) -> bytes:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Sheet1"
+        ws.append([title_text])
+        ws.append(["Payer Name", "Service Category", "Urgency", "Standard SLA", "Liaison Contact"])
+        ws.append(
+            ["Apex Health Insurance", "Diagnostic Imaging", "Routine", "48 Hours", "555-0120"]
+        )
+        ws.append(
+            ["Apex Health Insurance", "Inpatient Surgery", "Expedited", expedited_sla, "555-0120"]
+        )
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    extractor = BuiltinTableExtractor()
+    async with tenant_session(ctx) as session:
+        repo = PostgresDocumentRepository(session)
+        service = TableIngestionService(repo, extractor)
+
+        first_bytes = _build_pa_xlsx(
+            "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***",
+            "24 Hours",
+        )
+        await service.ingest_spreadsheet(
+            tenant_id=tenant_id,
+            document_version_id=version_id,
+            file=first_bytes,
+            filename="pa_turnaround_times.xlsx",
+            mime_type=XLSX_MIME,
+        )
+
+        # Re-ingest with updated caption & SLA cell
+        updated_bytes = _build_pa_xlsx(
+            "*** UPDATED PRIOR AUTHORIZATION TURNAROUND TIMES ***",
+            "12 Hours",
+        )
+        await service.ingest_spreadsheet(
+            tenant_id=tenant_id,
+            document_version_id=version_id,
+            file=updated_bytes,
+            filename="pa_turnaround_times.xlsx",
+            mime_type=XLSX_MIME,
+        )
+
+        stmt = (
+            select(TableData)
+            .where(
+                TableData.tenant_id == tenant_id,
+                TableData.document_version_id == version_id,
+                TableData.sheet_name == "Sheet1",
+            )
+            .order_by(TableData.row_index)
+        )
+        rows = list((await session.execute(stmt)).scalars().all())
+        assert len(rows) == 2
+        assert rows[1].row_data["cells"]["Standard SLA"] == "12 Hours"
+        assert rows[1].row_data["caption"] == "*** UPDATED PRIOR AUTHORIZATION TURNAROUND TIMES ***"

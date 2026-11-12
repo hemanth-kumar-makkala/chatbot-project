@@ -50,25 +50,102 @@ class TestModelProviderWiringGuard:
             "UNAUTHORIZED_MODEL_PROVIDER_PROFILE",
         )
 
-    @pytest.mark.parametrize(
-        "profile",
-        ["desktop-gpu", "home-gpu"],
-    )
     def test_create_model_provider_gpu_wires_ollama_provider(
-        self, profile: str, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """desktop-gpu and home-gpu return OllamaModelProvider when OLLAMA_BASE_URL is set."""
+        """desktop-gpu uses ModelProviderRouter of Ollama; home-gpu uses OllamaModelProvider."""
         from app.adapters.models.ollama import OllamaModelProvider
+        from app.adapters.models.provider_router import ModelProviderRouter
+        from app.ports.types import ModelRole
 
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        provider = create_model_provider(profile)
-        assert isinstance(provider, OllamaModelProvider)
+        desktop_provider = create_model_provider("desktop-gpu")
+        assert isinstance(desktop_provider, ModelProviderRouter)
+        for role in (
+            ModelRole.ROUTER,
+            ModelRole.ANSWER,
+            ModelRole.VISION,
+            ModelRole.EXTRACT,
+            ModelRole.JUDGE,
+        ):
+            assert isinstance(desktop_provider.get_provider(role), OllamaModelProvider)
+
+        home_provider = create_model_provider("home-gpu")
+        assert isinstance(home_provider, OllamaModelProvider)
 
     def test_create_model_provider_unknown_profile_raises(self) -> None:
         """Unknown or unauthorized profiles raise ConfigurationError."""
         with pytest.raises(ConfigurationError) as exc_info:
             create_model_provider("unrecognized_test_profile")
         assert exc_info.value.error_code == "UNAUTHORIZED_MODEL_PROVIDER_PROFILE"
+
+    @pytest.mark.parametrize(
+        "profile_name",
+        ["home-gpu", "office-cpu", "cloud", "custom-local-profile"],
+    )
+    def test_judge_same_as_answer_fails_for_every_non_mock_profile(
+        self,
+        tmp_path: Path,
+        profile_name: str,
+    ) -> None:
+        """JUDGE_MODEL_SAME_AS_ANSWER applies to every profile except mock."""
+        import yaml
+
+        from app.wiring import load_and_validate_profile_models
+
+        bad_yaml = tmp_path / f"{profile_name}.yaml"
+        bad_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "profile": profile_name,
+                    "models": {
+                        role: {
+                            "provider": "ollama",
+                            "model": "qwen3-vl:4b-instruct"
+                            if role in ("vision", "extract")
+                            else "qwen3:8b",
+                            "supports_vision": role in ("vision", "extract"),
+                            "remote": False,
+                            "baa_covered": False,
+                            "temperature": 0.0,
+                        }
+                        for role in ("router", "answer", "vision", "extract", "judge")
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_and_validate_profile_models(profile_name, config_path=bad_yaml)
+        assert exc_info.value.error_code == "JUDGE_MODEL_SAME_AS_ANSWER"
+
+    def test_judge_same_as_answer_allowed_only_for_mock_profile(self, tmp_path: Path) -> None:
+        """mock profile is exempt from the distinct judge requirement."""
+        import yaml
+
+        from app.wiring import load_and_validate_profile_models
+
+        mock_yaml = tmp_path / "mock.yaml"
+        mock_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "profile": "mock",
+                    "models": {
+                        role: {
+                            "provider": "mock",
+                            "model": "mock-shared-v1",
+                            "supports_vision": True,
+                            "remote": False,
+                            "baa_covered": False,
+                        }
+                        for role in ("router", "answer", "vision", "extract", "judge")
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        resolved = load_and_validate_profile_models("mock", config_path=mock_yaml)
+        assert resolved["judge"]["model"] == "mock-shared-v1"
 
     def test_create_image_processor(self) -> None:
         """Image processor factory returns PillowImageProcessor."""

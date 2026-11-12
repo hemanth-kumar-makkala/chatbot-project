@@ -455,6 +455,7 @@ class PostgresRetriever(Retriever):
             for r in rows:
                 raw_data = r["row_data"]
                 cells = raw_data.get("cells", raw_data) if isinstance(raw_data, dict) else {}
+                caption = raw_data.get("caption") if isinstance(raw_data, dict) else None
                 candidates.append(
                     TableCandidate(
                         id=str(r["id"]),
@@ -464,6 +465,7 @@ class PostgresRetriever(Retriever):
                         row_index=int(r["row_index"]),
                         cells=cells,
                         tenant_id=str(tenant_ctx.tenant_id),
+                        caption=str(caption) if caption is not None else None,
                     )
                 )
             return candidates

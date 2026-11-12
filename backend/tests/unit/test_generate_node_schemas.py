@@ -193,26 +193,156 @@ class TestGenerateNodeSchemas:
         assert schema.get("type") == "object"
 
     def test_router_classify_prompt_contains_explicit_rules_and_bumped_version(self) -> None:
-        """Part B: router_classify prompt bumped to 1.1.0 with explicit route rules/examples."""
+        """Fix 1: router_classify prompt 1.2.0 defines route and answer_mode rules and enum values."""
         registry = get_prompt_registry()
         router_entry = registry["prompts"]["router_classify"]
-        assert router_entry["default_version"] == "1.1.0"
+        assert router_entry["default_version"] == "1.2.0"
 
         tmpl = load_prompt_template("router_classify")
         assert "{question}" in tmpl
         assert "general:" in tmpl
         assert "hello" in tmpl
-        assert "draft an email to a clinic about a delayed authorization" in tmpl
+        assert "draft" in tmpl
         assert "what is 15% of 240" in tmpl
         assert "knowledge:" in tmpl
         assert "what is the front desk policy for identity verification" in tmpl
         assert "which plans are accepted" in tmpl
         assert "extraction:" in tmpl
         assert "When unsure between general and knowledge, choose knowledge." in tmpl
+        assert "Answer mode rules:" in tmpl
+        assert '"exact"' in tmpl
+        assert '"explain"' in tmpl
+        assert '"table"' in tmpl
+        assert '"short"' in tmpl
 
         router_schema = load_response_schema("router_classify")
         route_enum = router_schema["properties"]["route"]["enum"]
         assert set(route_enum) == {"knowledge", "general", "clarify", "extraction"}
+        mode_enum = router_schema["properties"]["answer_mode"]["enum"]
+        assert set(mode_enum) == {"exact", "short", "explain", "table"}
+
+    @pytest.mark.asyncio
+    async def test_node_route_logs_route_and_fallback_metadata_only(
+        self,
+        base_context: GraphRuntimeContext,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fix 1: node_route logs chosen route, answer_mode, and router_fallback without query text."""
+        import logging
+
+        for logger_name in ("app", "app.core", "app.core.graph"):
+            logger_obj = logging.getLogger(logger_name)
+            monkeypatch.setattr(logger_obj, "propagate", True)
+            monkeypatch.setattr(logger_obj, "disabled", False)
+
+        sample_question = "unique_question_payload_do_not_log_this"
+        base_context.ports.model_provider = MockGenerationModel(
+            output={"route": "general", "answer_mode": "short", "language": "en"}
+        )
+        base_context.question_text = sample_question
+        state: GraphState = {"request_id": "req-route-1"}
+
+        with caplog.at_level("INFO", logger="app.core.graph"):
+            res = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+
+        assert res["route"] == "general"
+        assert res["answer_mode"] == "short"
+        route_logs = [
+            rec
+            for rec in caplog.records
+            if getattr(rec, "node", None) == "route" and rec.getMessage() == "Query routed"
+        ]
+        assert len(route_logs) == 1
+        assert getattr(route_logs[0], "route", None) == "general"
+        assert getattr(route_logs[0], "answer_mode", None) == "short"
+        assert getattr(route_logs[0], "router_fallback", None) is False
+        assert sample_question not in route_logs[0].getMessage()
+
+        caplog.clear()
+        base_context.ports.model_provider = MockFailingModel()
+        base_context.question_text = sample_question
+        with caplog.at_level("INFO", logger="app.core.graph"):
+            res_fb = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+
+        assert res_fb["route"] == "knowledge"
+        assert res_fb["answer_mode"] == "short"
+        fb_logs = [
+            rec
+            for rec in caplog.records
+            if getattr(rec, "node", None) == "route" and rec.getMessage() == "Query routed"
+        ]
+        assert len(fb_logs) == 1
+        assert getattr(fb_logs[0], "route", None) == "knowledge"
+        assert getattr(fb_logs[0], "answer_mode", None) == "short"
+        assert getattr(fb_logs[0], "router_fallback", None) is True
+
+    @pytest.mark.models
+    @pytest.mark.asyncio
+    async def test_router_classify_live_qwen3_8b_six_prompts(self) -> None:
+        """Live local Ollama qwen3:8b (think=false) classifies all 6 benchmark prompts accurately."""
+        import os
+
+        from app.core.prompts import RouterOutput, format_router_prompt
+        from app.wiring import create_model_provider
+
+        os.environ.setdefault("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        provider = create_model_provider("desktop-gpu")
+        expected_cases = [
+            ("hello", "general", "short"),
+            (
+                "draft a short email to a clinic about a delayed prior authorization",
+                "general",
+                "short",
+            ),
+            ("what is 15% of 240", "general", "short"),
+            (
+                "what is the front desk policy for identity verification",
+                "knowledge",
+                "explain",
+            ),
+            ("which plans are accepted", "knowledge", "table"),
+            (
+                "what is the turnaround time for an urgent prior authorization",
+                "knowledge",
+                "table",
+            ),
+        ]
+        for question, expected_route, expected_mode in expected_cases:
+            resp = await provider.generate(
+                role=ModelRole.ROUTER,
+                messages=[ChatMessage(role="user", content=format_router_prompt(question))],
+                schema=RouterOutput,
+                max_tokens=150,
+            )
+            assert resp.structured_output is not None, f"No structured output for: {question}"
+            assert resp.structured_output["route"] == expected_route, (
+                f"Wrong route for {question!r}: {resp.structured_output}"
+            )
+            assert resp.structured_output["answer_mode"] == expected_mode, (
+                f"Wrong answer_mode for {question!r}: {resp.structured_output}"
+            )
+
+    def test_question_response_exposes_route_and_clears_sources_on_refusal_and_general(
+        self,
+    ) -> None:
+        """Fix 4: QuestionResponse exposes route and helper clears sources on refusal/general."""
+        from app.api.routes.questions import QuestionResponse, _should_include_sources
+
+        resp = QuestionResponse(
+            request_id="req-1",
+            tenant_id="ten-1",
+            conversation_id="conv-1",
+            message_id="msg-1",
+            status="answered",
+            route="general",
+            answer="Hello!",
+        )
+        assert resp.route == "general"
+        assert _should_include_sources(status_val="answered", route_val="general") is False
+        assert _should_include_sources(status_val="refusal", route_val="knowledge") is False
+        assert _should_include_sources(status_val="clarify", route_val="clarify") is False
+        assert _should_include_sources(status_val="answered", route_val="knowledge") is True
 
     @pytest.mark.asyncio
     async def test_node_route_picks_mode_and_falls_back_to_short_on_model_failure(

@@ -35,7 +35,10 @@ from app.ports.types import (
 )
 
 DEFAULT_OLLAMA_CAPABILITIES: dict[tuple[str, str], ModelCapabilities] = {
-    ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+    ("ollama", "qwen3:8b"): ModelCapabilities(
+        supports_vision=False, remote=False, baa_covered=False
+    ),
+    ("ollama", "qwen3-vl:4b-instruct"): ModelCapabilities(
         supports_vision=True, remote=False, baa_covered=False
     ),
 }
@@ -65,16 +68,17 @@ async def test_generate_structured_json_success(monkeypatch: pytest.MonkeyPatch)
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+                json={"models": [{"name": "qwen3:8b", "digest": "sha256:testdigest123"}]},
             )
         if request.url.path == "/api/chat":
             req_body = json.loads(request.content.decode("utf-8"))
-            assert req_body["model"] == "qwen3-vl:4b"
+            assert req_body["model"] == "qwen3:8b"
             assert req_body["stream"] is False
             assert req_body["think"] is False
             assert req_body["options"]["temperature"] == 0.0
+            assert req_body["options"]["num_ctx"] == 6144
             assert req_body["options"]["seed"] == 42
-            assert "format" in req_body
+            assert req_body["format"] == SampleAnswerSchema.model_json_schema()
             assert req_body["messages"] == [{"role": "user", "content": "What are the hours?"}]
 
             resp_payload = {
@@ -101,6 +105,11 @@ async def test_generate_structured_json_success(monkeypatch: pytest.MonkeyPatch)
         profile="desktop-gpu",
         capabilities_map=DEFAULT_OLLAMA_CAPABILITIES,
         http_client=client,
+        structured_output_mode="json_schema",
+        reasoning=False,
+        reasoning_off_params={"think": False},
+        num_ctx=6144,
+        temperature=0.0,
     )
 
     result = await provider.generate(
@@ -110,7 +119,7 @@ async def test_generate_structured_json_success(monkeypatch: pytest.MonkeyPatch)
     )
 
     assert isinstance(result, ModelResponse)
-    assert result.model_id == "qwen3-vl:4b"
+    assert result.model_id == "qwen3:8b"
     assert result.model_version == "sha256:testdigest123"
     assert result.structured_output is not None
     assert result.structured_output["answer"] == "The clinic is open 9am to 5pm."
@@ -130,7 +139,7 @@ async def test_generate_retries_on_transient_timeout(monkeypatch: pytest.MonkeyP
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+                json={"models": [{"name": "qwen3:8b", "digest": "sha256:testdigest123"}]},
             )
         if request.url.path == "/api/chat":
             attempt_count += 1
@@ -181,7 +190,7 @@ async def test_generate_raises_malformed_output_on_invalid_json(
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+                json={"models": [{"name": "qwen3:8b", "digest": "sha256:testdigest123"}]},
             )
         if request.url.path == "/api/chat":
             return httpx.Response(
@@ -229,7 +238,7 @@ async def test_no_thinking_text_leaks_to_answer_or_confidence(
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+                json={"models": [{"name": "qwen3:8b", "digest": "sha256:testdigest123"}]},
             )
         if request.url.path == "/api/chat":
             return httpx.Response(
@@ -286,7 +295,7 @@ async def test_generate_handles_truncated_explain_mode_json(
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-vl:4b", "digest": "sha256:testdigest123"}]},
+                json={"models": [{"name": "qwen3:8b", "digest": "sha256:testdigest123"}]},
             )
         if request.url.path == "/api/chat":
             return httpx.Response(
@@ -321,3 +330,127 @@ async def test_generate_handles_truncated_explain_mode_json(
     assert points[0]["point"] == "Point 1 text"
     assert points[1]["point"] == "Point 2 text"
     assert not any("Incomplete" in str(p) for p in points)
+
+
+@pytest.mark.asyncio
+async def test_wiring_desktop_gpu_resolves_roles_and_sends_schema_think_and_num_ctx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """desktop-gpu resolves roles and sends format schema, think=false, num_ctx=6144."""
+    from app.adapters.models.provider_router import ModelProviderRouter
+    from app.wiring import create_model_provider
+
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://mock-ollama:11434")
+    router = create_model_provider("desktop-gpu")
+    assert isinstance(router, ModelProviderRouter)
+
+    expected_models = {
+        ModelRole.ROUTER: "qwen3:8b",
+        ModelRole.ANSWER: "qwen3:8b",
+        ModelRole.VISION: "qwen3-vl:4b-instruct",
+        ModelRole.EXTRACT: "qwen3-vl:4b-instruct",
+        ModelRole.JUDGE: "qwen3-vl:4b-instruct",
+    }
+
+    captured_chat_payloads: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "qwen3:8b", "digest": "sha256:qwen38b"},
+                        {"name": "qwen3-vl:4b-instruct", "digest": "sha256:qwen3vl4bi"},
+                    ]
+                },
+            )
+        if request.url.path == "/api/chat":
+            req_body = json.loads(request.content.decode("utf-8"))
+            captured_chat_payloads.append(req_body)
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "mode": "short",
+                                "answer": "Verified synthetic answer.",
+                                "evidence_ids": ["c1"],
+                                "quoted_span": "Verified",
+                                "evidence_type": "text",
+                            }
+                        ),
+                    },
+                    "eval_count": 12,
+                },
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=_create_mock_transport(handler)) as fake_client:
+        for role, expected_model in expected_models.items():
+            prov = router.get_provider(role)
+            assert isinstance(prov, OllamaModelProvider)
+            prov._http_client = fake_client
+            if role in (ModelRole.ROUTER, ModelRole.ANSWER):
+                res = await router.generate(
+                    role=role,
+                    messages=[ChatMessage(role="user", content="Test")],
+                    schema=SampleAnswerSchema,
+                    max_tokens=128,
+                )
+                assert res.model_id == expected_model
+            else:
+                assert prov._models[role.value] == expected_model
+                res = await router.generate(
+                    role=role,
+                    messages=[ChatMessage(role="user", content="Test")],
+                    schema=SampleAnswerSchema,
+                    max_tokens=128,
+                )
+                assert res.model_id == expected_model
+
+    assert len(captured_chat_payloads) == len(expected_models)
+    for req_body in captured_chat_payloads:
+        assert req_body["format"] == SampleAnswerSchema.model_json_schema()
+        assert req_body["think"] is False
+        assert req_body["options"]["num_ctx"] == 6144
+        assert req_body["options"]["temperature"] == 0.0
+
+
+def test_desktop_gpu_startup_fails_if_judge_equals_answer(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup raises JUDGE_MODEL_SAME_AS_ANSWER when judge equals answer in desktop-gpu."""
+    from app.ports.errors import ConfigurationError
+    from app.wiring import create_model_provider
+
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://mock-ollama:11434")
+    bad_profile = tmp_path / "desktop-gpu.yaml"
+    bad_profile.write_text(
+        "profile: desktop-gpu\n"
+        "catalog_providers:\n"
+        "  - ollama\n"
+        "models:\n"
+        "  router:\n"
+        '    { provider: ollama, model: "qwen3:8b", supports_vision: false,\n'
+        "      remote: false, baa_covered: false, temperature: 0.0, reasoning: false }\n"
+        "  answer:\n"
+        '    { provider: ollama, model: "qwen3:8b", supports_vision: false,\n'
+        "      remote: false, baa_covered: false, temperature: 0.0, reasoning: false }\n"
+        "  vision:\n"
+        '    { provider: ollama, model: "qwen3-vl:4b-instruct", supports_vision: true,\n'
+        "      remote: false, baa_covered: false, temperature: 0.0, reasoning: false }\n"
+        "  extract:\n"
+        '    { provider: ollama, model: "qwen3-vl:4b-instruct", supports_vision: true,\n'
+        "      remote: false, baa_covered: false, temperature: 0.0, reasoning: false }\n"
+        "  judge:\n"
+        '    { provider: ollama, model: "qwen3:8b", supports_vision: false,\n'
+        "      remote: false, baa_covered: false, temperature: 0.0, reasoning: false }\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError) as exc_info:
+        create_model_provider("desktop-gpu", config_path=bad_profile)
+    assert exc_info.value.error_code == "JUDGE_MODEL_SAME_AS_ANSWER"

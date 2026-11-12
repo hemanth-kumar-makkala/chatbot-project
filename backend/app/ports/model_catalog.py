@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 ProviderConnectionStatus = Literal["connected", "not_connected", "coming_later"]
 ModelGovernanceBadge = Literal["local", "cloud_test_data_only", "cloud_with_baa"]
 StructuredOutputMode = Literal["json_schema", "json_object"]
-SelectableRole = Literal["answer", "judge"]
 EngineRoleName = Literal["router", "answer", "vision", "extract", "judge"]
+SelectableRole = EngineRoleName
 
 
 class CatalogModelSpec(BaseModel):
@@ -62,6 +62,7 @@ class ProviderCatalogConfig(BaseModel):
     coming_later: bool = False
     structured_output_mode: StructuredOutputMode
     reasoning_off_params: dict[str, Any]
+    num_ctx: int | None = Field(default=None, gt=0)
     required_env: list[str] = Field(default_factory=list)
     runtime_settings: ProviderRuntimeSettings | None = None
     notes: str = ""

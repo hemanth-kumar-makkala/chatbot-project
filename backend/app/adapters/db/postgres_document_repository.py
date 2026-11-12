@@ -634,7 +634,7 @@ class PostgresDocumentRepository(DocumentRepository):
         tenant_id: str,
         records: list[dict[str, Any]],
     ) -> None:
-        """Insert a batch of table_data rows idempotently (ON CONFLICT DO NOTHING)."""
+        """Upsert a batch of table_data rows idempotently (ON CONFLICT DO UPDATE)."""
         if not records:
             return
         clean_records: list[dict[str, Any]] = []
@@ -645,10 +645,10 @@ class PostgresDocumentRepository(DocumentRepository):
                 rec["id"] = uuid4()
             clean_records.append(rec)
 
-        stmt = (
-            pg_insert(TableData)
-            .values(clean_records)
-            .on_conflict_do_nothing(constraint="uq_tables_data_idempotency")
+        insert_stmt = pg_insert(TableData).values(clean_records)
+        stmt = insert_stmt.on_conflict_do_update(
+            constraint="uq_tables_data_idempotency",
+            set_={"row_data": insert_stmt.excluded.row_data},
         )
         await self.session.execute(stmt)
         await self.session.flush()

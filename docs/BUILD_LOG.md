@@ -3859,3 +3859,83 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Tests & Quality**:
   - `uv run python -m pytest tests/unit/test_model_catalog.py tests/unit/test_desktop_api_profile.py tests/unit/test_openai_compatible_provider.py tests/unit/test_evidence_gate_and_validation.py tests/unit/test_wiring_profile_guards.py -m "not models" -v`: `98 passed`.
   - Live `desktop-api` E2E verification (`front_desk_policy_v1.pdf` + `prior_auth_guide.pdf`, Turn 1, Turn 2 follow-up, `/v1/assistants/{id}/conversations`, `/v1/questions/stream`): returned `status="answered"`, grounded answers, valid citations/sources, and `public_error_ref=null`.
+
+---
+
+### [2026-11-12] Switch `desktop-gpu` to Local Ollama (`qwen3:8b` + `qwen3-vl:4b-instruct`, `num_ctx: 6144`)
+
+- **Task**: Switch the `desktop-gpu` profile to local Ollama `qwen3:8b` (`router`, `answer`) and `qwen3-vl:4b-instruct` (`vision`, `extract`, `judge`) with `structured_output_mode: json_schema`, `reasoning_off_params: {think: false}`, `num_ctx: 6144`, `temperature: 0.0`, and `reasoning: false`; wire catalog settings through `wiring.py`; enforce distinct judge != answer on `desktop-gpu`; and verify via fake HTTP transport tests.
+- **Changes**:
+  1. `backend/config/model_catalog.yaml`: Updated `ollama` provider to `structured_output_mode: json_schema`, `reasoning_off_params: {think: false}`, `num_ctx: 6144`; replaced `qwen3-vl:4b` with `qwen3:8b` (`allowed_roles: ["answer", "router"]`) and `qwen3-vl:4b-instruct` (`allowed_roles: ["vision", "extract", "judge"]`); retained `home-gpu.yaml` and `office-cpu.yaml` model entries.
+  2. `backend/config/profiles/desktop-gpu.yaml`: Enabled `catalog_providers: [ollama]`, assigned `qwen3:8b` (`router`, `answer`) and `qwen3-vl:4b-instruct` (`vision`, `extract`, `judge`) with `temperature: 0.0` and `reasoning: false`, removed `nvidia`/`inception` `generation_limits`, and added `qwen3:8b` + `qwen3-vl:4b-instruct` limits.
+  3. `backend/app/ports/model_catalog.py` & `backend/app/adapters/models/catalog.py`: Added validated `num_ctx` on `ProviderCatalogConfig` and widened `SelectableRole` to `EngineRoleName`.
+  4. `backend/app/adapters/models/ollama.py`: Added validated constructor settings (`structured_output_mode`, `reasoning`, `reasoning_off_params`, `num_ctx`, `temperature`), shared `_apply_inference_params` helper to merge `reasoning_off_params` top-level when `reasoning` is false and set `options.num_ctx`/`options.temperature`, kept JSON schema object `"format"` and `ImageProcessor` scaling, and never reads catalog inside the adapter.
+  5. `backend/app/wiring.py`: Extracted shared `_resolve_catalog_settings` helper; passed catalog/profile settings into `OllamaModelProvider`; routed `desktop-gpu` via `ModelProviderRouter` (`enforce_distinct_judge=True`) and included `desktop-gpu` in `load_and_validate_profile_models` `JUDGE_MODEL_SAME_AS_ANSWER` guard.
+- **Files Edited (13)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/config/profiles/desktop-gpu.yaml`
+  3. `backend/app/ports/model_catalog.py`
+  4. `backend/app/adapters/models/catalog.py`
+  5. `backend/app/adapters/models/ollama.py`
+  6. `backend/app/wiring.py`
+  7. `backend/tests/unit/test_model_catalog.py`
+  8. `backend/tests/unit/test_wiring_profile_guards.py`
+  9. `backend/tests/unit/test_ollama_provider.py`
+  10. `backend/tests/unit/test_model_settings.py`
+  11. `backend/tests/unit/test_ollama_generate.py`
+  12. `docs/STATUS.md`
+  13. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/unit/test_wiring_profile_guards.py tests/unit/test_ollama_provider.py tests/unit/test_model_settings.py tests/unit/test_ollama_generate.py tests/unit/test_desktop_api_profile.py tests/unit/test_model_provider_router.py -m "not models" -v`: `100 passed, 1 deselected`.
+
+---
+
+### [2026-11-12] Queue Stage B: Batch 1 (Fixes 1, 4, 5 & Distinct Judge Guard)
+
+- **Task**: Improve `router_classify` prompt (`1.2.0`) with `answer_mode` rules and metadata-only route logging; suppress source chips on refusal and general-route replies while adding `"No supporting evidence found in the documents"` on refusals; strip trailing punctuation from conflict comparison values; and enforce `JUDGE_MODEL_SAME_AS_ANSWER` on every non-mock profile.
+- **Changes**:
+  1. `prompts/registry.yaml`: Bumped `router_classify` to `1.2.0` adding explicit `answer_mode` rules (`general` -> `"short"`, `"exact"` for single values, `"explain"` for policies/procedures, `"table"` for spreadsheet lookups) and enum-only instructions alongside route examples.
+  2. `backend/app/core/graph.py`: Logged chosen `route`, `answer_mode`, and `router_fallback` in `node_route` using metadata only (zero query content); left the keyword heuristic around lines 659–678 unchanged and documented its behavior.
+  3. `backend/app/api/routes/questions.py` & `web/app/assistants/[assistantId]/page.tsx`: Added `route` to `QuestionResponse` and SSE `answer` payload, cleared `evidence_ids`/`sources` for `refusal`, `clarify`, and `general` routes, rendered `"No supporting evidence found in the documents"` in `chat-refusal-card`, and guarded source chips against `general` and `refusal`.
+  4. `backend/app/core/conflict.py`: Stripped trailing `.,;:!?` from `older_val` and `newer_val` in `format_version_conflict_answer` to prevent `".,"` and `".."`.
+  5. `backend/app/wiring.py`: Applied the `JUDGE_MODEL_SAME_AS_ANSWER` startup check to every profile where `profile != "mock"`.
+- **Files Edited (11)**:
+  1. `prompts/registry.yaml`
+  2. `backend/app/core/graph.py`
+  3. `backend/app/core/conflict.py`
+  4. `backend/app/api/routes/questions.py`
+  5. `web/app/assistants/[assistantId]/page.tsx`
+  6. `backend/app/wiring.py`
+  7. `backend/tests/unit/test_generate_node_schemas.py`
+  8. `backend/tests/unit/test_conflict_rule.py`
+  9. `backend/tests/unit/test_wiring_profile_guards.py`
+  10. `web/__tests__/chat.test.tsx`
+  11. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage C: Batch 2 (Fixes 2 & 3 — Spreadsheet Ingestion, Captions, Table Citations & Grounded Short Answers)
+
+- **Task**: Fix sparse leading-row header detection and store skipped rows as caption during spreadsheet ingestion; switch persistence to idempotent `on_conflict_do_update`; expose `sheet_name` and `row_number` without `page_number` on API and web table citations; build concise direct answers from matching table rows with explicit unmatched-term disclosure and quoted-value validation.
+- **Changes**:
+  1. `backend/app/adapters/tables/builtin.py`, `backend/app/ports/table_extractor.py`, `backend/app/core/ingestion/table_service.py`: Replaced `_header_row_offset` with `_detect_header_and_caption` to skip leading rows where fewer than half the columns contain values (`len(vals) * 2 < col_count`), store skipped non-empty rows as `caption` on `ExtractedTableSheet`, and persist `caption` into `row_data`.
+  2. `backend/app/adapters/db/postgres_document_repository.py`, `backend/app/adapters/retrieval/postgres_retriever.py`, `backend/app/ports/types.py`: Updated `create_table_data_batch` to use `on_conflict_do_update` updating `row_data` on `uq_tables_data_idempotency`, and propagated `caption` onto `TableCandidate`.
+  3. `backend/app/api/routes/questions.py`, `web/lib/api.ts`, `web/app/assistants/[assistantId]/page.tsx`: Added optional `sheet_name`, `row_number`, and nullable `page_number` on `SourceCitation`; resolved `TableData` citations with `sheet_name`, `row_number`, and `page_number=None`; rendered `Sheet:` and `Row` badges without `Page N` or `p.N` in standard and conflict source chips.
+  4. `backend/app/core/graph.py`: Added `_select_matching_table_rows`, `_format_table_answer_text`, and `_quoted_values_exist_in_cited_rows` so `table` mode builds short direct answers from matching/closest rows only, explicitly states when a query term (e.g. `"urgent"`) is not listed in the table, and rejects any fabricated double-quoted value in validation.
+- **Files Edited (16)**:
+  1. `backend/app/ports/table_extractor.py`
+  2. `backend/app/ports/types.py`
+  3. `backend/app/adapters/tables/builtin.py`
+  4. `backend/app/core/ingestion/table_service.py`
+  5. `backend/app/adapters/db/postgres_document_repository.py`
+  6. `backend/app/adapters/retrieval/postgres_retriever.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `web/lib/api.ts`
+  9. `web/app/assistants/[assistantId]/page.tsx`
+  10. `backend/app/core/graph.py`
+  11. `backend/tests/unit/test_table_ingestion.py`
+  12. `backend/tests/integration/test_table_ingestion_service.py`
+  13. `backend/tests/unit/test_table_and_conflict_validation.py`
+  14. `backend/tests/unit/test_table_retrieval.py`
+  15. `web/__tests__/chat.test.tsx`
+  16. `docs/BUILD_LOG.md`

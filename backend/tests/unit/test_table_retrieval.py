@@ -158,9 +158,10 @@ async def test_table_answer_uses_readable_headers_and_stored_values(
 
     await node_generate(state, MockRuntime())  # type: ignore
 
-    assert "| Payer Name | Plan Code |" in table_context.response_text
-    assert "| Apex Health Insurance | APX-HMO-01 |" in table_context.response_text
-    assert "[Sheet:" not in table_context.response_text
+    assert "[Sheet: Sheet1, Row: 1]" in table_context.response_text
+    assert "Apex Health Insurance" in table_context.response_text
+    assert "APX-HMO-01" in table_context.response_text
+    assert "| Payer Name | Plan Code |" not in table_context.response_text
 
 
 @pytest.mark.asyncio

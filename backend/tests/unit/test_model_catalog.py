@@ -87,15 +87,17 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
         assert by_id[future_provider].coming_later is True
         assert by_id[future_provider].models == []
 
-    # Ollama matches all models from desktop-gpu, home-gpu, office-cpu YAMLs
+    # Ollama matches desktop-gpu (qwen3:8b + qwen3-vl:4b-instruct), home-gpu, and office-cpu
     ollama = by_id["ollama"]
     assert ollama.required_env == ["OLLAMA_BASE_URL"]
-    assert ollama.structured_output_mode == "json_object"
-    assert ollama.reasoning_off_params == {}
+    assert ollama.structured_output_mode == "json_schema"
+    assert ollama.reasoning_off_params == {"think": False}
+    assert ollama.num_ctx == 6144
     assert ollama.runtime_settings is not None
-    ollama_models = {m.model for m in ollama.models}
-    assert ollama_models == {
-        "qwen3-vl:4b",
+    ollama_by_name = {m.model: m for m in ollama.models}
+    assert set(ollama_by_name.keys()) == {
+        "qwen3:8b",
+        "qwen3-vl:4b-instruct",
         "qwen2.5:7b",
         "qwen2-vl:7b",
         "llama3.1:8b",
@@ -103,6 +105,14 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
         "qwen2-vl:2b",
         "llama3.2:3b",
     }
+    assert ollama_by_name["qwen3:8b"].supports_vision is False
+    assert ollama_by_name["qwen3:8b"].remote is False
+    assert ollama_by_name["qwen3:8b"].baa_covered is False
+    assert ollama_by_name["qwen3:8b"].allowed_roles == ["answer", "router"]
+    assert ollama_by_name["qwen3-vl:4b-instruct"].supports_vision is True
+    assert ollama_by_name["qwen3-vl:4b-instruct"].remote is False
+    assert ollama_by_name["qwen3-vl:4b-instruct"].baa_covered is False
+    assert ollama_by_name["qwen3-vl:4b-instruct"].allowed_roles == ["vision", "extract", "judge"]
 
     # Every model has explicit temperature, reasoning, generation_limits
     for entry in catalog:
@@ -233,12 +243,12 @@ def test_governance_badge_derivation() -> None:
     }
     local_spec = CatalogModelSpec(
         provider="ollama",
-        model="qwen3-vl:4b",
+        model="qwen3-vl:4b-instruct",
         display_name="Qwen",
         supports_vision=True,
         remote=False,
         baa_covered=False,
-        allowed_roles=["answer"],
+        allowed_roles=["vision", "extract", "judge"],
         temperature=0.0,
         reasoning=False,
         generation_limits=limits,
@@ -284,8 +294,11 @@ def test_build_catalog_capabilities_map_returns_immutable_mapping() -> None:
     assert caps[("gemini", "gemini-3.5-flash-lite")] == ModelCapabilities(
         supports_vision=False, remote=True, baa_covered=False
     )
-    assert caps[("ollama", "qwen3-vl:4b")] == ModelCapabilities(
+    assert caps[("ollama", "qwen3-vl:4b-instruct")] == ModelCapabilities(
         supports_vision=True, remote=False, baa_covered=False
+    )
+    assert caps[("ollama", "qwen3:8b")] == ModelCapabilities(
+        supports_vision=False, remote=False, baa_covered=False
     )
 
 
@@ -339,7 +352,7 @@ async def test_inspect_providers_ollama_filters_to_downloaded_tags(tmp_path: Pat
             200,
             json={
                 "models": [
-                    {"name": "qwen3-vl:4b"},
+                    {"name": "qwen3-vl:4b-instruct"},
                     {"name": "llama3.1:8b"},
                     {"name": "unlisted-local-model:latest"},
                 ]
@@ -359,7 +372,7 @@ async def test_inspect_providers_ollama_filters_to_downloaded_tags(tmp_path: Pat
     ollama = next(p for p in resp.providers if p.provider == "ollama")
     assert ollama.status == "connected"
     assert ollama.missing_settings == []
-    assert [m.model for m in ollama.models] == ["qwen3-vl:4b", "llama3.1:8b"]
+    assert [m.model for m in ollama.models] == ["qwen3-vl:4b-instruct", "llama3.1:8b"]
     assert all(m.governance_badge == "local" for m in ollama.models)
 
 

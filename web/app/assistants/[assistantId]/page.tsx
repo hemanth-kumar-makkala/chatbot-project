@@ -587,6 +587,16 @@ export default function AssistantHomePage({ params }: HomePageProps) {
           >
             {resp.answer}
           </div>
+          <div
+            data-testid="refusal-no-evidence-note"
+            style={{
+              marginTop: "var(--spacing-2)",
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            No supporting evidence found in the documents
+          </div>
         </div>
       );
     }
@@ -601,6 +611,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               version: s.version || "",
               page_number: s.page_number,
               evidence_type: s.evidence_type || "text",
+              sheet_name: s.sheet_name,
+              row_number: s.row_number,
             }));
 
       return (
@@ -636,7 +648,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 <button
                   key={`conf-s-${idx}`}
                   type="button"
-                  onClick={() => handleOpenSource(s.document_title, s.page_number)}
+                  onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1)}
                   style={{
                     fontSize: "var(--font-size-xs)",
                     padding: "2px 8px",
@@ -646,7 +658,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                   }}
                 >
                   <span>{s.document_title}</span>
-                  {s.page_number ? ` p.${s.page_number}` : ""}
+                  {s.evidence_type === "table" || s.sheet_name ? (
+                    <>
+                      {s.sheet_name ? ` Sheet: ${s.sheet_name}` : ""}
+                      {s.row_number != null ? ` Row ${s.row_number}` : ""}
+                    </>
+                  ) : (
+                    s.page_number != null ? ` p.${s.page_number}` : ""
+                  )}
                 </button>
               ))}
             </div>
@@ -835,7 +854,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         </div>
 
         {/* Source Chips */}
-        {resp.sources && resp.sources.length > 0 && (
+        {!isGeneral && status !== "refusal" && resp.sources && resp.sources.length > 0 && (
           <div
             data-testid="chat-source-chips"
             style={{
@@ -853,7 +872,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 key={`source-${sIdx}`}
                 type="button"
                 data-testid={`source-chip-${s.document_title}`}
-                onClick={() => handleOpenSource(s.document_title, s.page_number, s.version_id || s.version)}
+                onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1, s.version_id || s.version)}
                 style={{
                   fontSize: "var(--font-size-xs)",
                   padding: "2px 8px",
@@ -869,12 +888,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               >
                 <span>{s.document_title}</span>
                 {s.version && <span>{s.version}</span>}
-                {s.sheet_name ? (
-                  <span>Sheet: {s.sheet_name}</span>
+                {s.evidence_type === "table" || s.sheet_name ? (
+                  <>
+                    {s.sheet_name && <span>Sheet: {s.sheet_name}</span>}
+                    {s.row_number != null && <span>Row {s.row_number}</span>}
+                  </>
                 ) : (
-                  <span>Page {s.page_number}</span>
+                  s.page_number != null && <span>Page {s.page_number}</span>
                 )}
-                {s.row_number && <span>Row {s.row_number}</span>}
                 {s.language && (
                   <span style={{ color: "var(--color-text-secondary)" }}>
                     Source ({s.language})

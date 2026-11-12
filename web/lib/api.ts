@@ -479,7 +479,7 @@ export function getPageImageUrl(
 export interface SourceCitation {
   document_title: string;
   version: string;
-  page_number: number;
+  page_number?: number | null;
   evidence_type: string;
   version_id?: string | null;
   sheet_name?: string | null;

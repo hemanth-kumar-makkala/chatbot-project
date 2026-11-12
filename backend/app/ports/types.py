@@ -63,6 +63,7 @@ class TableCandidate(BaseModel):
     row_index: int
     cells: dict[str, Any]
     tenant_id: str
+    caption: str | None = None
 
 
 class ModelRole(StrEnum):
