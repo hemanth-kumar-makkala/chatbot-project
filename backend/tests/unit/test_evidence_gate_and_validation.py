@@ -407,6 +407,7 @@ async def test_node_assess_evidence_skips_judge_for_single_document(
 @pytest.mark.asyncio
 async def test_node_assess_evidence_fails_closed_when_judge_fails(
     base_context: GraphRuntimeContext,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """When strong evidence spans >= 2 documents and JUDGE fails, routes to safe_failure."""
     base_context.active_document_count = 2
@@ -432,7 +433,13 @@ async def test_node_assess_evidence_fails_closed_when_judge_fails(
             max_tokens: int | None = None,
         ) -> ModelResponse:
             if role == ModelRole.JUDGE:
-                raise RuntimeError("Judge endpoint HTTP 504 Gateway Timeout")
+                from app.ports.errors import PortError
+
+                raise PortError(
+                    message="Hosted model returned HTTP 400",
+                    error_code="HOSTED_MODEL_HTTP_ERROR",
+                    status_code=502,
+                )
             return await super().generate(role, messages, schema, max_tokens)
 
     base_context.ports = GraphPorts(
@@ -450,11 +457,16 @@ async def test_node_assess_evidence_fails_closed_when_judge_fails(
     class MockRuntime:
         context = base_context
 
-    res = await node_assess_evidence(state, MockRuntime())  # type: ignore[arg-type]
+    with caplog.at_level("WARNING"):
+        res = await node_assess_evidence(state, MockRuntime())  # type: ignore[arg-type]
     assert res["status"] == "safe_failure"
     assert res["evidence_state"] == "SAFE_FAILURE"
     assert re.match(r"^ERR-[0-9A-F]{6}$", res["public_error_ref"])
     assert res["public_error_ref"] in base_context.response_text
+    judge_logs = [rec for rec in caplog.records if "Judge model call failed" in rec.getMessage()]
+    assert len(judge_logs) == 1
+    assert getattr(judge_logs[0], "error_type", None) == "PortError"
+    assert getattr(judge_logs[0], "upstream_error_code", None) == "HOSTED_MODEL_HTTP_ERROR"
 
 
 class _JudgeTrackingRetriever(Retriever):

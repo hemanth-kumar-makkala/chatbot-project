@@ -488,7 +488,8 @@ def test_desktop_api_builds_gemini_providers_for_all_five_roles_from_catalog() -
     assert judge_prov._strip_reasoning is True
     assert judge_prov._reasoning is False
     assert judge_prov._structured_output_mode == "json_schema"
-    assert judge_prov._reasoning_off_params == {"reasoning_effort": "none"}
+    # gemini-3.5-flash-lite rejects reasoning_effort="none" with 400 INVALID_ARGUMENT
+    assert judge_prov._reasoning_off_params == {}
     assert judge_prov._temperature == 0.0
     assert judge_prov._output_token_limits["judge"] == 1024
 

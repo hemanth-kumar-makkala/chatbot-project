@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.adapters.images.pillow import PillowImageProcessor
 from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
-from app.ports.errors import ConfigurationError, ProviderRateLimited
+from app.ports.errors import ConfigurationError, PortError, ProviderRateLimited
 from app.ports.types import ChatMessage, ModelRole
 
 
@@ -567,3 +567,34 @@ def test_invalid_structured_output_mode_raises_configuration_error() -> None:
             **bad_kwargs,
         )
     assert exc_info.value.error_code == "HOSTED_MODEL_CONFIGURATION_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_http_400_raises_port_error_with_status_without_body_leak() -> None:
+    """4xx HTTP errors include status integer for diagnosis without leaking response body."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        _ = request
+        return httpx.Response(
+            400,
+            json={"error": {"code": 400, "message": "Request contains an invalid argument."}},
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        provider = OpenAICompatibleModelProvider(
+            "gemini-3.5-flash-lite",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "unit-test-placeholder",
+            http_client=client,
+            structured_output_mode="json_schema",
+        )
+        with pytest.raises(PortError) as exc_info:
+            await provider.generate(
+                role=ModelRole.JUDGE,
+                messages=[ChatMessage(role="user", content="Check conflict")],
+                max_tokens=64,
+            )
+    assert exc_info.value.error_code == "HOSTED_MODEL_HTTP_ERROR"
+    assert "400" in str(exc_info.value)
+    assert "invalid argument" not in str(exc_info.value)

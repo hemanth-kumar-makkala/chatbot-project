@@ -29,6 +29,7 @@ class CatalogModelSpec(BaseModel):
     allowed_roles: list[SelectableRole] = Field(..., min_length=1)
     temperature: float
     reasoning: bool
+    reasoning_off_params: dict[str, Any] | None = None
     generation_limits: dict[EngineRoleName, int]
     notes: str = ""
 

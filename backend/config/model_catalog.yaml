@@ -176,6 +176,8 @@ providers:
         allowed_roles: ["judge"]
         temperature: 0.0
         reasoning: false
+        # Google AI Studio rejects reasoning_effort="none" on gemini-3.5-flash-lite (400 INVALID_ARGUMENT).
+        reasoning_off_params: {}
         generation_limits:
           router: 1024
           answer: 4096

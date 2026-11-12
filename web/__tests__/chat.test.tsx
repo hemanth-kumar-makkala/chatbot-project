@@ -276,6 +276,26 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     });
   });
 
+  it("shows actionable guidance when assistant is unavailable for current account (ASSISTANT_NOT_FOUND)", async () => {
+    vi.mocked(api.askQuestion).mockResolvedValue({
+      ok: false,
+      status: 404,
+      code: "ASSISTANT_NOT_FOUND",
+    });
+
+    await renderChatPage();
+
+    const input = await screen.findByPlaceholderText(/Ask a question/i);
+    fireEvent.change(input, { target: { value: "Can I query this assistant?" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/This assistant is unavailable for your account/i)
+      ).toBeInTheDocument();
+    });
+  });
+
   it("shared contract: askQuestion sends JSON body matching question_request.json with application/json header", async () => {
     const realApi = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
     const originalFetch = globalThis.fetch;

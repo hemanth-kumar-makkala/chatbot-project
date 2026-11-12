@@ -379,6 +379,12 @@ export default function AssistantHomePage({ params }: HomePageProps) {
           if (res.code === "RATE_LIMIT_EXCEEDED" || res.status === 429) {
             errorMsgText =
               "You've reached the query rate limit. Please wait a moment and try again.";
+          } else if (res.code === "ASSISTANT_NOT_FOUND") {
+            errorMsgText =
+              "This assistant is unavailable for your account (not found or no tenant membership). Sign in with an authorized clinic account or select another assistant.";
+          } else if (res.code === "CONVERSATION_NOT_FOUND") {
+            errorMsgText =
+              "This conversation could not be found. Start a + New chat and try again.";
           }
           const errorMsg: ChatMessage = {
             id: `err-${Date.now()}`,

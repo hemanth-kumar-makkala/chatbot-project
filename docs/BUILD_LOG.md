@@ -3788,3 +3788,74 @@ Append-only record of all completed tasks, architectural choices, and test recor
   11. `docs/BUILD_LOG.md`
 - **Tests & Quality**:
   - Verified on touched unit tests (`test_openai_compatible_provider.py`, `test_model_catalog.py`, `test_desktop_api_profile.py`, `test_generate_node_schemas.py`) and `pre-commit run --files`.
+
+---
+
+### [2026-11-12] Procrastinate Worker Diagnostics, Fail-Loud Config Propagation & E2E Validation
+
+- **Task**: Diagnose Windows Procrastinate worker startup/shutdown behavior (`--app=app.worker.app`), verify database/queue/task health, fix silent `ConfigurationError` masking and `builtin` stalled-job sweep gap, and validate worker execution.
+- **What Was Found & Fixed**:
+  1. **Windows Worker Lifecycle**: Verified `app.worker.app` resolves cleanly (`app` object on module `app/worker.py`), `WARNING:procrastinate.signals` is expected Windows `procrastinate.signals.on_stop` behavior, `uv.exe` -> `.venv\Scripts\python.exe` -> `cpython-3.12\python.exe` is a single worker process tree (not duplicates), and `INFO:procrastinate.worker.worker:Stop requested` occurs during graceful `Ctrl+C` (`asyncio.CancelledError`) cancellation.
+  2. **Silent Misconfiguration Fix (`backend/app/worker.py`)**: `run_split_document_job` previously caught `ConfigurationError` (e.g., unset `APP_PROFILE`) in `except Exception:`, silently marking `DocumentVersion.status = "failed"` while returning normally (`procrastinate_jobs.status = "succeeded"`). Re-raised `ConfigurationError` alongside `DocumentVersionNotFoundError`.
+  3. **All-Queue Stalled Sweep (`backend/app/worker.py`)**: Updated `run_stalled_job_sweep` from `queue="ingestion"` to `queue=None` so interrupted periodic `builtin` jobs are also covered alongside `ingestion`.
+  4. **E2E Fixture & Unit Regression (`backend/tests/integration/test_procrastinate_worker_e2e.py`, `backend/tests/unit/test_worker_and_table_cleanup.py`)**: Added unit test proving `ConfigurationError` propagates when `APP_PROFILE` is unset; updated all 4 worker E2E tests to inject `APP_PROFILE="mock"` and `LOCAL_STORAGE_PATH` via `monkeypatch`.
+- **Files Created (0)**: None.
+- **Files Edited (5)**:
+  1. `backend/app/worker.py`
+  2. `backend/tests/unit/test_worker_and_table_cleanup.py`
+  3. `backend/tests/integration/test_procrastinate_worker_e2e.py`
+  4. `docs/STATUS.md`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_worker_and_activation.py tests/unit/test_worker_and_table_cleanup.py tests/integration/test_procrastinate_worker_e2e.py tests/integration/test_pipeline_idempotency.py -m "not models"`: verified passing (`29 passed, 1 deselected` after code edits).
+  - `uv run --project backend pre-commit run --files ...`: verified passing across all 5 files.
+
+---
+
+### [2026-11-12] Chat Question 404 Diagnosis, Built-in Session Assistant Discovery & UI Error Mapping
+
+- **Task**: Diagnose `POST /v1/questions -> 404 Not Found` (`Unable to complete question (NOT_FOUND). Please try again.`), verify assistant/tenant state, fix any code defects while preserving ADR-0007 tenant isolation, and validate end-to-end question submission.
+- **What Was Found & Fixed**:
+  1. **ADR-0007 Anti-Probing 404 Triggered by Un-enrolled Platform Admin**: Live database inspection confirmed Tenant A, Assistant `00000000-0000-0000-0002-000000000001` (`Clinic A Medical Assistant`), and 6 ready documents exist, and live `auth_events` showed `admin@dev.local` logged in immediately prior to the failure. Because `admin@dev.local` has `is_platform_admin=True` and zero `memberships` rows, `get_tenant_context_for_assistant` returned `404 {"detail": "Assistant not found"}` per ADR-0007 Section 6. `admin@clinic-a.local` / `staff@clinic-a.local` succeed (`200 OK`) on `POST /v1/questions`.
+  2. **Built-in Cookie Assistant Discovery Fix (`backend/app/api/routes/assistants.py`)**: `list_assistants` (`GET /v1/assistants`) and `create_assistant` (`POST /v1/assistants`) queried RLS-protected `Membership` in `unscoped_session()` when cookie `SessionContext.tenant_id == ""`, returning `[]` / `403` even for valid clinic members. Added `_parse_session_tenant_id`, `_resolve_builtin_tenant_roles`, and `_query_tenant_assistants` so cookie sessions resolve member tenants via `auth_provider.roles` (`tenant_session`) cleanly while returning `[]` for accounts without memberships.
+  3. **Actionable 404 Mapping (`web/lib/api.ts`, `web/app/assistants/[assistantId]/page.tsx`)**: Mapped `"Assistant not found"` in `extractErrorCode` to `ASSISTANT_NOT_FOUND` (distinct from generic `NOT_FOUND` and `CONVERSATION_NOT_FOUND`), and rendered clear non-leaking account/membership guidance on chat submission errors.
+- **Files Created (1)**:
+  1. `backend/tests/integration/test_assistant_access_and_questions_api.py`
+- **Files Edited (7)**:
+  1. `backend/app/api/routes/assistants.py`
+  2. `web/lib/api.ts`
+  3. `web/app/assistants/[assistantId]/page.tsx`
+  4. `web/__tests__/foundations.test.ts`
+  5. `web/__tests__/chat.test.tsx`
+  6. `docs/STATUS.md`
+  7. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/integration/test_assistant_access_and_questions_api.py tests/unit/test_provisioning_and_assistants_api.py tests/integration/test_multiturn_followup_api.py tests/integration/test_sse_streaming.py tests/integration/test_staff_source_routes.py -m "not models" -v`: `15 passed`.
+  - `npm test -- __tests__/foundations.test.ts __tests__/chat.test.tsx __tests__/shell.test.tsx __tests__/ui1.test.tsx`: `4 files, 67 passed`.
+
+---
+
+### [2026-11-12] Fix `ERR-51FCF2` / `safe_failure` on `desktop-api` (`gemini-3.5-flash-lite` Judge `400 INVALID_ARGUMENT`)
+
+- **Task**: Diagnose `POST /v1/questions -> 200 OK` rendering `System Error` (`ERR-51FCF2`) with `"Judge model call failed during multi-document conflict assessment"`, test live Gemini model connectivity, implement the minimal safe fix, and verify end-to-end AI Q&A generation.
+- **What Was Found & Fixed**:
+  1. **Root Cause**: `providers.gemini.reasoning_off_params: {"reasoning_effort": "none"}` in `backend/config/model_catalog.yaml` was sent on both `gemini-3.5-flash` (answer/router/vision/extract) and `gemini-3.5-flash-lite` (judge). Live testing against Google AI Studio confirmed `gemini-3.5-flash` accepts `reasoning_effort="none"` (`200 OK`), whereas `gemini-3.5-flash-lite` rejects it with HTTP `400 INVALID_ARGUMENT` (and succeeds in ~1.89s with valid `ConflictDetectionOutput` JSON when `reasoning_effort` is omitted). That `400` triggered `PortError("HOSTED_MODEL_HTTP_ERROR")` inside `node_assess_evidence`, routing multi-document queries to `node_safe_failure` (`status="safe_failure"`, `ERR-XXXXXX`).
+  2. **Per-Model Catalog Override (`backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`, `backend/config/model_catalog.yaml`, `backend/app/wiring.py`)**: Added optional `reasoning_off_params` on `CatalogModelSpec` (validated via shared `_parse_reasoning_off_params`), set `reasoning_off_params: {}` on `gemini-3.5-flash-lite`, and updated `create_model_provider` to prefer per-model `reasoning_off_params` over the provider default while leaving `gemini-3.5-flash` at `{"reasoning_effort": "none"}`.
+  3. **Safe Diagnostics (`backend/app/adapters/models/openai_compatible.py`, `backend/app/core/graph.py`)**: Included HTTP status code integer on `PortError` (no body leakage) and logged `error_type` and `upstream_error_code` metadata on `"Judge model call failed during multi-document conflict assessment"` while keeping `node_assess_evidence` fail-closed per ADR/unit invariants.
+- **Files Created (0)**: None.
+- **Files Edited (12)**:
+  1. `backend/app/ports/model_catalog.py`
+  2. `backend/app/adapters/models/catalog.py`
+  3. `backend/config/model_catalog.yaml`
+  4. `backend/app/wiring.py`
+  5. `backend/app/adapters/models/openai_compatible.py`
+  6. `backend/app/core/graph.py`
+  7. `backend/tests/unit/test_model_catalog.py`
+  8. `backend/tests/unit/test_desktop_api_profile.py`
+  9. `backend/tests/unit/test_openai_compatible_provider.py`
+  10. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  11. `docs/STATUS.md`
+  12. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/unit/test_desktop_api_profile.py tests/unit/test_openai_compatible_provider.py tests/unit/test_evidence_gate_and_validation.py tests/unit/test_wiring_profile_guards.py -m "not models" -v`: `98 passed`.
+  - Live `desktop-api` E2E verification (`front_desk_policy_v1.pdf` + `prior_auth_guide.pdf`, Turn 1, Turn 2 follow-up, `/v1/assistants/{id}/conversations`, `/v1/questions/stream`): returned `status="answered"`, grounded answers, valid citations/sources, and `public_error_ref=null`.

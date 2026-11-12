@@ -41,9 +41,12 @@ from tests.fixtures.synthetic_documents import create_synthetic_digital_pdf
 
 
 @pytest.mark.asyncio
-async def test_procrastinate_worker_in_process_e2e_activation(tmp_path: Path) -> None:
+async def test_procrastinate_worker_in_process_e2e_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Run real Procrastinate worker in-process with real PDF and assert version activates."""
     load_dotenv()
+    monkeypatch.setenv("APP_PROFILE", "mock")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     app_user = os.getenv("DB_APP_USER", "app_user")
@@ -51,7 +54,7 @@ async def test_procrastinate_worker_in_process_e2e_activation(tmp_path: Path) ->
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["LOCAL_STORAGE_PATH"] = str(storage_dir)
+    monkeypatch.setenv("LOCAL_STORAGE_PATH", str(storage_dir))
 
     async with isolated_throwaway_database() as throwaway_db:
         command.upgrade(throwaway_db.cfg, "head")
@@ -203,11 +206,14 @@ async def test_procrastinate_worker_in_process_e2e_activation(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_procrastinate_worker_e2e_csv_table_ingestion(tmp_path: Path) -> None:
+async def test_procrastinate_worker_e2e_csv_table_ingestion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Run worker with CSV spreadsheet: creates tables_data rows and
     marks version ready directly.
     """
     load_dotenv()
+    monkeypatch.setenv("APP_PROFILE", "mock")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     app_user = os.getenv("DB_APP_USER", "app_user")
@@ -215,7 +221,7 @@ async def test_procrastinate_worker_e2e_csv_table_ingestion(tmp_path: Path) -> N
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["LOCAL_STORAGE_PATH"] = str(storage_dir)
+    monkeypatch.setenv("LOCAL_STORAGE_PATH", str(storage_dir))
 
     async with isolated_throwaway_database() as throwaway_db:
         command.upgrade(throwaway_db.cfg, "head")
@@ -350,9 +356,12 @@ async def test_procrastinate_worker_e2e_csv_table_ingestion(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_procrastinate_worker_e2e_null_file_extension_fails() -> None:
+async def test_procrastinate_worker_e2e_null_file_extension_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A version with file_extension NULL transitions to failed with zero page jobs."""
     load_dotenv()
+    monkeypatch.setenv("APP_PROFILE", "mock")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     app_user = os.getenv("DB_APP_USER", "app_user")
@@ -471,9 +480,12 @@ async def test_procrastinate_worker_e2e_null_file_extension_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_procrastinate_worker_e2e_corrupt_file_fails(tmp_path: Path) -> None:
+async def test_procrastinate_worker_e2e_corrupt_file_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A corrupted file during split transitions version to failed with zero page jobs."""
     load_dotenv()
+    monkeypatch.setenv("APP_PROFILE", "mock")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     app_user = os.getenv("DB_APP_USER", "app_user")
@@ -481,7 +493,7 @@ async def test_procrastinate_worker_e2e_corrupt_file_fails(tmp_path: Path) -> No
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["LOCAL_STORAGE_PATH"] = str(storage_dir)
+    monkeypatch.setenv("LOCAL_STORAGE_PATH", str(storage_dir))
 
     async with isolated_throwaway_database() as throwaway_db:
         command.upgrade(throwaway_db.cfg, "head")

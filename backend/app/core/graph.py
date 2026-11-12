@@ -993,6 +993,8 @@ async def node_assess_evidence(
                 if not skip_judge:
                     candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
                     judge_failed = False
+                    judge_error_type: str | None = None
+                    judge_error_code: str | None = None
                     try:
                         conflict_prompt = format_conflict_prompt(
                             ctx.question_text, candidate_evidence
@@ -1008,6 +1010,8 @@ async def node_assess_evidence(
                         )
                         if resp.structured_output is None:
                             judge_failed = True
+                            judge_error_type = "MalformedOutput"
+                            judge_error_code = "JUDGE_EMPTY_STRUCTURED_OUTPUT"
                         elif resp.structured_output.get("has_conflict"):
                             c_data = resp.structured_output
                             q1 = str(c_data.get("quote1", "")).strip()
@@ -1148,8 +1152,10 @@ async def node_assess_evidence(
                                         "needs_vision": False,
                                         "evidence_ids": [c1_match, c2_match],
                                     }
-                    except Exception:
+                    except Exception as exc:
                         judge_failed = True
+                        judge_error_type = type(exc).__name__
+                        judge_error_code = getattr(exc, "error_code", None)
 
                     if judge_failed:
                         err_ref = f"ERR-{uuid4().hex[:6].upper()}"
@@ -1162,6 +1168,8 @@ async def node_assess_evidence(
                                 "node": "assess_evidence",
                                 "status": "safe_failure",
                                 "error_code": "JUDGE_FAILURE",
+                                "error_type": judge_error_type,
+                                "upstream_error_code": judge_error_code,
                                 "public_error_ref": err_ref,
                             },
                         )

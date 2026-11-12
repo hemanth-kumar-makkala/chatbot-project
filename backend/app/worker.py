@@ -190,7 +190,7 @@ async def run_split_document_job(
                 repository=repo,
                 session=session,
             )
-    except DocumentVersionNotFoundError:
+    except (DocumentVersionNotFoundError, ConfigurationError):
         raise
     except Exception as exc:
         if is_retryable_error(exc):
@@ -449,7 +449,7 @@ async def run_stalled_job_sweep(
     _ = timestamp
     stalled_jobs = await context.app.job_manager.get_stalled_jobs(
         seconds_since_heartbeat=seconds_since_heartbeat,
-        queue="ingestion",
+        queue=None,
     )
     requeued = 0
     for job in stalled_jobs:

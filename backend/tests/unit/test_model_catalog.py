@@ -57,10 +57,12 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     assert gemini_models["gemini-3.5-flash"].remote is True
     assert gemini_models["gemini-3.5-flash"].baa_covered is False
     assert gemini_models["gemini-3.5-flash"].allowed_roles == ["answer"]
+    assert gemini_models["gemini-3.5-flash"].reasoning_off_params is None
     assert gemini_models["gemini-3.5-flash-lite"].supports_vision is False
     assert gemini_models["gemini-3.5-flash-lite"].remote is True
     assert gemini_models["gemini-3.5-flash-lite"].baa_covered is False
     assert gemini_models["gemini-3.5-flash-lite"].allowed_roles == ["judge"]
+    assert gemini_models["gemini-3.5-flash-lite"].reasoning_off_params == {}
 
     # NVIDIA confirmed: mistralai/mistral-large-4-1t-a52b only (no nemotron)
     nvidia = by_id["nvidia"]

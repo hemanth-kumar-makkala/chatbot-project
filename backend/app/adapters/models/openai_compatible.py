@@ -298,7 +298,7 @@ class OpenAICompatibleModelProvider(ModelProvider):
 
         if response.status_code >= 400:
             raise PortError(
-                message="Hosted model returned an HTTP error",
+                message=f"Hosted model returned HTTP {response.status_code}",
                 error_code="HOSTED_MODEL_HTTP_ERROR",
                 status_code=502,
             )

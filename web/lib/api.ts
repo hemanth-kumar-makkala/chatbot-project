@@ -122,6 +122,8 @@ export function extractErrorCode(status: number, data: unknown): string {
       if (detailStr.includes("version") && detailStr.includes("not found")) return "VERSION_NOT_FOUND";
       if (detailStr.includes("document") && detailStr.includes("not found")) return "DOCUMENT_NOT_FOUND";
       if (detailStr.includes("page") && detailStr.includes("not found")) return "PAGE_NOT_FOUND";
+      if (detailStr.includes("assistant") && detailStr.includes("not found")) return "ASSISTANT_NOT_FOUND";
+      if (detailStr.includes("conversation") && detailStr.includes("not found")) return "CONVERSATION_NOT_FOUND";
       if (detailStr.includes("no reviewable pages")) return "NO_REVIEWABLE_PAGES";
       if (detailStr.includes("unreviewed pages")) return "UNREVIEWED_PAGES_REMAIN";
       if (detailStr.includes("not in reviewable state")) return "PAGE_NOT_REVIEWABLE";

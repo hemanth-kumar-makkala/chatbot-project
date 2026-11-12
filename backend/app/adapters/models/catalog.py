@@ -6,7 +6,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 import yaml
@@ -50,6 +50,20 @@ class CatalogApiSettingsProtocol(Protocol):
 
 def _default_catalog_path() -> Path:
     return _DEFAULT_CATALOG_PATH
+
+
+def _parse_reasoning_off_params(raw_val: object, *, allow_none: bool) -> dict[str, Any] | None:
+    """Validate optional or required reasoning_off_params mapping without blank keys."""
+    if raw_val is None and allow_none:
+        return None
+    if not isinstance(raw_val, dict) or not all(
+        isinstance(k, str) and bool(k.strip()) for k in raw_val
+    ):
+        raise ConfigurationError(
+            "Provider entry must declare reasoning_off_params as a mapping of parameter names.",
+            error_code="MODEL_CATALOG_INVALID",
+        )
+    return dict(raw_val)
 
 
 def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogConfig]:
@@ -133,6 +147,11 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                         "Model entry missing required boolean capability flag in catalog.",
                         error_code="MODEL_CATALOG_INVALID",
                     )
+            if "reasoning_off_params" in model_payload:
+                model_payload["reasoning_off_params"] = _parse_reasoning_off_params(
+                    model_payload.get("reasoning_off_params"),
+                    allow_none=True,
+                )
             try:
                 spec = CatalogModelSpec.model_validate(model_payload)
             except ValidationError as exc:
@@ -155,14 +174,10 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                 "('json_schema' or 'json_object').",
                 error_code="MODEL_CATALOG_INVALID",
             )
-        raw_reasoning_off = provider_val.get("reasoning_off_params")
-        if not isinstance(raw_reasoning_off, dict) or not all(
-            isinstance(k, str) and bool(k.strip()) for k in raw_reasoning_off
-        ):
-            raise ConfigurationError(
-                "Provider entry must declare reasoning_off_params as a mapping of parameter names.",
-                error_code="MODEL_CATALOG_INVALID",
-            )
+        parsed_reasoning_off = _parse_reasoning_off_params(
+            provider_val.get("reasoning_off_params"),
+            allow_none=False,
+        )
 
         try:
             provider_entry = ProviderCatalogConfig.model_validate(
@@ -172,7 +187,7 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                     "transport": provider_val.get("transport"),
                     "coming_later": coming_later,
                     "structured_output_mode": raw_structured_mode,
-                    "reasoning_off_params": dict(raw_reasoning_off),
+                    "reasoning_off_params": parsed_reasoning_off,
                     "required_env": provider_val.get("required_env", []),
                     "runtime_settings": runtime_settings,
                     "notes": provider_val.get("notes", ""),

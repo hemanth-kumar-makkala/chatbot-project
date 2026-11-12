@@ -943,7 +943,12 @@ def create_model_provider(
                     else {str(k): int(v) for k, v in model_spec.generation_limits.items()}
                 )
                 structured_output_mode: StructuredOutputMode = cat_entry.structured_output_mode
-                reasoning_off_params: dict[str, Any] = dict(cat_entry.reasoning_off_params)
+                effective_off_params = (
+                    model_spec.reasoning_off_params
+                    if model_spec.reasoning_off_params is not None
+                    else cat_entry.reasoning_off_params
+                )
+                reasoning_off_params: dict[str, Any] = dict(effective_off_params)
             else:
                 provider_cfg = providers_config.get(provider_name, {})
                 timeout_seconds = float(provider_cfg.get("timeout_seconds", 60.0))
