@@ -58,10 +58,10 @@ TEST_CAPS: dict[tuple[str, str], ModelCapabilities] = {
         supports_vision=False, remote=False, baa_covered=False
     ),
     ("local", "bge-m3"): ModelCapabilities(supports_vision=False, remote=False, baa_covered=False),
-    ("openai", "gpt-4-vision-preview"): ModelCapabilities(
+    ("gemini", "gemini-3.5-flash"): ModelCapabilities(
         supports_vision=True, remote=True, baa_covered=False
     ),
-    ("nvidia", "nvidia:mistralai/vision"): ModelCapabilities(
+    ("gemini", "gemini-vision-cloud"): ModelCapabilities(
         supports_vision=True, remote=True, baa_covered=False
     ),
     ("mock", "mock-answer-v1"): ModelCapabilities(
@@ -90,7 +90,7 @@ def test_is_vision_model_detection() -> None:
     """Verifies that multimodal vision capabilities are detected from capabilities map."""
     assert is_vision_model("qwen3-vl:4b", capabilities_map=TEST_CAPS) is True
     assert is_vision_model("qwen2-vl:7b", capabilities_map=TEST_CAPS) is True
-    assert is_vision_model("gpt-4-vision-preview", capabilities_map=TEST_CAPS) is True
+    assert is_vision_model("gemini-3.5-flash", capabilities_map=TEST_CAPS) is True
     assert is_vision_model("beam:cloud", capabilities_map=TEST_CAPS) is False
     assert is_vision_model("llama3.3:70b", capabilities_map=TEST_CAPS) is False
     assert is_vision_model("", capabilities_map=TEST_CAPS) is False
@@ -241,7 +241,7 @@ async def test_verify_active_documents_fails_closed_when_capabilities_map_missin
 
     settings = ApiSettings(
         profile="mock",
-        chat_model="nvidia:test-cloud-model",
+        chat_model="gemini:gemini-3.5-flash",
         storage_dir=str(tmp_path),
     )
 
@@ -260,7 +260,7 @@ async def test_node_guard_enforces_cloud_safety_for_vision_model() -> None:
     ctx = GraphRuntimeContext(
         ports=GraphPorts(
             is_mock_profile=True,
-            vision_model="nvidia:mistralai/vision",
+            vision_model="gemini:gemini-vision-cloud",
             capabilities_map=TEST_CAPS,
         ),
         tenant=TenantContext(

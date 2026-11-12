@@ -91,7 +91,7 @@ def test_judge_cannot_equal_answer_in_desktop_api(tmp_path: Path) -> None:
                 "profile": "conflict_profile",
                 "models": {
                     "router": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "shared-model",
                         "supports_vision": True,
                         "remote": True,
@@ -99,7 +99,7 @@ def test_judge_cannot_equal_answer_in_desktop_api(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "answer": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "shared-model",
                         "supports_vision": True,
                         "remote": True,
@@ -107,7 +107,7 @@ def test_judge_cannot_equal_answer_in_desktop_api(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "vision": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "shared-model",
                         "supports_vision": True,
                         "remote": True,
@@ -115,7 +115,7 @@ def test_judge_cannot_equal_answer_in_desktop_api(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "extract": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "shared-model",
                         "supports_vision": True,
                         "remote": True,
@@ -123,7 +123,7 @@ def test_judge_cannot_equal_answer_in_desktop_api(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "judge": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "shared-model",
                         "supports_vision": True,
                         "remote": True,
@@ -149,7 +149,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
                 "profile": "no_vision_profile",
                 "models": {
                     "router": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "text-model",
                         "supports_vision": False,
                         "remote": True,
@@ -157,7 +157,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
                         "temperature": 0.0,
                     },
                     "answer": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "text-model",
                         "supports_vision": False,
                         "remote": True,
@@ -165,7 +165,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
                         "temperature": 0.0,
                     },
                     "vision": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "text-model",
                         "supports_vision": False,
                         "remote": True,
@@ -173,7 +173,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
                         "temperature": 0.0,
                     },
                     "extract": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "text-model",
                         "supports_vision": False,
                         "remote": True,
@@ -181,7 +181,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
                         "temperature": 0.0,
                     },
                     "judge": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "judge-model",
                         "supports_vision": False,
                         "remote": True,
@@ -201,7 +201,7 @@ def test_vision_or_extract_fails_if_supports_vision_false(tmp_path: Path) -> Non
 
 def test_capabilities_google_gemma_with_supports_vision_true() -> None:
     caps_map = {
-        ("nvidia", "google/gemma-4-31b-it"): ModelCapabilities(
+        ("gemini", "google/gemma-4-31b-it"): ModelCapabilities(
             supports_vision=True,
             remote=True,
             baa_covered=False,
@@ -211,7 +211,7 @@ def test_capabilities_google_gemma_with_supports_vision_true() -> None:
     assert is_cloud_model("google/gemma-4-31b-it", capabilities_map=caps_map) is True
 
 
-def test_remote_model_without_nvidia_prefix_triggers_safety_lock() -> None:
+def test_remote_model_triggers_safety_lock() -> None:
     caps_map = {
         ("custom", "custom-hosted-provider/medical-llm-70b"): ModelCapabilities(
             supports_vision=False,
@@ -285,7 +285,7 @@ def test_moonshot_remote_non_baa_triggers_safety_lock() -> None:
 
 def test_different_casing_or_prefix_does_not_share_capabilities() -> None:
     caps_map = {
-        ("nvidia", "model-abc"): ModelCapabilities(
+        ("gemini", "model-abc"): ModelCapabilities(
             supports_vision=True,
             remote=False,
             baa_covered=False,
@@ -301,7 +301,7 @@ def test_different_casing_or_prefix_does_not_share_capabilities() -> None:
 
     # Differing prefix raises ConfigurationError
     with pytest.raises(ConfigurationError) as exc2:
-        is_vision_model("nvidia/model-abc", capabilities_map=caps_map)
+        is_vision_model("gemini/model-abc", capabilities_map=caps_map)
     assert exc2.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
 
 
@@ -313,7 +313,7 @@ def test_remote_model_with_missing_capabilities_fails_at_startup(tmp_path: Path)
                 "profile": "bad",
                 "models": {
                     "router": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "remote-m1",
                         "supports_vision": False,
                         "remote": True,
@@ -321,7 +321,7 @@ def test_remote_model_with_missing_capabilities_fails_at_startup(tmp_path: Path)
                         "temperature": 0.0,
                     },
                     "answer": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "remote-m1",
                         "supports_vision": False,
                         "remote": True,
@@ -329,7 +329,7 @@ def test_remote_model_with_missing_capabilities_fails_at_startup(tmp_path: Path)
                         "temperature": 0.0,
                     },
                     "vision": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "remote-m2",
                         "supports_vision": True,
                         "remote": True,
@@ -337,14 +337,14 @@ def test_remote_model_with_missing_capabilities_fails_at_startup(tmp_path: Path)
                         "temperature": 0.0,
                     },
                     "extract": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "remote-m2",
                         "supports_vision": True,
                         "remote": True,
                         "baa_covered": False,
                         "temperature": 0.0,
                     },
-                    "judge": {"provider": "nvidia", "model": "remote-m3"},
+                    "judge": {"provider": "fake_hosted", "model": "remote-m3"},
                 },
             }
         ),
@@ -382,7 +382,7 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
                 "profile": "custom_api",
                 "models": {
                     "router": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "google/gemma-4-31b-it",
                         "supports_vision": True,
                         "remote": True,
@@ -390,7 +390,7 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "answer": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "google/gemma-4-31b-it",
                         "supports_vision": True,
                         "remote": True,
@@ -398,7 +398,7 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "vision": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "google/gemma-4-31b-it",
                         "supports_vision": True,
                         "remote": True,
@@ -406,7 +406,7 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "extract": {
-                        "provider": "nvidia",
+                        "provider": "fake_hosted",
                         "model": "google/gemma-4-31b-it",
                         "supports_vision": True,
                         "remote": True,
@@ -414,8 +414,8 @@ def test_model_id_substitution_is_config_only(tmp_path: Path) -> None:
                         "temperature": 0.0,
                     },
                     "judge": {
-                        "provider": "nvidia",
-                        "model": "mistralai/mistral-large-4-1t-a52b",
+                        "provider": "fake_hosted",
+                        "model": "generic/judge-model-large",
                         "supports_vision": False,
                         "remote": True,
                         "baa_covered": False,
@@ -441,8 +441,7 @@ def test_desktop_api_builds_gemini_providers_for_all_five_roles_from_catalog() -
     profile_path = Path(__file__).resolve().parents[2] / "config" / "profiles" / "desktop-api.yaml"
     raw_profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     assert raw_profile.get("catalog_providers") == ["gemini"]
-    # Keep nvidia block intact for later, and ensure zero duplicated gemini block in profile
-    assert "nvidia" in raw_profile.get("providers", {})
+    assert "nvidia" not in raw_profile.get("providers", {})
     assert "gemini" not in raw_profile.get("providers", {})
 
     router = create_model_provider(

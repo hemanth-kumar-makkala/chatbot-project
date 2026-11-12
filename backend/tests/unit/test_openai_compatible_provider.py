@@ -47,7 +47,7 @@ async def test_generate_posts_once_with_bearer_and_validates_schema() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -63,7 +63,7 @@ async def test_generate_posts_once_with_bearer_and_validates_schema() -> None:
     assert str(requests[0].url) == "https://models.example/v1/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer unit-test-placeholder"
     payload = json.loads(requests[0].content)
-    assert payload["model"] == "mistralai/test-model"
+    assert payload["model"] == "generic/test-model"
     assert payload["max_tokens"] == 384
     assert payload["response_format"] == {"type": "json_object"}
     assert result.structured_output == {"name": "Apex"}
@@ -80,7 +80,7 @@ async def test_short_mode_sends_short_ceiling_capped_by_limit_using_min() -> Non
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -102,7 +102,7 @@ async def test_missing_or_invalid_max_tokens_raises_typed_error() -> None:
         transport=httpx.MockTransport(lambda _r: httpx.Response(200))
     ) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -129,7 +129,7 @@ async def test_429_then_200_succeeds_with_backoff_and_jitter() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -157,7 +157,7 @@ async def test_repeated_429_exhausts_retries_and_raises_typed_error() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -197,7 +197,7 @@ async def test_retry_after_header_is_respected() -> None:
     with patch("asyncio.sleep", side_effect=tracking_sleep):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             provider = OpenAICompatibleModelProvider(
-                "mistralai/test-model",
+                "generic/test-model",
                 "https://models.example/v1",
                 "unit-test-placeholder",
                 http_client=client,
@@ -232,7 +232,7 @@ async def test_client_side_pacing_spaces_calls() -> None:
     with patch("asyncio.sleep", side_effect=fake_sleep):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             provider = OpenAICompatibleModelProvider(
-                "mistralai/test-model",
+                "generic/test-model",
                 "https://models.example/v1",
                 "unit-test-placeholder",
                 http_client=client,
@@ -279,7 +279,7 @@ async def test_oversized_image_scaled_before_encoding_and_small_not_upscaled() -
     processor = PillowImageProcessor()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/vision-model",
+            "generic/vision-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -323,7 +323,7 @@ async def test_reasoning_think_blocks_and_empty_thoughts_stripped_before_json_pa
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -350,7 +350,7 @@ async def test_reasoning_think_blocks_and_empty_thoughts_stripped_before_json_pa
         )
     ) as client:
         provider2 = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,
@@ -519,7 +519,7 @@ async def test_json_object_mode_and_reasoning_true_behavior() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         legacy_provider = OpenAICompatibleModelProvider(
-            "mistralai/test-model",
+            "generic/test-model",
             "https://models.example/v1",
             "unit-test-placeholder",
             http_client=client,

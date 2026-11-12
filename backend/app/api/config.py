@@ -117,6 +117,8 @@ def _optional_env(name: str) -> str | None:
 class ApiSettings(BaseModel):
     """Configuration settings for the FastAPI application."""
 
+    model_config = {"extra": "ignore"}
+
     cors_origins: list[str] = Field(
         default_factory=_default_cors_origins,
         description="Allowed web origins for CORS. Never allow '*'.",
@@ -175,20 +177,6 @@ class ApiSettings(BaseModel):
     gemini_base_url: str | None = Field(default_factory=lambda: _optional_env("GEMINI_BASE_URL"))
     gemini_api_key: SecretStr | None = Field(
         default_factory=lambda: _optional_secret_env("GEMINI_API_KEY")
-    )
-    nvidia_base_url: str | None = Field(default_factory=lambda: _optional_env("NVIDIA_BASE_URL"))
-    nvidia_api_key: SecretStr | None = Field(
-        default_factory=lambda: _optional_secret_env("NVIDIA_API_KEY")
-    )
-    inception_base_url: str | None = Field(
-        default_factory=lambda: _optional_env("INCEPTION_BASE_URL")
-    )
-    inception_api_key: SecretStr | None = Field(
-        default_factory=lambda: _optional_secret_env("INCEPTION_API_KEY")
-    )
-    openai_base_url: str | None = Field(default_factory=lambda: _optional_env("OPENAI_BASE_URL"))
-    openai_api_key: SecretStr | None = Field(
-        default_factory=lambda: _optional_secret_env("OPENAI_API_KEY")
     )
     auth_provider_type: AuthProviderType = Field(
         default_factory=_default_auth_provider_type,

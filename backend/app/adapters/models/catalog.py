@@ -40,12 +40,6 @@ class CatalogApiSettingsProtocol(Protocol):
     ollama_base_url: str | None
     gemini_base_url: str | None
     gemini_api_key: SecretStr | None
-    nvidia_base_url: str | None
-    nvidia_api_key: SecretStr | None
-    inception_base_url: str | None
-    inception_api_key: SecretStr | None
-    openai_base_url: str | None
-    openai_api_key: SecretStr | None
 
 
 def _default_catalog_path() -> Path:
@@ -237,24 +231,6 @@ def _extract_env_values(settings: CatalogApiSettingsProtocol) -> dict[str, str |
         "GEMINI_API_KEY": (
             settings.gemini_api_key.get_secret_value()
             if settings.gemini_api_key is not None
-            else None
-        ),
-        "NVIDIA_BASE_URL": settings.nvidia_base_url,
-        "NVIDIA_API_KEY": (
-            settings.nvidia_api_key.get_secret_value()
-            if settings.nvidia_api_key is not None
-            else None
-        ),
-        "INCEPTION_BASE_URL": settings.inception_base_url,
-        "INCEPTION_API_KEY": (
-            settings.inception_api_key.get_secret_value()
-            if settings.inception_api_key is not None
-            else None
-        ),
-        "OPENAI_BASE_URL": settings.openai_base_url,
-        "OPENAI_API_KEY": (
-            settings.openai_api_key.get_secret_value()
-            if settings.openai_api_key is not None
             else None
         ),
     }

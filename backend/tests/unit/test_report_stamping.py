@@ -32,11 +32,11 @@ def test_create_report_stamp_captures_all_metadata(tmp_path: Path) -> None:
     (git_dir / "HEAD").write_text("fedcba9876543210fedcba9876543210fedcba98\n", encoding="utf-8")
 
     models = {
-        "router": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "answer": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "vision": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "extract": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "judge": "mistralai/mistral-large-4-1t-a52b",
+        "router": "gemini/gemini-3.5-flash",
+        "answer": "gemini/gemini-3.5-flash",
+        "vision": "gemini/gemini-3.5-flash",
+        "extract": "gemini/gemini-3.5-flash",
+        "judge": "gemini/gemini-3.5-flash-lite",
     }
 
     with patch.dict("os.environ", {"GPU_NAME": "NVIDIA GeForce RTX 3050"}):

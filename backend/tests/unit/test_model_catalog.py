@@ -36,11 +36,6 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     assert set(by_id.keys()) == {
         "ollama",
         "gemini",
-        "nvidia",
-        "inception",
-        "openai",
-        "anthropic",
-        "vertex",
     }
 
     # Gemini confirmed models and requests_per_minute == 10
@@ -63,29 +58,6 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     assert gemini_models["gemini-3.5-flash-lite"].baa_covered is False
     assert gemini_models["gemini-3.5-flash-lite"].allowed_roles == ["judge"]
     assert gemini_models["gemini-3.5-flash-lite"].reasoning_off_params == {}
-
-    # NVIDIA confirmed: mistralai/mistral-large-4-1t-a52b only (no nemotron)
-    nvidia = by_id["nvidia"]
-    assert nvidia.required_env == ["NVIDIA_API_KEY", "NVIDIA_BASE_URL"]
-    assert nvidia.structured_output_mode == "json_object"
-    assert nvidia.reasoning_off_params == {}
-    assert nvidia.runtime_settings is not None
-    assert [m.model for m in nvidia.models] == ["mistralai/mistral-large-4-1t-a52b"]
-    nv_model = nvidia.models[0]
-    assert nv_model.supports_vision is False
-    assert nv_model.remote is True
-    assert nv_model.baa_covered is False
-
-    # Placeholders with zero models
-    for placeholder in ("inception", "openai"):
-        assert by_id[placeholder].models == []
-        assert by_id[placeholder].coming_later is False
-        assert by_id[placeholder].runtime_settings is not None
-
-    # Coming later providers
-    for future_provider in ("anthropic", "vertex"):
-        assert by_id[future_provider].coming_later is True
-        assert by_id[future_provider].models == []
 
     # Ollama matches desktop-gpu (qwen3:8b + qwen3-vl:4b-instruct), home-gpu, and office-cpu
     ollama = by_id["ollama"]
@@ -308,20 +280,16 @@ async def test_inspect_providers_status_reports_connected_vs_missing_without_key
 ) -> None:
     """Missing env settings produce not_connected + missing names; keys never leak."""
     secret_gemini = "secret-gemini-api-key-do-not-leak"  # pragma: allowlist secret
-    secret_nvidia = "secret-nvidia-api-key-do-not-leak"  # pragma: allowlist secret
     settings = ApiSettings(
         profile="mock",
         storage_dir=str(tmp_path),
         gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         gemini_api_key=SecretStr(secret_gemini),
-        nvidia_api_key=SecretStr(secret_nvidia),
-        # nvidia_base_url deliberately omitted
     )
 
     resp = await inspect_providers_status(settings=settings)
     serialized = resp.model_dump_json()
     assert secret_gemini not in serialized
-    assert secret_nvidia not in serialized
 
     by_id = {p.provider: p for p in resp.providers}
     assert by_id["gemini"].status == "connected"
@@ -331,15 +299,8 @@ async def test_inspect_providers_status_reports_connected_vs_missing_without_key
         "gemini-3.5-flash-lite",
     ]
 
-    assert by_id["nvidia"].status == "not_connected"
-    assert by_id["nvidia"].missing_settings == ["NVIDIA_BASE_URL"]
-    assert by_id["nvidia"].models == []
-
     assert by_id["ollama"].status == "not_connected"
     assert by_id["ollama"].missing_settings == ["OLLAMA_BASE_URL"]
-
-    assert by_id["anthropic"].status == "coming_later"
-    assert by_id["vertex"].status == "coming_later"
 
 
 @pytest.mark.asyncio

@@ -689,52 +689,53 @@ async def node_route(
         elif computed_mode not in ("exact", "short", "explain", "table"):
             computed_mode = "short"
 
-        if any(
-            k in q
-            for k in (
-                "table",
-                "spreadsheet",
-                "row",
-                "fee schedule",
-                "accepted plan",
-                "accepted plans",
-                "insurance plan",
-                "plans accepted",
-                "turnaround",
-                "turnaround time",
-                "turnaround times",
-                "sla",
-                "standard sla",
-                "urgent sla",
-            )
-        ):
-            computed_mode = "table"
-        elif any(
-            k in q
-            for k in (
-                "summarize",
-                "summary",
-                "overview",
-                "full data",
-                "data please",
-                "detailed",
-                "comprehensive",
-                "in depth",
-                "elaborate",
-            )
-        ):
-            computed_mode = "explain"
-        elif any(
-            k in q
-            for k in (
-                "reference code",
-                "policy code",
-                "exact code",
-                "verbatim",
-                "code only",
-            )
-        ):
-            computed_mode = "exact"
+        if computed_route == "knowledge":
+            if any(
+                k in q
+                for k in (
+                    "table",
+                    "spreadsheet",
+                    "row",
+                    "fee schedule",
+                    "accepted plan",
+                    "accepted plans",
+                    "insurance plan",
+                    "plans accepted",
+                    "turnaround",
+                    "turnaround time",
+                    "turnaround times",
+                    "sla",
+                    "standard sla",
+                    "urgent sla",
+                )
+            ):
+                computed_mode = "table"
+            elif any(
+                k in q
+                for k in (
+                    "summarize",
+                    "summary",
+                    "overview",
+                    "full data",
+                    "data please",
+                    "detailed",
+                    "comprehensive",
+                    "in depth",
+                    "elaborate",
+                )
+            ):
+                computed_mode = "explain"
+            elif any(
+                k in q
+                for k in (
+                    "reference code",
+                    "policy code",
+                    "exact code",
+                    "verbatim",
+                    "code only",
+                )
+            ):
+                computed_mode = "exact"
 
         if computed_route == "clarify":
             if ports.is_mock_profile and ports.mock_titles:

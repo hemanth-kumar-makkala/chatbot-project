@@ -180,16 +180,6 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             gemini_api_key=(
                 settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
             ),
-            nvidia_base_url=settings.nvidia_base_url,
-            nvidia_api_key=(
-                settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-            ),
-            inception_base_url=settings.inception_base_url,
-            inception_api_key=(
-                settings.inception_api_key.get_secret_value()
-                if settings.inception_api_key
-                else None
-            ),
         )
         retriever = create_retriever(profile)
         reranker = None

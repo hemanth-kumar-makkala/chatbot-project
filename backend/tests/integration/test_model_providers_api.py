@@ -147,9 +147,7 @@ async def test_get_model_providers_rbac_and_zero_secrets_exposed(tmp_path: Path)
         by_id = {p["provider"]: p for p in data["providers"]}
         assert by_id["gemini"]["status"] == "connected"
         assert by_id["gemini"]["missing_settings"] == []
-        assert by_id["nvidia"]["status"] == "not_connected"
-        assert "NVIDIA_API_KEY" in by_id["nvidia"]["missing_settings"]
-        assert by_id["anthropic"]["status"] == "coming_later"
+        assert "ollama" in by_id
 
         # Platform Admin -> 200
         client.cookies.set("session_token", "tok-padmin")
@@ -232,21 +230,12 @@ async def test_provider_test_connection_rbac_csrf_and_error_codes(tmp_path: Path
 
         # Not connected provider -> ok=False, PROVIDER_NOT_CONNECTED
         resp_missing = await client.post(
-            "/v1/models/providers/nvidia/test-connection",
+            "/v1/models/providers/ollama/test-connection",
             headers=csrf_headers,
         )
         assert resp_missing.status_code == 200
         assert resp_missing.json()["ok"] is False
         assert resp_missing.json()["error_code"] == "PROVIDER_NOT_CONNECTED"
-
-        # Coming later -> ok=False, PROVIDER_COMING_LATER
-        resp_later = await client.post(
-            "/v1/models/providers/anthropic/test-connection",
-            headers=csrf_headers,
-        )
-        assert resp_later.status_code == 200
-        assert resp_later.json()["ok"] is False
-        assert resp_later.json()["error_code"] == "PROVIDER_COMING_LATER"
 
         # Unknown provider -> 404
         resp_unknown = await client.post(
@@ -369,7 +358,7 @@ async def test_get_model_providers_builtin_auth_under_postgres_rls(
             admin_csrf = r_login_admin.cookies.get("csrf_token")
             assert admin_csrf is not None
             r_admin_test = await client.post(
-                "/v1/models/providers/nvidia/test-connection",
+                "/v1/models/providers/gemini/test-connection",
                 headers={"X-CSRF-Token": admin_csrf},
             )
             assert r_admin_test.status_code == 403
@@ -385,7 +374,7 @@ async def test_get_model_providers_builtin_auth_under_postgres_rls(
             r_padmin_prov = await client.get("/v1/models/providers")
             assert r_padmin_prov.status_code == 200
             r_padmin_test = await client.post(
-                "/v1/models/providers/nvidia/test-connection",
+                "/v1/models/providers/gemini/test-connection",
                 headers={"X-CSRF-Token": padmin_csrf},
             )
             assert r_padmin_test.status_code == 200

@@ -700,10 +700,6 @@ def create_model_provider(
     vision_model: str | None = None,
     gemini_base_url: str | None = None,
     gemini_api_key: str | None = None,
-    nvidia_base_url: str | None = None,
-    nvidia_api_key: str | None = None,
-    inception_base_url: str | None = None,
-    inception_api_key: str | None = None,
     config_path: Path | None = None,
 ) -> ModelProvider:
     """Create local/hosted model providers with independent role routing."""
@@ -732,11 +728,6 @@ def create_model_provider(
 
     hosted_param_map: dict[str, tuple[tuple[str, str | None], tuple[str, str | None]]] = {
         "gemini": (("GEMINI_BASE_URL", gemini_base_url), ("GEMINI_API_KEY", gemini_api_key)),
-        "nvidia": (("NVIDIA_BASE_URL", nvidia_base_url), ("NVIDIA_API_KEY", nvidia_api_key)),
-        "inception": (
-            ("INCEPTION_BASE_URL", inception_base_url),
-            ("INCEPTION_API_KEY", inception_api_key),
-        ),
     }
 
     def _resolve_hosted_credentials(
@@ -770,14 +761,14 @@ def create_model_provider(
             )
         _resolve_hosted_credentials(
             p_name,
-            allow_env_fallback=(profile == "desktop-api" and p_name in ("gemini", "nvidia")),
+            allow_env_fallback=(profile == "desktop-api" and p_name == "gemini"),
         )
 
     _validate_remote_selector(chat_model)
     _validate_remote_selector(vision_model)
 
     if profile in ("office-cpu", "dev-free-api", "cloud") and (
-        chat_model is None or not chat_model.startswith(("gemini:", "nvidia:", "inception:"))
+        chat_model is None or not chat_model.startswith("gemini:")
     ):
         raise ConfigurationError(
             f"Local model provider is not implemented for profile '{profile}'.",
@@ -870,8 +861,7 @@ def create_model_provider(
         )
 
     if profile in ("office-cpu", "dev-free-api", "cloud") and not any(
-        isinstance(cfg, dict)
-        and cfg.get("provider") in ("gemini", "nvidia", "inception", "openai_compatible")
+        isinstance(cfg, dict) and cfg.get("provider") in ("gemini", "openai_compatible")
         for cfg in profile_models.values()
     ):
         raise ConfigurationError(
@@ -942,7 +932,7 @@ def create_model_provider(
         if model_override:
             if ":" in model_override:
                 p_name, _, m_name = model_override.partition(":")
-                if p_name in ("gemini", "nvidia", "inception", "mock", "ollama"):
+                if p_name in ("gemini", "mock", "ollama"):
                     provider_name = p_name
                     model_name = m_name
                 else:

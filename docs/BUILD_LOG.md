@@ -3939,3 +3939,54 @@ Append-only record of all completed tasks, architectural choices, and test recor
   14. `backend/tests/unit/test_table_retrieval.py`
   15. `web/__tests__/chat.test.tsx`
   16. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage F: Full-Suite Logger Fix & Graph Route Heuristic Guard
+
+- **Task**: Fix Alembic logging configuration disabling application loggers during full test suite; guard `graph.py` answer_mode keyword heuristic to apply strictly to `knowledge` route questions.
+- **Changes**:
+  1. `backend/app/db/migrations/env.py`: Added `disable_existing_loggers=False` to `fileConfig(...)` so migration test suites do not silence `app.core.graph` loggers during subsequent unit tests (`test_node_assess_evidence_fails_closed_when_judge_fails`).
+  2. `backend/app/core/graph.py`: Scoped keyword heuristic (setting `table`, `explain`, `exact` answer modes based on prompt keywords) strictly inside `if computed_route == "knowledge":`. On `general` route, answer_mode remains untouched (e.g. `short`).
+  3. `backend/tests/unit/test_generate_node_schemas.py`: Added unit test `test_node_route_keyword_heuristic_scoped_to_knowledge_route` verifying general route preservation and knowledge mode overrides.
+- **Files Edited (4)**:
+  1. `backend/app/db/migrations/env.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_generate_node_schemas.py`
+  4. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage D: Non-Gemini Hosted Provider Retirement & Catalog Streamlining
+
+- **Task**: Retire non-Gemini hosted providers (`nvidia`, `inception`, `openai`, `anthropic`, `vertex`) from the active model catalog and runtime profiles (`desktop-api.yaml`, `cloud.yaml`); remove provider-specific parameters from `wiring.py`, routes, and settings while resolving hosted models generically; ensure leftover environment variables (`NVIDIA_*`, `INCEPTION_*`, `OPENAI_*`) are silently ignored; clean evaluation scripts and test fixtures.
+- **Changes**:
+  1. `backend/config/model_catalog.yaml`: Removed `nvidia`, `inception`, `openai`, `anthropic`, and `vertex` provider sections and catalog models. Active curated providers are `ollama` (local) and `gemini` (cloud hosted).
+  2. `backend/config/profiles/desktop-api.yaml`: Removed `providers.nvidia` and `generation_limits`. Updated profile header documentation.
+  3. `backend/config/profiles/cloud.yaml`: Removed `nvidia` and `inception` `generation_limits`; replaced with generic vertex generation limits for Phase 6.
+  4. `backend/app/api/config.py`: Added `model_config = {"extra": "ignore"}` to `ApiSettings`; removed deprecated `nvidia_*`, `inception_*`, `openai_*` configuration properties. Leftover env vars in `.env` or system environment are ignored silently without startup errors.
+  5. `backend/app/adapters/models/catalog.py`: Removed provider-specific fields from `CatalogApiSettingsProtocol` and `_extract_env_values`.
+  6. `backend/app/wiring.py`: Streamlined `create_model_provider` and `hosted_param_map` to generic Gemini / Ollama resolution; removed legacy NVIDIA/Inception wiring guards.
+  7. `backend/app/api/routes/questions.py` & `backend/app/api/routes/conversations.py`: Removed legacy provider keyword arguments passed into `create_model_provider` and `_run_document_extraction`.
+  8. `backend/scripts/compare_4b_vs_beam.py`: Removed NVIDIA evaluation mode, `call_nvidia_vision`, sleep pacing, and comparison columns.
+  9. `.env.example`: Removed `NVIDIA_*` and `INCEPTION_*` placeholders; documented `GEMINI_API_KEY`.
+  10. Test Fixtures Cleanup (`test_model_catalog.py`, `test_model_settings.py`, `test_desktop_api_profile.py`, `test_cloud_safety_lock.py`, `test_openai_compatible_provider.py`, `test_report_stamping.py`, `test_model_providers_api.py`): Updated test expectations and mock models to `gemini` or generic IDs; added test verifying leftover provider environment variables are ignored silently; retained physical GPU hardware names (`"NVIDIA GeForce RTX 3050"`).
+- **Files Edited (18)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/config/profiles/desktop-api.yaml`
+  3. `backend/config/profiles/cloud.yaml`
+  4. `backend/app/api/config.py`
+  5. `backend/app/adapters/models/catalog.py`
+  6. `backend/app/wiring.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `backend/app/api/routes/conversations.py`
+  9. `backend/scripts/compare_4b_vs_beam.py`
+  10. `backend/tests/integration/test_model_providers_api.py`
+  11. `backend/tests/unit/test_model_catalog.py`
+  12. `backend/tests/unit/test_model_settings.py`
+  13. `backend/tests/unit/test_desktop_api_profile.py`
+  14. `backend/tests/unit/test_cloud_safety_lock.py`
+  15. `backend/tests/unit/test_openai_compatible_provider.py`
+  16. `backend/tests/unit/test_report_stamping.py`
+  17. `.env.example`
+  18. `docs/BUILD_LOG.md`

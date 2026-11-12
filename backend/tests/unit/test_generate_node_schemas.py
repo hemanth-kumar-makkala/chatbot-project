@@ -277,6 +277,40 @@ class TestGenerateNodeSchemas:
         assert getattr(fb_logs[0], "answer_mode", None) == "short"
         assert getattr(fb_logs[0], "router_fallback", None) is True
 
+    @pytest.mark.asyncio
+    async def test_node_route_keyword_heuristic_scoped_to_knowledge_route(
+        self, base_context: GraphRuntimeContext
+    ) -> None:
+        """Requirement: keyword heuristic applies only to knowledge route; never changes general."""
+        state: GraphState = {"request_id": "req-route-heuristic"}
+
+        # Case 1: Router classifies as general, question mentions table/turnaround/code keywords
+        # answer_mode MUST remain "short" and route MUST remain "general"
+        base_context.ports.model_provider = MockGenerationModel(
+            output={"route": "general", "answer_mode": "short", "language": "en"}
+        )
+        base_context.question_text = (
+            "draft an email about our turnaround time table and policy code"
+        )
+        res_general = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+        assert res_general["route"] == "general"
+        assert res_general["answer_mode"] == "short"
+
+        # Case 2: Router classifies as knowledge, question mentions table keyword -> mode is table
+        base_context.ports.model_provider = MockGenerationModel(
+            output={"route": "knowledge", "answer_mode": "short", "language": "en"}
+        )
+        base_context.question_text = "what is the turnaround time for urgent prior authorization?"
+        res_table = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+        assert res_table["route"] == "knowledge"
+        assert res_table["answer_mode"] == "table"
+
+        # Case 3: Router classifies as knowledge, question mentions summarize -> mode is explain
+        base_context.question_text = "summarize the prior authorization policy in depth"
+        res_explain = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+        assert res_explain["route"] == "knowledge"
+        assert res_explain["answer_mode"] == "explain"
+
     @pytest.mark.models
     @pytest.mark.asyncio
     async def test_router_classify_live_qwen3_8b_six_prompts(self) -> None:
