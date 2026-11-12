@@ -47,6 +47,8 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     gemini = by_id["gemini"]
     assert gemini.coming_later is False
     assert gemini.required_env == ["GEMINI_API_KEY", "GEMINI_BASE_URL"]
+    assert gemini.structured_output_mode == "json_schema"
+    assert gemini.reasoning_off_params == {"reasoning_effort": "none"}
     assert gemini.runtime_settings is not None
     assert gemini.runtime_settings.requests_per_minute == 10
     gemini_models = {m.model: m for m in gemini.models}
@@ -63,6 +65,8 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     # NVIDIA confirmed: mistralai/mistral-large-4-1t-a52b only (no nemotron)
     nvidia = by_id["nvidia"]
     assert nvidia.required_env == ["NVIDIA_API_KEY", "NVIDIA_BASE_URL"]
+    assert nvidia.structured_output_mode == "json_object"
+    assert nvidia.reasoning_off_params == {}
     assert nvidia.runtime_settings is not None
     assert [m.model for m in nvidia.models] == ["mistralai/mistral-large-4-1t-a52b"]
     nv_model = nvidia.models[0]
@@ -84,6 +88,8 @@ def test_load_model_catalog_validates_confirmed_providers_and_explicit_settings(
     # Ollama matches all models from desktop-gpu, home-gpu, office-cpu YAMLs
     ollama = by_id["ollama"]
     assert ollama.required_env == ["OLLAMA_BASE_URL"]
+    assert ollama.structured_output_mode == "json_object"
+    assert ollama.reasoning_off_params == {}
     assert ollama.runtime_settings is not None
     ollama_models = {m.model for m in ollama.models}
     assert ollama_models == {
@@ -135,6 +141,83 @@ def test_load_model_catalog_fails_closed_on_missing_or_invalid_file(tmp_path: Pa
     with pytest.raises(ConfigurationError) as exc_bad:
         load_model_catalog(bad_yaml)
     assert exc_bad.value.error_code == "MODEL_CATALOG_INVALID"
+
+
+def test_load_model_catalog_requires_structured_output_and_reasoning_off_params(
+    tmp_path: Path,
+) -> None:
+    """Providers missing structured_output_mode or reasoning_off_params fail catalog validation."""
+    base_runtime = {
+        "timeout_seconds": 60.0,
+        "max_retries": 3,
+        "max_total_wait_seconds": 20.0,
+        "requests_per_minute": 10,
+        "max_image_dimension": 1536,
+    }
+
+    missing_mode = tmp_path / "missing_mode.yaml"
+    missing_mode.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "gemini": {
+                        "display_name": "Gemini",
+                        "transport": "openai_compatible",
+                        "runtime_settings": base_runtime,
+                        "reasoning_off_params": {"reasoning_effort": "none"},
+                        "models": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError) as exc_mode:
+        load_model_catalog(missing_mode)
+    assert exc_mode.value.error_code == "MODEL_CATALOG_INVALID"
+
+    missing_reasoning = tmp_path / "missing_reasoning.yaml"
+    missing_reasoning.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "gemini": {
+                        "display_name": "Gemini",
+                        "transport": "openai_compatible",
+                        "runtime_settings": base_runtime,
+                        "structured_output_mode": "json_schema",
+                        "models": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError) as exc_reason:
+        load_model_catalog(missing_reasoning)
+    assert exc_reason.value.error_code == "MODEL_CATALOG_INVALID"
+
+    invalid_mode = tmp_path / "invalid_mode.yaml"
+    invalid_mode.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "gemini": {
+                        "display_name": "Gemini",
+                        "transport": "openai_compatible",
+                        "runtime_settings": base_runtime,
+                        "structured_output_mode": "xml",
+                        "reasoning_off_params": {},
+                        "models": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError) as exc_invalid:
+        load_model_catalog(invalid_mode)
+    assert exc_invalid.value.error_code == "MODEL_CATALOG_INVALID"
 
 
 def test_governance_badge_derivation() -> None:

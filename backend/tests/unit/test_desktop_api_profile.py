@@ -465,6 +465,9 @@ def test_desktop_api_builds_gemini_providers_for_all_five_roles_from_catalog() -
         assert prov._max_total_wait_seconds == 20.0
         assert prov._max_image_dimension == 1536
         assert prov._strip_reasoning is True
+        assert prov._reasoning is False
+        assert prov._structured_output_mode == "json_schema"
+        assert prov._reasoning_off_params == {"reasoning_effort": "none"}
         assert prov._temperature == 0.0
         assert prov._output_token_limits == {
             "router": 1024,
@@ -483,6 +486,9 @@ def test_desktop_api_builds_gemini_providers_for_all_five_roles_from_catalog() -
     assert judge_prov._max_total_wait_seconds == 20.0
     assert judge_prov._max_image_dimension == 1536
     assert judge_prov._strip_reasoning is True
+    assert judge_prov._reasoning is False
+    assert judge_prov._structured_output_mode == "json_schema"
+    assert judge_prov._reasoning_off_params == {"reasoning_effort": "none"}
     assert judge_prov._temperature == 0.0
     assert judge_prov._output_token_limits["judge"] == 1024
 

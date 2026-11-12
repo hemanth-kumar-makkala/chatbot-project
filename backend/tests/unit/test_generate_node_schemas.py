@@ -192,6 +192,28 @@ class TestGenerateNodeSchemas:
         schema = load_response_schema("answer_synthesis")
         assert schema.get("type") == "object"
 
+    def test_router_classify_prompt_contains_explicit_rules_and_bumped_version(self) -> None:
+        """Part B: router_classify prompt bumped to 1.1.0 with explicit route rules/examples."""
+        registry = get_prompt_registry()
+        router_entry = registry["prompts"]["router_classify"]
+        assert router_entry["default_version"] == "1.1.0"
+
+        tmpl = load_prompt_template("router_classify")
+        assert "{question}" in tmpl
+        assert "general:" in tmpl
+        assert "hello" in tmpl
+        assert "draft an email to a clinic about a delayed authorization" in tmpl
+        assert "what is 15% of 240" in tmpl
+        assert "knowledge:" in tmpl
+        assert "what is the front desk policy for identity verification" in tmpl
+        assert "which plans are accepted" in tmpl
+        assert "extraction:" in tmpl
+        assert "When unsure between general and knowledge, choose knowledge." in tmpl
+
+        router_schema = load_response_schema("router_classify")
+        route_enum = router_schema["properties"]["route"]["enum"]
+        assert set(route_enum) == {"knowledge", "general", "clarify", "extraction"}
+
     @pytest.mark.asyncio
     async def test_node_route_picks_mode_and_falls_back_to_short_on_model_failure(
         self, base_context: GraphRuntimeContext

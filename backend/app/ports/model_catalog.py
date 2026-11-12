@@ -6,12 +6,13 @@ Clean architecture invariant:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 ProviderConnectionStatus = Literal["connected", "not_connected", "coming_later"]
 ModelGovernanceBadge = Literal["local", "cloud_test_data_only", "cloud_with_baa"]
+StructuredOutputMode = Literal["json_schema", "json_object"]
 SelectableRole = Literal["answer", "judge"]
 EngineRoleName = Literal["router", "answer", "vision", "extract", "judge"]
 
@@ -58,6 +59,8 @@ class ProviderCatalogConfig(BaseModel):
     display_name: str = Field(..., min_length=1)
     transport: Literal["ollama", "openai_compatible", "native_coming_later"]
     coming_later: bool = False
+    structured_output_mode: StructuredOutputMode
+    reasoning_off_params: dict[str, Any]
     required_env: list[str] = Field(default_factory=list)
     runtime_settings: ProviderRuntimeSettings | None = None
     notes: str = ""
@@ -116,4 +119,5 @@ __all__ = [
     "ProviderTestConnectionResponse",
     "ProvidersStatusResponse",
     "SelectableRole",
+    "StructuredOutputMode",
 ]

@@ -8,6 +8,7 @@ import json
 import random
 import re
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -22,6 +23,7 @@ from app.ports.errors import (
     ProviderUnavailable,
 )
 from app.ports.image_processor import ImageProcessor
+from app.ports.model_catalog import StructuredOutputMode
 from app.ports.model_provider import ModelProvider
 from app.ports.types import (
     ChatMessage,
@@ -88,7 +90,22 @@ class OpenAICompatibleModelProvider(ModelProvider):
         requests_per_minute: int | None = None,
         strip_reasoning: bool = True,
         temperature: float = 0.0,
+        structured_output_mode: StructuredOutputMode = "json_object",
+        reasoning: bool = False,
+        reasoning_off_params: Mapping[str, Any] | None = None,
     ) -> None:
+        if structured_output_mode not in ("json_schema", "json_object"):
+            raise ConfigurationError(
+                message=(
+                    "Hosted model structured_output_mode must be 'json_schema' or 'json_object'"
+                ),
+                error_code="HOSTED_MODEL_CONFIGURATION_INVALID",
+            )
+        if reasoning_off_params is not None and not isinstance(reasoning_off_params, Mapping):
+            raise ConfigurationError(
+                message="Hosted model reasoning_off_params must be a mapping",
+                error_code="HOSTED_MODEL_CONFIGURATION_INVALID",
+            )
         if not model_name.strip() or not base_url.strip() or not api_key.strip():
             raise ConfigurationError(
                 message="Model name, base URL, and API key are required",
@@ -121,6 +138,11 @@ class OpenAICompatibleModelProvider(ModelProvider):
         self._requests_per_minute = requests_per_minute
         self._strip_reasoning = strip_reasoning
         self._temperature = temperature
+        self._structured_output_mode: StructuredOutputMode = structured_output_mode
+        self._reasoning = bool(reasoning)
+        self._reasoning_off_params: dict[str, Any] = (
+            dict(reasoning_off_params) if reasoning_off_params is not None else {}
+        )
 
         self._pacing_lock = asyncio.Lock()
         self._last_request_time: float = 0.0
@@ -159,8 +181,27 @@ class OpenAICompatibleModelProvider(ModelProvider):
             "temperature": self._temperature,
             "max_tokens": max_tokens,
         }
+        if not self._reasoning and self._reasoning_off_params:
+            for param_key, param_val in self._reasoning_off_params.items():
+                payload[param_key] = param_val
         if schema is not None:
-            payload["response_format"] = {"type": "json_object"}
+            if self._structured_output_mode == "json_schema":
+                raw_schema = schema.model_json_schema()
+                raw_title = raw_schema.get("title")
+                schema_name = (
+                    raw_title.strip()
+                    if isinstance(raw_title, str) and raw_title.strip()
+                    else "response"
+                )
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "schema": raw_schema,
+                    },
+                }
+            else:
+                payload["response_format"] = {"type": "json_object"}
 
         await self._apply_pacing()
 

@@ -6,7 +6,7 @@ version: "1.0.0"
 
 prompts:
   router_classify:
-    default_version: "1.0.0"
+    default_version: "1.1.0"
     versions:
       "1.0.0":
         role: "router"
@@ -22,6 +22,35 @@ prompts:
             route:
               type: "string"
               enum: ["knowledge", "general", "clarify"]
+            answer_mode:
+              type: "string"
+              enum: ["exact", "short", "explain", "table"]
+            language:
+              type: "string"
+          required: ["route", "answer_mode", "language"]
+      "1.1.0":
+        role: "router"
+        description: "Classify incoming user query into route (knowledge, general, clarify, extraction) and answer mode (exact, short, explain, table)."
+        template: |
+          You are the query router for a client knowledge assistant.
+          Analyze the user question and determine the appropriate route and answer mode.
+
+          Route rules:
+          - general: greetings and small talk, drafting emails/messages/templates without client facts, arithmetic and calculations, explaining general concepts.
+            Example: "hello", "draft an email to a clinic about a delayed authorization", "what is 15% of 240".
+          - knowledge: anything about a client, payer, policy, procedure, SOP, document, patient, turnaround time or internal rule.
+            Example: "what is the front desk policy for identity verification", "which plans are accepted".
+          - extraction: the user attached a document and asks to pull fields from it.
+          When unsure between general and knowledge, choose knowledge.
+
+          Question: {question}
+          Output JSON matching the required schema.
+        response_schema:
+          type: "object"
+          properties:
+            route:
+              type: "string"
+              enum: ["knowledge", "general", "clarify", "extraction"]
             answer_mode:
               type: "string"
               enum: ["exact", "short", "explain", "table"]

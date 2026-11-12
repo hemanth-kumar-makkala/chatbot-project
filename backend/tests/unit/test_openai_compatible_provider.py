@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.adapters.images.pillow import PillowImageProcessor
 from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
@@ -416,3 +417,153 @@ async def test_reasoning_think_blocks_and_empty_thoughts_stripped_before_json_pa
             max_tokens=100,
         )
     assert res4.structured_output == {"name": "No Reasoning"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_json_schema_mode_and_reasoning_off_params() -> None:
+    """Gemini sends json_schema (no strict) and reasoning_off_params when reasoning=False."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps({"name": "Gemini Apex"})}}],
+                "usage": {"completion_tokens": 9},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleModelProvider(
+            "gemini-3.5-flash",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "unit-test-placeholder",
+            http_client=client,
+            structured_output_mode="json_schema",
+            reasoning=False,
+            reasoning_off_params={"reasoning_effort": "none"},
+        )
+        result = await provider.generate(
+            role=ModelRole.ANSWER,
+            messages=[ChatMessage(role="user", content="Return a name")],
+            schema=NameOutput,
+            max_tokens=256,
+        )
+
+    assert len(requests) == 1
+    payload = json.loads(requests[0].content)
+    assert payload["reasoning_effort"] == "none"
+    assert payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "NameOutput",
+            "schema": NameOutput.model_json_schema(),
+        },
+    }
+    assert "strict" not in payload["response_format"]["json_schema"]
+    assert result.structured_output == {"name": "Gemini Apex"}
+
+
+@pytest.mark.asyncio
+async def test_json_schema_mode_uses_response_when_schema_title_empty() -> None:
+    """Schemas with empty/whitespace title fall back to 'response' as json_schema.name."""
+
+    class UntitledOutput(BaseModel):
+        model_config = ConfigDict(title="   ")
+        ok: bool
+
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps({"ok": True})}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleModelProvider(
+            "gemini-3.5-flash",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "unit-test-placeholder",
+            http_client=client,
+            structured_output_mode="json_schema",
+            reasoning=False,
+            reasoning_off_params={"reasoning_effort": "none"},
+        )
+        res = await provider.generate(
+            role=ModelRole.ROUTER,
+            messages=[ChatMessage(role="user", content="Check")],
+            schema=UntitledOutput,
+            max_tokens=150,
+        )
+
+    assert captured[0]["response_format"]["json_schema"]["name"] == "response"
+    assert "strict" not in captured[0]["response_format"]["json_schema"]
+    assert captured[0]["reasoning_effort"] == "none"
+    assert res.structured_output == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_json_object_mode_and_reasoning_true_behavior() -> None:
+    """json_object mode keeps legacy format, and reasoning=True omits reasoning_off_params."""
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps({"name": "Legacy"})}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        legacy_provider = OpenAICompatibleModelProvider(
+            "mistralai/test-model",
+            "https://models.example/v1",
+            "unit-test-placeholder",
+            http_client=client,
+            structured_output_mode="json_object",
+            reasoning=False,
+            reasoning_off_params={},
+        )
+        await legacy_provider.generate(
+            role=ModelRole.ANSWER,
+            messages=[ChatMessage(role="user", content="Name")],
+            schema=NameOutput,
+            max_tokens=128,
+        )
+
+        reasoning_on_provider = OpenAICompatibleModelProvider(
+            "gemini-3.5-flash",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "unit-test-placeholder",
+            http_client=client,
+            structured_output_mode="json_schema",
+            reasoning=True,
+            reasoning_off_params={"reasoning_effort": "none"},
+        )
+        await reasoning_on_provider.generate(
+            role=ModelRole.ANSWER,
+            messages=[ChatMessage(role="user", content="Name")],
+            schema=NameOutput,
+            max_tokens=128,
+        )
+
+    assert captured[0]["response_format"] == {"type": "json_object"}
+    assert "reasoning_effort" not in captured[0]
+    assert captured[1]["response_format"]["type"] == "json_schema"
+    assert "reasoning_effort" not in captured[1]
+
+
+def test_invalid_structured_output_mode_raises_configuration_error() -> None:
+    """Adapter rejects unsupported structured_output_mode values cleanly."""
+    bad_kwargs: dict[str, Any] = {"structured_output_mode": "xml_schema"}
+    with pytest.raises(ConfigurationError) as exc_info:
+        OpenAICompatibleModelProvider(
+            "gemini-3.5-flash",
+            "https://models.example/v1",
+            "unit-test-placeholder",
+            **bad_kwargs,
+        )
+    assert exc_info.value.error_code == "HOSTED_MODEL_CONFIGURATION_INVALID"

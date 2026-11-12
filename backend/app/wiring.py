@@ -40,6 +40,7 @@ from app.ports.model_catalog import (
     ProviderCatalogConfig,
     ProvidersStatusResponse,
     ProviderTestConnectionResponse,
+    StructuredOutputMode,
 )
 from app.ports.model_provider import ModelCapabilities, ModelProvider
 from app.ports.reranker import Reranker
@@ -941,6 +942,8 @@ def create_model_provider(
                     if profile_limits
                     else {str(k): int(v) for k, v in model_spec.generation_limits.items()}
                 )
+                structured_output_mode: StructuredOutputMode = cat_entry.structured_output_mode
+                reasoning_off_params: dict[str, Any] = dict(cat_entry.reasoning_off_params)
             else:
                 provider_cfg = providers_config.get(provider_name, {})
                 timeout_seconds = float(provider_cfg.get("timeout_seconds", 60.0))
@@ -956,6 +959,8 @@ def create_model_provider(
                     or generation_limits.get(model_name)
                     or generation_limits.get(f"{provider_name}:*", {})
                 )
+                structured_output_mode = "json_object"
+                reasoning_off_params = {}
 
             from app.adapters.models.openai_compatible import OpenAICompatibleModelProvider
 
@@ -970,6 +975,9 @@ def create_model_provider(
                 max_image_dimension=max_image_dimension,
                 strip_reasoning=not reasoning,
                 temperature=temperature,
+                structured_output_mode=structured_output_mode,
+                reasoning=reasoning,
+                reasoning_off_params=reasoning_off_params,
                 output_token_limits=configured_limits,
             )
             hosted_providers_cache[cache_key] = openai_inst

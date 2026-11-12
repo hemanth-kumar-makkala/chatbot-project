@@ -3755,3 +3755,36 @@ Append-only record of all completed tasks, architectural choices, and test recor
 - **Tests & Quality**:
   - `uv run python -m pytest tests/unit/test_desktop_api_profile.py tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models" -v`: 29 passed in 16.32s (`test_desktop_api_profile.py` 15 passed, `test_model_catalog.py` 9 passed, `test_model_providers_api.py` 5 passed).
   - `uv run --project backend pre-commit run --files ...`: passed across all 9 files.
+
+---
+
+### [2026-11-12] Gemini Structured Output (`json_schema` + `reasoning_effort`) & Router Prompt Rules (Part B)
+
+- **Task**: Add catalog-driven `structured_output_mode` and `reasoning_off_params` for `OpenAICompatibleModelProvider` so Gemini sends `json_schema` (without `strict`) and `reasoning_effort: "none"` when `reasoning: false`, and bump `router_classify` prompt to `"1.1.0"` with explicit `general`/`knowledge`/`extraction` rules and examples.
+- **What Was Built**:
+  1. **Catalog Schema & Validation (`backend/config/model_catalog.yaml`, `backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`)**:
+     - Added required `structured_output_mode` (`"json_schema"` | `"json_object"`) and `reasoning_off_params` (`dict[str, Any]`) on `ProviderCatalogConfig` and every provider block in `model_catalog.yaml` (`gemini`: `json_schema` + `{"reasoning_effort": "none"}`; all other providers: `json_object` + `{}`).
+     - Enforced strict catalog validation in `load_model_catalog` failing closed with `ConfigurationError(..., error_code="MODEL_CATALOG_INVALID")` when either field is missing or invalid.
+  2. **OpenAI-Compatible Adapter & Wiring (`backend/app/adapters/models/openai_compatible.py`, `backend/app/wiring.py`)**:
+     - Added `structured_output_mode`, `reasoning`, and `reasoning_off_params` parameters to `OpenAICompatibleModelProvider.__init__` without reading the catalog inside the adapter.
+     - Built `response_format: {"type": "json_schema", "json_schema": {"name": <schema title or "response">, "schema": schema.model_json_schema()}}` (without `"strict"`) when configured for `json_schema`, kept `{"type": "json_object"}` for `json_object`, and merged `reasoning_off_params` into completion payloads whenever `reasoning` is `False`.
+     - Updated `create_model_provider` in `wiring.py` to pass catalog `structured_output_mode`, `reasoning`, and `reasoning_off_params` into `OpenAICompatibleModelProvider`.
+  3. **Router Prompt Update (`prompts/registry.yaml`)**:
+     - Bumped `router_classify.default_version` to `"1.1.0"` with explicit `general`, `knowledge`, `extraction`, and `clarify` rules, examples, tie-breaker (`When unsure between general and knowledge, choose knowledge.`), and `"extraction"` in `route.enum`.
+  4. **Tests (`backend/tests/unit/test_openai_compatible_provider.py`, `backend/tests/unit/test_model_catalog.py`, `backend/tests/unit/test_desktop_api_profile.py`, `backend/tests/unit/test_generate_node_schemas.py`)**:
+     - Verified via fake `httpx.MockTransport` that Gemini mode emits `json_schema` (no `"strict"`), title/`"response"` naming, and `"reasoning_effort": "none"` when `reasoning=False`, while `json_object` and `reasoning=True` remain clean; proved fail-closed `MODEL_CATALOG_INVALID` when catalog fields are missing; verified bumped `router_classify` `1.1.0` rules/examples.
+- **Files Created (0)**: None.
+- **Files Edited (11)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/app/ports/model_catalog.py`
+  3. `backend/app/adapters/models/catalog.py`
+  4. `backend/app/adapters/models/openai_compatible.py`
+  5. `backend/app/wiring.py`
+  6. `prompts/registry.yaml`
+  7. `backend/tests/unit/test_openai_compatible_provider.py`
+  8. `backend/tests/unit/test_model_catalog.py`
+  9. `backend/tests/unit/test_desktop_api_profile.py`
+  10. `backend/tests/unit/test_generate_node_schemas.py`
+  11. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - Verified on touched unit tests (`test_openai_compatible_provider.py`, `test_model_catalog.py`, `test_desktop_api_profile.py`, `test_generate_node_schemas.py`) and `pre-commit run --files`.

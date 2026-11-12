@@ -148,6 +148,22 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                 )
             parsed_models.append(spec)
 
+        raw_structured_mode = provider_val.get("structured_output_mode")
+        if raw_structured_mode not in ("json_schema", "json_object"):
+            raise ConfigurationError(
+                "Provider entry must declare structured_output_mode "
+                "('json_schema' or 'json_object').",
+                error_code="MODEL_CATALOG_INVALID",
+            )
+        raw_reasoning_off = provider_val.get("reasoning_off_params")
+        if not isinstance(raw_reasoning_off, dict) or not all(
+            isinstance(k, str) and bool(k.strip()) for k in raw_reasoning_off
+        ):
+            raise ConfigurationError(
+                "Provider entry must declare reasoning_off_params as a mapping of parameter names.",
+                error_code="MODEL_CATALOG_INVALID",
+            )
+
         try:
             provider_entry = ProviderCatalogConfig.model_validate(
                 {
@@ -155,6 +171,8 @@ def load_model_catalog(config_path: Path | None = None) -> list[ProviderCatalogC
                     "display_name": provider_val.get("display_name"),
                     "transport": provider_val.get("transport"),
                     "coming_later": coming_later,
+                    "structured_output_mode": raw_structured_mode,
+                    "reasoning_off_params": dict(raw_reasoning_off),
                     "required_env": provider_val.get("required_env", []),
                     "runtime_settings": runtime_settings,
                     "notes": provider_val.get("notes", ""),
