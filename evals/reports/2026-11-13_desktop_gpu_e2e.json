@@ -11,17 +11,17 @@
     "machine_name": "DESKTOP-ST369AG",
     "gpu_name": "NVIDIA GeForce RTX 3050",
     "platform": "Windows-11-10.0.26300-SP0",
-    "timestamp": "2026-11-13T17:56:46.907420+00:00",
-    "git_commit": "d18933f3250fa9bde006ff1ab66bd91b282f1be1"
+    "timestamp": "2026-11-13T18:19:36.658734+00:00",
+    "git_commit": "9791cda469f7f55b3a7fcb39a2c174059718ea89"
   },
   "summary": {
     "total_cases": 12,
-    "passed": 9,
-    "failed": 3,
+    "passed": 11,
+    "failed": 1,
     "unclear": 0,
-    "pass_rate_pct": 75.0,
-    "p50_latency_s": 7.15,
-    "p95_latency_s": 20.57
+    "pass_rate_pct": 91.7,
+    "p50_latency_s": 14.51,
+    "p95_latency_s": 30.99
   },
   "by_category": {
     "EXTRACTION": {
@@ -44,15 +44,15 @@
     },
     "SESSION_DOCUMENT": {
       "total": 3,
-      "passed": 1,
-      "failed": 2,
-      "pass_rate": 33.3
+      "passed": 2,
+      "failed": 1,
+      "pass_rate": 66.7
     },
     "TABLE": {
       "total": 2,
-      "passed": 1,
-      "failed": 1,
-      "pass_rate": 50.0
+      "passed": 2,
+      "failed": 0,
+      "pass_rate": 100.0
     },
     "VERSION_CONFLICT": {
       "total": 2,
@@ -62,28 +62,9 @@
     }
   },
   "failures_by_layer": {
-    "routing": 1,
-    "validation": 1,
-    "generation": 1
+    "validation": 1
   },
   "worst_failures": [
-    {
-      "id": "E2E-SD-001",
-      "category": "SESSION_DOCUMENT",
-      "type": "question",
-      "question": "what is the dosage in this fax?",
-      "expected_route": "session_document",
-      "expected_answer": "Take 1 capsule by mouth three times daily for 10 days",
-      "actual_route": "clarify",
-      "actual_status": "clarify",
-      "actual_answer": "Could you please clarify which document or procedure you are referring to?",
-      "extracted_fields": null,
-      "citations": [],
-      "latency": 2.18,
-      "verdict": "FAIL",
-      "fault_layer": "routing",
-      "reason": "Route mismatch: expected 'session_document', got 'clarify'"
-    },
     {
       "id": "E2E-SD-003",
       "category": "SESSION_DOCUMENT",
@@ -96,31 +77,10 @@
       "actual_answer": "I couldn't confirm that from the attached document.",
       "extracted_fields": null,
       "citations": [],
-      "latency": 3.77,
+      "latency": 16.3,
       "verdict": "FAIL",
       "fault_layer": "validation",
       "reason": "Unexpected refusal in session document: 'I couldn't confirm that from the attached document.'"
-    },
-    {
-      "id": "E2E-TAB-001",
-      "category": "TABLE",
-      "type": "question",
-      "question": "what is the turnaround time for a routine prior authorization?",
-      "expected_route": "knowledge",
-      "expected_answer": "Hours",
-      "actual_route": "knowledge",
-      "actual_status": "answered",
-      "actual_answer": "[Sheet: Sheet1, Row: 6] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Summit Care Plan\n[Sheet: Sheet1, Row: 4] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Beacon Mutual Healthcare\n[Sheet: Sheet1, Row: 2] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Apex Health Insurance",
-      "extracted_fields": null,
-      "citations": [
-        "pa_turnaround_times.xlsx",
-        "pa_turnaround_times.xlsx",
-        "pa_turnaround_times.xlsx"
-      ],
-      "latency": 7.77,
-      "verdict": "FAIL",
-      "fault_layer": "generation",
-      "reason": "Table answer missing expected term 'Hours'"
     }
   ],
   "cases": [
@@ -131,15 +91,17 @@
       "question": "what is the dosage in this fax?",
       "expected_route": "session_document",
       "expected_answer": "Take 1 capsule by mouth three times daily for 10 days",
-      "actual_route": "clarify",
-      "actual_status": "clarify",
-      "actual_answer": "Could you please clarify which document or procedure you are referring to?",
+      "actual_route": "session_document",
+      "actual_status": "answered",
+      "actual_answer": "Take 1 capsule by mouth three times daily for 10 days.",
       "extracted_fields": null,
-      "citations": [],
-      "latency": 2.18,
-      "verdict": "FAIL",
-      "fault_layer": "routing",
-      "reason": "Route mismatch: expected 'session_document', got 'clarify'"
+      "citations": [
+        "skewed_fax.pdf"
+      ],
+      "latency": 24.22,
+      "verdict": "PASS",
+      "fault_layer": null,
+      "reason": "Answered correctly with session document citation"
     },
     {
       "id": "E2E-SD-002",
@@ -153,7 +115,7 @@
       "actual_answer": "I couldn't confirm that from the attached document.",
       "extracted_fields": null,
       "citations": [],
-      "latency": 3.95,
+      "latency": 3.91,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Correctly refused missing value in session document"
@@ -170,7 +132,7 @@
       "actual_answer": "I couldn't confirm that from the attached document.",
       "extracted_fields": null,
       "citations": [],
-      "latency": 3.77,
+      "latency": 16.3,
       "verdict": "FAIL",
       "fault_layer": "validation",
       "reason": "Unexpected refusal in session document: 'I couldn't confirm that from the attached document.'"
@@ -187,7 +149,7 @@
       "actual_answer": "Hello! How can I assist you today?",
       "extracted_fields": null,
       "citations": [],
-      "latency": 2.75,
+      "latency": 4.77,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "General route answered cleanly with zero sources"
@@ -201,10 +163,10 @@
       "expected_answer": "prior authorization",
       "actual_route": "general",
       "actual_status": "answered",
-      "actual_answer": "Subject: Follow-Up on Delayed Prior Authorization\n\nDear [Clinic Name] Team,\n\nI hope this message finds you well. I am writing to follow up on a prior authorization request that has been delayed. Could you please provide an update on the status of this request?\n\nThank you for your attention to this matter. I look forward to your response.\n\nBest regards,\n[Your Name]",
+      "actual_answer": "Subject: Follow-Up on Delayed Prior Authorization\n\nDear [Clinic Name] Team,\n\nI hope this message finds you well. I am writing to follow up on a prior authorization request that has been delayed. Could you please provide an update on the status of this request?\n\nThank you for your attention to this matter.\nBest regards,\n[Your Name]",
       "extracted_fields": null,
       "citations": [],
-      "latency": 6.52,
+      "latency": 6.29,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "General route answered cleanly with zero sources"
@@ -218,17 +180,17 @@
       "expected_answer": "Hours",
       "actual_route": "knowledge",
       "actual_status": "answered",
-      "actual_answer": "[Sheet: Sheet1, Row: 6] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Summit Care Plan\n[Sheet: Sheet1, Row: 4] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Beacon Mutual Healthcare\n[Sheet: Sheet1, Row: 2] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Apex Health Insurance",
+      "actual_answer": "[Sheet: Sheet1, Row: 6] Standard Clinical Review, Routine, 72 Hours, 555-0123, Summit Care Plan\n[Sheet: Sheet1, Row: 4] Outpatient Therapy, Routine, 72 Hours, 555-0121, Beacon Mutual Healthcare\n[Sheet: Sheet1, Row: 2] Diagnostic Imaging, Routine, 48 Hours, 555-0120, Apex Health Insurance",
       "extracted_fields": null,
       "citations": [
         "pa_turnaround_times.xlsx",
         "pa_turnaround_times.xlsx",
         "pa_turnaround_times.xlsx"
       ],
-      "latency": 7.77,
-      "verdict": "FAIL",
-      "fault_layer": "generation",
-      "reason": "Table answer missing expected term 'Hours'"
+      "latency": 8.83,
+      "verdict": "PASS",
+      "fault_layer": null,
+      "reason": "Table query answered with proper spreadsheet citation"
     },
     {
       "id": "E2E-TAB-002",
@@ -239,13 +201,13 @@
       "expected_answer": "urgent",
       "actual_route": "knowledge",
       "actual_status": "answered",
-      "actual_answer": "There is no 'urgent' category in the table (urgent is not listed).\n[Sheet: Sheet1, Row: 3] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Apex Health Insurance\n[Sheet: Sheet1, Row: 5] *** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***: Crestview Health",
+      "actual_answer": "There is no 'urgent' category in the table (urgent is not listed).\n[Sheet: Sheet1, Row: 3] Inpatient Surgery, Expedited, 24 Hours, 555-0120, Apex Health Insurance\n[Sheet: Sheet1, Row: 5] Specialty Medication, Expedited, 24 Hours, 555-0122, Crestview Health",
       "extracted_fields": null,
       "citations": [
         "pa_turnaround_times.xlsx",
         "pa_turnaround_times.xlsx"
       ],
-      "latency": 20.89,
+      "latency": 19.99,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Table query answered with proper spreadsheet citation"
@@ -265,7 +227,7 @@
         "front_desk_policy_v2.pdf",
         "front_desk_policy_v1.pdf"
       ],
-      "latency": 12.51,
+      "latency": 12.73,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Version conflict correctly detected with both v1 and v2 cited"
@@ -285,7 +247,7 @@
         "front_desk_policy_v2.pdf",
         "front_desk_policy_v1.pdf"
       ],
-      "latency": 16.41,
+      "latency": 37.84,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Version conflict correctly detected with both v1 and v2 cited"
@@ -302,7 +264,7 @@
       "actual_answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- skewed_fax.pdf\n- prior_auth_guide.pdf",
       "extracted_fields": null,
       "citations": [],
-      "latency": 9.3,
+      "latency": 25.39,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Correctly refused with zero citations"
@@ -319,7 +281,7 @@
       "actual_answer": "I couldn't find that in this assistant's documents. I do have information on:\n- pa_turnaround_times.xlsx\n- skewed_fax.pdf\n- prior_auth_guide.pdf",
       "extracted_fields": null,
       "citations": [],
-      "latency": 2.87,
+      "latency": 3.39,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "Correctly refused with zero citations"
@@ -425,7 +387,7 @@
         }
       ],
       "citations": [],
-      "latency": 20.31,
+      "latency": 22.88,
       "verdict": "PASS",
       "fault_layer": null,
       "reason": "All expected extraction fields matched"
