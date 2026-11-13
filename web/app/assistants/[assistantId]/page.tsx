@@ -33,6 +33,7 @@ interface HomePageProps {
 
 interface AttachedDocument {
   session_document_id?: string;
+  conversation_id?: string;
   filename: string;
   title: string;
   description?: string;
@@ -136,7 +137,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setLiveExtractionError(null);
     setIsUploading(true);
 
-    const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
+    const activeConvId = conversationId || "new";
     try {
       const res = await uploadSessionDocument(assistantId, activeConvId, file);
       if (!res.ok) {
@@ -144,8 +145,9 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         return;
       }
 
-      if (!conversationId && res.data.conversation_id) {
-        setConversationId(res.data.conversation_id);
+      const returnedConvId = res.data.conversation_id;
+      if (returnedConvId) {
+        setConversationId(returnedConvId);
       }
 
       const isAlreadyExtracted =
@@ -154,6 +156,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
       setAttachedDoc({
         session_document_id: res.data.session_document_id,
+        conversation_id: returnedConvId,
         filename: res.data.file_name,
         title: res.data.file_name,
         page_count: res.data.page_count,
@@ -225,7 +228,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
       setExtractingStatusLine("Still working, loading the vision model...");
     }, 10_000);
 
-    const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
+    const activeConvId = conversationId || attachedDoc.conversation_id || "new";
     try {
       const res = await extractSessionDocument(
         assistantId,
@@ -444,9 +447,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     }
 
     const currentAttachedDocName = attachedDoc?.filename;
-    if (attachedDoc) {
-      setAttachedDoc(null);
-    }
 
     try {
       if (!isLiveAssistant) {
@@ -467,7 +467,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         };
         setMessages((prev) => [...prev, asstMsg]);
       } else {
-        const res = await askQuestion(assistantId, trimmed, conversationId);
+        const activeConvId = conversationId || attachedDoc?.conversation_id || null;
+        const res = await askQuestion(assistantId, trimmed, activeConvId);
         if (res.ok) {
           if (res.data.conversation_id) {
             setConversationId(res.data.conversation_id);

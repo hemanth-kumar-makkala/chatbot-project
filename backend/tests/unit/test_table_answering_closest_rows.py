@@ -137,3 +137,91 @@ def test_format_table_answer_never_uses_column_n_or_caption() -> None:
     assert "SYNTHETIC DOCUMENT" not in content
     assert "Urgency: Expedited" in content
     assert "Standard SLA: 24 Hours" in content
+
+
+def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> None:
+    """Stage Q: When multiple rows match (routine SLA), each row is listed with its SLA value."""
+    # Synthetic PA turnaround times rows where headers were Column_N
+    doc_cap = "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    tcs: dict[str, TableCandidate] = {
+        "row-1": TableCandidate(
+            id="row-1",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=1,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Payer Name",
+                "Column_2": "Service Category",
+                "Column_3": "Urgency",
+                "Column_4": "Standard SLA",
+                "Column_5": "Liaison Contact",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-2": TableCandidate(
+            id="row-2",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=2,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Apex Health Insurance",
+                "Column_2": "Diagnostic Imaging",
+                "Column_3": "Routine",
+                "Column_4": "48 Hours",
+                "Column_5": "555-0120",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-4": TableCandidate(
+            id="row-4",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=4,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Beacon Mutual Healthcare",
+                "Column_2": "Outpatient Therapy",
+                "Column_3": "Routine",
+                "Column_4": "72 Hours",
+                "Column_5": "555-0121",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-6": TableCandidate(
+            id="row-6",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=6,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Summit Care Plan",
+                "Column_2": "Standard Clinical Review",
+                "Column_3": "Routine",
+                "Column_4": "72 Hours",
+                "Column_5": "555-0123",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+    }
+
+    selected_ids = ["row-2", "row-4", "row-6"]
+    content = _format_table_answer_text(tcs, selected_ids, [])
+
+    # Every matching row must be listed with its SLA value and identifying concepts
+    assert "48 Hours" in content
+    assert "72 Hours" in content
+    assert "Apex Health Insurance" in content
+    assert "Beacon Mutual Healthcare" in content
+    assert "Summit Care Plan" in content
+    assert "Diagnostic Imaging" in content
+
+    # Must never use Column_N or caption as a column name
+    assert "Column_2" not in content
+    assert "Column_4" not in content
+    assert "SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***:" not in content

@@ -500,18 +500,29 @@ async def node_rewrite(
 
         rewrite_res = await rewrite_followup_question(orig_q, history, ports)
 
+        has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)
         if rewrite_res.needs_clarification:
-            clarifying = (
-                rewrite_res.clarifying_question
-                or "Could you please clarify which document or procedure you are referring to?"
-            )
-            logger.info("Question rewrite requires clarification: original='%s'", orig_q)
-            ctx.response_text = clarifying
-            return {
-                "status": "clarify",
-                "route": "clarify",
-                "response_message_id": str(uuid4()),
-            }
+            if has_attached_doc:
+                # When a session document is attached, referents like "this fax", "this document",
+                # "the attachment", or questions about its values refer to the attached document.
+                # Bypass clarification so node_route routes deterministically to session_document.
+                logger.info(
+                    "Session doc '%s' attached; bypassing clarification for: '%s'",
+                    ctx.session_document_name,
+                    orig_q,
+                )
+            else:
+                clarifying = (
+                    rewrite_res.clarifying_question
+                    or "Could you please clarify which document or procedure you are referring to?"
+                )
+                logger.info("Question rewrite requires clarification: original='%s'", orig_q)
+                ctx.response_text = clarifying
+                return {
+                    "status": "clarify",
+                    "route": "clarify",
+                    "response_message_id": str(uuid4()),
+                }
 
         rewritten_q = rewrite_res.rewritten_question or orig_q
         logger.info(
@@ -1731,7 +1742,7 @@ def _format_table_answer_text(
     selected_ids: list[str],
     missing_terms: list[str],
 ) -> str:
-    """Build a short direct table answer from matching stored rows only (Stage H)."""
+    """Build a short direct table answer from matching stored rows only (Stage H/Q)."""
     import re
 
     def _display_cell(value: Any) -> str:
@@ -1742,26 +1753,40 @@ def _format_table_answer_text(
     row_lines: list[str] = []
     for rid in selected_ids:
         tc = avail_table[rid]
+        # Ignore synthetic header row itself if present in selected_ids
+        if tc.row_index == 1 and any(
+            str(v).strip().lower() in ("payer name", "service category", "standard sla", "urgency")
+            for v in tc.cells.values()
+            if v is not None
+        ):
+            continue
+
         pairs: list[str] = []
         for k, v in tc.cells.items():
+            if v is None:
+                continue
             k_str = str(k).strip()
-            # Never use "Column_N" or the caption as a column name
-            if k_str.lower() == "caption" or (tc.caption and k_str == tc.caption.strip()):
+            if k_str.lower() == "caption":
                 continue
-            if re.match(r"^Column_\d+$", k_str, re.IGNORECASE):
+            v_disp = _display_cell(v)
+            if not v_disp or (tc.caption and v_disp == tc.caption.strip()):
                 continue
-            if v is not None and str(v).strip() != "":
-                pairs.append(f"{k_str}: {_display_cell(v)}")
-        if not pairs:
-            # Fallback if all headers were Column_N
-            pairs = [
-                f"{_display_cell(v)}"
-                for k, v in tc.cells.items()
-                if str(k).strip().lower() != "caption"
-                and not (tc.caption and str(k).strip() == tc.caption.strip())
-                and v is not None
-                and str(v).strip() != ""
-            ]
+
+            is_caption_header = (
+                (tc.caption and k_str == tc.caption.strip())
+                or k_str.startswith("***")
+                or "SYNTHETIC DOCUMENT" in k_str
+            )
+            is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
+
+            if not is_caption_header and not is_generic_col:
+                # Real column name: format as "Column Name: Value"
+                pairs.append(f"{k_str}: {v_disp}")
+            else:
+                # Generic column or caption header (e.g. from Excel with title row):
+                # output value directly so SLA and category values are not omitted.
+                pairs.append(v_disp)
+
         row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
 
     if missing_terms:

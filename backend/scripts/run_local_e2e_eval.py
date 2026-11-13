@@ -93,13 +93,44 @@ def judge_case(
         for fname, fval in expected_fields.items():
             if fname not in fields_by_name:
                 return "FAIL", "extraction", f"Missing expected field '{fname}' in extraction"
-            actual_val = str(fields_by_name[fname].get("value", ""))
-            if normalize_text(fval) not in normalize_text(actual_val):
-                return (
-                    "FAIL",
-                    "extraction",
-                    f"Field '{fname}' value mismatch: expected '{fval}', got '{actual_val}'",
-                )
+            f_actual = fields_by_name[fname]
+            if isinstance(fval, dict):
+                exp_state = fval.get("state")
+                act_state = f_actual.get("state")
+                if exp_state and act_state != exp_state:
+                    return (
+                        "FAIL",
+                        "extraction",
+                        f"Field '{fname}' state mismatch: expected '{exp_state}', "
+                        f"got '{act_state}'",
+                    )
+                exp_ocr = fval.get("ocr_read")
+                exp_vis = fval.get("vision_read")
+                act_r1 = str(f_actual.get("read1_value") or "")
+                act_r2 = str(f_actual.get("read2_value") or "")
+                reads_combined = f"{act_r1} {act_r2}".lower()
+                if exp_ocr and exp_ocr.lower() not in reads_combined:
+                    return (
+                        "FAIL",
+                        "extraction",
+                        f"Field '{fname}' OCR read '{exp_ocr}' missing from reads: "
+                        f"'{act_r1}' vs '{act_r2}'",
+                    )
+                if exp_vis and exp_vis.lower() not in reads_combined:
+                    return (
+                        "FAIL",
+                        "extraction",
+                        f"Field '{fname}' vision read '{exp_vis}' missing from reads: "
+                        f"'{act_r1}' vs '{act_r2}'",
+                    )
+            else:
+                actual_val = str(f_actual.get("value", ""))
+                if normalize_text(fval) not in normalize_text(actual_val):
+                    return (
+                        "FAIL",
+                        "extraction",
+                        f"Field '{fname}' value mismatch: expected '{fval}', got '{actual_val}'",
+                    )
         return "PASS", None, "All expected extraction fields matched"
 
     # Question evaluation
@@ -244,6 +275,7 @@ def run_evaluation() -> dict[str, Any]:
 
     results: list[dict[str, Any]] = []
     latencies: list[float] = []
+    session_docs_by_name: dict[str, tuple[str, str]] = {}
 
     for idx, case in enumerate(cases, start=1):
         cid = case["id"]
@@ -279,34 +311,39 @@ def run_evaluation() -> dict[str, Any]:
                 )
                 continue
 
-            with open(att_path, "rb") as af:
-                files = {"file": (attachment, af, "application/pdf")}
-                upload_resp = client.post(
-                    f"/v1/assistants/{DEV_ASSISTANT_ID}/conversations/new/documents",
-                    files=files,
-                    headers=headers,
-                )
-            if upload_resp.status_code != 200:
-                print(f"  UPLOAD FAILED: {upload_resp.status_code} {upload_resp.text}")
-                results.append(
-                    {
-                        "id": cid,
-                        "category": category,
-                        "type": ctype,
-                        "question": qtext,
-                        "verdict": "FAIL",
-                        "fault_layer": "UI/API",
-                        "reason": f"Document upload failed: {upload_resp.status_code}",
-                        "latency": 0.0,
-                        "route": None,
-                        "answer": None,
-                        "citations": [],
-                    }
-                )
-                continue
-            upload_data = upload_resp.json()
-            conv_id = upload_data.get("conversation_id")
-            doc_id = upload_data.get("session_document_id")
+            if category == "SESSION_DOCUMENT" and attachment in session_docs_by_name:
+                conv_id, doc_id = session_docs_by_name[attachment]
+            else:
+                with open(att_path, "rb") as af:
+                    files = {"file": (attachment, af, "application/pdf")}
+                    upload_resp = client.post(
+                        f"/v1/assistants/{DEV_ASSISTANT_ID}/conversations/new/documents",
+                        files=files,
+                        headers=headers,
+                    )
+                if upload_resp.status_code != 200:
+                    print(f"  UPLOAD FAILED: {upload_resp.status_code} {upload_resp.text}")
+                    results.append(
+                        {
+                            "id": cid,
+                            "category": category,
+                            "type": ctype,
+                            "question": qtext,
+                            "verdict": "FAIL",
+                            "fault_layer": "UI/API",
+                            "reason": f"Document upload failed: {upload_resp.status_code}",
+                            "latency": 0.0,
+                            "route": None,
+                            "answer": None,
+                            "citations": [],
+                        }
+                    )
+                    continue
+                upload_data = upload_resp.json()
+                conv_id = upload_data.get("conversation_id")
+                doc_id = upload_data.get("session_document_id")
+                if conv_id and doc_id and category == "SESSION_DOCUMENT":
+                    session_docs_by_name[attachment] = (conv_id, doc_id)
 
         # Execute test action
         t0 = time.perf_counter()

@@ -143,10 +143,13 @@
     "expected_citations": ["skewed_fax.pdf"],
     "expected_fields": {
       "patient_name": "Alex Morgan",
-      "authorized_medication": "Amoxicillin 500mg",
+      "authorized_medication": {
+        "state": "CONFLICTING",
+        "ocr_read": "5oOmg",
+        "vision_read": "500mg"
+      },
       "dosage": "Take 1 capsule by mouth three times daily for 10 days"
     },
     "notes": "On-demand extraction run on attached skewed fax."
   }
 ]
-

@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getCurrentUser: vi.fn(),
     uploadSessionDocument: vi.fn(),
     extractSessionDocument: vi.fn(),
+    askQuestion: vi.fn(),
     logout: vi.fn(),
   };
 });
@@ -242,5 +243,83 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
     expect(screen.getByText("Alex Morgan")).toBeInTheDocument();
 
     vi.useRealTimers();
+  });
+
+  it("after attaching a document in a new chat, the question request carries the same conversation_id returned for the upload", async () => {
+    const createdConvId = "conv-newly-created-999";
+    vi.mocked(api.uploadSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-sess-999",
+        conversation_id: createdConvId,
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "uploaded",
+        retention_hours: 24,
+        extracted_fields: [],
+        page_image_url: `/v1/assistants/${assistantId}/conversations/${createdConvId}/documents/doc-sess-999/pages/1/image`,
+      },
+    });
+
+    vi.mocked(api.askQuestion).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        request_id: "req-1",
+        tenant_id: "ten-1",
+        conversation_id: createdConvId,
+        message_id: "msg-1",
+        status: "answered",
+        answer: "Take 1 capsule by mouth three times daily for 10 days",
+        citations: [],
+        sources: [
+          {
+            document_title: "skewed_fax.pdf",
+            page_number: 1,
+            version: "1.0",
+          },
+        ],
+        route: "session_document",
+      },
+    });
+
+    await renderChatPage();
+
+    // 1. User attaches document in new chat (initially conversationId is null)
+    const fileInput = await screen.findByTestId("live-file-input");
+    const fakeFile = new File(["%PDF-1.4 test"], "skewed_fax.pdf", { type: "application/pdf" });
+
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [fakeFile] } });
+    });
+
+    // Upload was called, returning createdConvId
+    expect(api.uploadSessionDocument).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByTestId("session-document-card")).toBeInTheDocument();
+    });
+
+    // 2. User sends question
+    const chatInput = screen.getByPlaceholderText(/Ask a question/i);
+    await act(async () => {
+      fireEvent.change(chatInput, { target: { value: "what is the dosage in this fax?" } });
+    });
+
+    const sendBtn = screen.getByTestId("chat-submit-button");
+    await act(async () => {
+      fireEvent.click(sendBtn);
+    });
+
+    // 3. Question request must carry the exact same conversation_id
+    await waitFor(() => {
+      expect(api.askQuestion).toHaveBeenCalledTimes(1);
+    });
+
+    expect(api.askQuestion).toHaveBeenCalledWith(
+      assistantId,
+      "what is the dosage in this fax?",
+      createdConvId
+    );
   });
 });

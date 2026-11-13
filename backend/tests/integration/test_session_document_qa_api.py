@@ -184,3 +184,99 @@ async def test_cross_conversation_and_cross_tenant_session_document_isolation(
             )
             # Under RLS / anti-probing, Tenant B cannot access Tenant A's conversation
             assert b_q_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_session_document_and_ask_question_in_same_conversation(
+    test_app, api_settings, tmp_path: Path
+) -> None:
+    """Stage Q: Upload session document, ask in same conversation, verify route & citation."""
+    api_settings.profile = "mock"
+    api_settings.storage_dir = str(tmp_path)
+    api_settings.session_upload_retention_hours = 24
+
+    async with throwaway_step2_environment():
+        tenant_id = uuid4()
+        asst_id = uuid4()
+        conv_id = uuid4()
+
+        async with unscoped_session() as session:
+            session.add(Tenant(id=tenant_id, name="Clinic Session QA"))
+            await session.flush()
+
+        user, email, password = await _create_user_with_role(tenant_id, "staff")
+        ctx = TenantContext(
+            tenant_id=str(tenant_id),
+            user_id=str(user.id),
+            role=UserRole.CLIENT_ADMIN,
+            session_id="seed-qa",
+        )
+        async with tenant_session(ctx) as session:
+            session.add(
+                Assistant(
+                    id=asst_id,
+                    tenant_id=tenant_id,
+                    name="Session QA Assistant",
+                    prompt_id="answer_synthesis",
+                    prompt_version="1.0.0",
+                )
+            )
+            session.add(
+                Conversation(
+                    id=conv_id,
+                    tenant_id=tenant_id,
+                    user_id=user.id,
+                    assistant_id=asst_id,
+                    title="Session Document Chat",
+                )
+            )
+            await session.flush()
+
+        repo_root = Path(__file__).resolve().parents[3]
+        sample_pdf_path = repo_root / "evals" / "golden" / "docs" / "skewed_fax.pdf"
+        assert sample_pdf_path.exists(), f"{sample_pdf_path} must exist"
+        pdf_bytes = sample_pdf_path.read_bytes()
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver", follow_redirects=True
+        ) as client:
+            cookies, csrf = await _login(client, email, password)
+            client.cookies.clear()
+            for k, v in cookies.items():
+                client.cookies.set(k, v)
+
+            # 1. Upload document into conversation
+            files = {
+                "file": (
+                    "skewed_fax.pdf",
+                    io.BytesIO(pdf_bytes),
+                    "application/pdf",
+                )
+            }
+            up_resp = await client.post(
+                f"/v1/assistants/{asst_id}/conversations/{conv_id}/documents",
+                headers={"X-CSRF-Token": csrf},
+                files=files,
+            )
+            assert up_resp.status_code == 200, up_resp.text
+            up_data = up_resp.json()
+            assert up_data["conversation_id"] == str(conv_id)
+
+            # 2. Ask question in that same conversation
+            q_resp = await client.post(
+                "/v1/questions",
+                headers={"X-CSRF-Token": csrf},
+                json={
+                    "assistant_id": str(asst_id),
+                    "conversation_id": str(conv_id),
+                    "question_text": "what is the dosage in this fax?",
+                },
+            )
+            assert q_resp.status_code == 200, q_resp.text
+            q_data = q_resp.json()
+            assert q_data["route"] == "session_document"
+            sources = q_data.get("sources", [])
+            assert len(sources) >= 1
+            assert sources[0]["document_title"] == "skewed_fax.pdf"
+            assert sources[0]["page_number"] == 1

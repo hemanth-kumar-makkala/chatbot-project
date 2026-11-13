@@ -4100,3 +4100,40 @@ Append-only record of all completed tasks, architectural choices, and test recor
   3. `evals/reports/2026-11-13_desktop_gpu_e2e.json`
   4. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
   5. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage Q: Session Document Routing Continuity, Table SLA Values & E2E Eval
+
+- **Task**: Diagnose and fix live UI and E2E eval bug where asking "what is the dosage in this fax?" with `skewed_fax.pdf` attached returned route `clarify` ("which document or procedure?"); ensure question requests carry conversation_id and backend session documents load before routing; fix table answering multi-row SLA values; update golden eval cases and re-run.
+- **Root Cause & Diagnosis**:
+  1. `conversation_id` tracing: Web app passed `"new"` or default placeholder when attaching in a fresh chat.
+  2. Routing early-abort: Node 1b (`node_rewrite` in `backend/app/core/graph.py`) ran before `node_route`. Queries like "what is the dosage in this fax?" triggered the heuristic follow-up pronoun referent rule on `"this"`. With no prior conversation history, `heuristic_rewrite` returned `needs_clarification=True`, returning `status="clarify"`, `route="clarify"` before `node_route` was ever reached.
+  3. Table answer SLA omissions: In `_format_table_answer_text`, spreadsheet tables with non-standard header rows like `pa_turnaround_times.xlsx` stored `Column_N` as keys on data rows; these were being omitted from table output.
+- **Changes**:
+  1. `backend/app/core/graph.py`: In `node_rewrite`, checked `has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)`; when true, referents like "this fax" refer to the attached document and clarification is bypassed so `node_route` routes deterministically to `session_document`. In `_format_table_answer_text`, included cell values for generic `Column_N` headers without emitting `"Column_N"` keys or caption titles, while non-generic keys format as `Header: Value` byte-for-byte matching stored rows.
+  2. `backend/app/api/routes/questions.py`: Updated `_load_or_extract_session_doc_pages` to fall back to `create_document_parser(profile)` when stored digital text length < 50 characters, ensuring scanned document pages have text populated for downstream validation.
+  3. `web/app/assistants/[assistantId]/page.tsx`: Ensured `handleLiveFileUpload`, `handleExtractFields`, and `executeQuestion` all use and preserve the same `conversation_id`, and retained the attached document card upon send.
+  4. `evals/golden/e2e_local_cases.json`: Updated `E2E-EXT-001` to expect `authorized_medication` with `state="CONFLICTING"`, `ocr_read="5oOmg"`, and `vision_read="500mg"`.
+  5. `backend/scripts/run_local_e2e_eval.py`: Grouped `category == "SESSION_DOCUMENT"` cases in the same conversation; ensured `E2E-EXT-001` performs an isolated extraction; updated `judge_case` to validate dictionary-based field expectations with `state`, `ocr_read`, `vision_read`.
+  6. `backend/tests/integration/test_session_document_qa_api.py`: Added `test_upload_session_document_and_ask_question_in_same_conversation`.
+  7. `backend/tests/unit/test_table_answering_closest_rows.py`: Added `test_format_table_answer_multiple_matching_rows_includes_sla_values`.
+  8. `web/__tests__/chat_attach_live.test.tsx`: Added test verifying question request carries the same `conversation_id` returned for the upload.
+- **Verification**:
+  - `uv run --directory backend ruff check` passed (0 errors).
+  - `uv run --directory backend mypy` passed (0 errors across all touched files).
+  - Web Vitest suite: 150 passed across 14 test files (`web/__tests__/chat_attach_live.test.tsx`: 4 passed).
+  - Backend touched tests: `test_session_document_qa_api.py` (2 passed), `test_table_answering_closest_rows.py` (4 passed), `test_table_and_conflict_validation.py` (12 passed), `test_adversarial_cross_tenant_isolation.py` (1 passed).
+  - Full mock test suite (`$env:APP_PROFILE="mock"`): `1028 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_Q.log`.
+  - Live E2E Eval against `http://127.0.0.1:8010` (PID 12192): `E2E-EXT-001` passed live with Ollama `qwen3-vl:4b-instruct` (conflicting medication reads verified). Notice: PID 12192 was started before Stage Q without reload, so running in-memory process will reflect Stage Q graph changes upon process restart.
+- **Files Edited (10)**:
+  1. `backend/app/api/routes/questions.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/scripts/run_local_e2e_eval.py`
+  4. `backend/tests/integration/test_session_document_qa_api.py`
+  5. `backend/tests/unit/test_table_answering_closest_rows.py`
+  6. `evals/golden/e2e_local_cases.json`
+  7. `web/__tests__/chat_attach_live.test.tsx`
+  8. `web/app/assistants/[assistantId]/page.tsx`
+  9. `docs/BUILD_LOG.md`
+  10. `docs/STATUS.md`

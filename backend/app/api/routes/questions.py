@@ -374,6 +374,7 @@ async def _resolve_sources(
 async def _load_or_extract_session_doc_pages(
     db_session: Any,
     sdoc: SessionDocument,
+    profile: str = "mock",
 ) -> list[dict[str, Any]]:
     """Retrieve stored page text for session document or parse and persist."""
     ext_stmt = (
@@ -411,6 +412,25 @@ async def _load_or_extract_session_doc_pages(
                     txt = page.get_textpage().get_text_range().strip()
                     if idx == 0 and fields_lines and len(txt) < 50:
                         txt = (txt + "\n" + "\n".join(fields_lines)).strip()
+                    if len(txt) < 50:
+                        try:
+                            from app.wiring import create_document_parser
+
+                            parser = create_document_parser(profile)
+                            content_bytes = fpath.read_bytes()
+                            doc_pages = [
+                                p async for p in parser.split_pages(content_bytes, sdoc.file_name)
+                            ]
+                            if idx < len(doc_pages):
+                                parsed = await parser.extract(doc_pages[idx])
+                                if parsed and parsed.text:
+                                    txt = parsed.text.strip()
+                        except Exception:
+                            logger.warning(
+                                "Session document parser extraction failed for %s",
+                                sdoc.file_name,
+                                exc_info=True,
+                            )
                     pages.append({"page_number": idx + 1, "text": txt, "ocr_text": txt})
             except Exception:
                 pass
@@ -591,13 +611,15 @@ async def ask_question(
         session_doc_id: str | None = None
         session_doc_pages: list[dict[str, Any]] | None = None
 
+        ports = get_engine_ports(settings=settings)
         if sdoc is not None:
             session_doc_name = sdoc.file_name
             session_doc_id = str(sdoc.id)
-            session_doc_pages = await _load_or_extract_session_doc_pages(db_session, sdoc)
+            session_doc_pages = await _load_or_extract_session_doc_pages(
+                db_session, sdoc, profile=settings.profile
+            )
 
     # Release DB connection before invoking model/GPU pipeline (matching ask_question_stream)
-    ports = get_engine_ports(settings=settings)
     if visual_rows:
         storage = create_storage_backend(profile=settings.profile, base_dir=settings.storage_dir)
         for cid_str, image_key, ocr_conf in visual_rows:
@@ -899,14 +921,15 @@ async def ask_question_stream(
         session_doc_id: str | None = None
         session_doc_pages: list[dict[str, Any]] | None = None
 
+        ports = get_engine_ports(settings=settings)
         if sdoc is not None:
             session_doc_name = sdoc.file_name
             session_doc_id = str(sdoc.id)
-            session_doc_pages = await _load_or_extract_session_doc_pages(db_session, sdoc)
+            session_doc_pages = await _load_or_extract_session_doc_pages(
+                db_session, sdoc, profile=settings.profile
+            )
 
         async def event_generator() -> AsyncIterator[str]:
-            settings = get_api_settings(request)
-            ports = get_engine_ports(settings=settings)
             page_images: dict[str, bytes] = {}
             page_ocr_confidences: dict[str, float] = {}
             if visual_rows:
