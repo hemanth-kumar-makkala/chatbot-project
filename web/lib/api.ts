@@ -167,9 +167,15 @@ export function extractErrorCode(status: number, data: unknown): string {
  * - Adds X-CSRF-Token on state-modifying methods (POST, PUT, PATCH, DELETE)
  * - Returns typed result hiding all raw server text
  */
+export interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+export const EXTRACTION_TIMEOUT_MS = 180_000; // Configurable extraction timeout (at least 180s for model load)
+
 export async function apiFetch<T>(
   url: string,
-  options: RequestInit = {}
+  options: ApiFetchOptions = {}
 ): Promise<ApiResult<T>> {
   const method = (options.method || "GET").toUpperCase();
   const headers = new Headers(options.headers || {});
@@ -182,10 +188,21 @@ export async function apiFetch<T>(
     }
   }
 
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
+  let signal = options.signal;
+  if (options.timeoutMs && options.timeoutMs > 0 && !signal) {
+    const controller = new AbortController();
+    signal = controller.signal;
+    abortTimer = setTimeout(() => {
+      controller.abort();
+    }, options.timeoutMs);
+  }
+
   const fetchOptions: RequestInit = {
     ...options,
     method,
     headers,
+    signal,
     credentials: "include",
   };
 
@@ -196,6 +213,7 @@ export async function apiFetch<T>(
 
   try {
     const res = await fetch(normalizedUrl, fetchOptions);
+    if (abortTimer) clearTimeout(abortTimer);
 
     if (res.ok) {
       if (res.status === 204) {
@@ -224,10 +242,11 @@ export async function apiFetch<T>(
     const code = extractErrorCode(res.status, errBody);
     return { ok: false, status: res.status, code };
   } catch (error) {
-    // Network or client-side failure
+    if (abortTimer) clearTimeout(abortTimer);
     return { ok: false, status: 0, code: "NETWORK_ERROR" };
   }
 }
+
 
 /* Typed API Methods */
 
@@ -591,7 +610,8 @@ export async function uploadSessionDocument(
 export async function extractSessionDocument(
   assistantId: string,
   conversationId: string,
-  documentId: string
+  documentId: string,
+  options?: { timeoutMs?: number }
 ): Promise<ApiResult<SessionDocumentResponse>> {
   const normId =
     assistantId === "00000000-0000-0002-0000-000000000001"
@@ -602,9 +622,11 @@ export async function extractSessionDocument(
     `/v1/assistants/${encodeURIComponent(normId)}/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}/extract`,
     {
       method: "POST",
+      timeoutMs: options?.timeoutMs ?? EXTRACTION_TIMEOUT_MS,
     }
   );
 }
+
 
 export interface FeedbackResponseData {
   id: string;

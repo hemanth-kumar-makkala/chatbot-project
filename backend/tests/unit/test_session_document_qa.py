@@ -20,6 +20,7 @@ import pytest
 from app.core.graph import (
     GraphPorts,
     GraphRuntimeContext,
+    GraphState,
     node_generate,
     node_route,
     node_validate,
@@ -308,3 +309,56 @@ async def test_quote_validation_rejects_fabricated_quote():
     assert val_res["status"] == "refusal"
     assert ctx.response_text == "I couldn't confirm that from the attached document."
     assert len(ctx.citations) == 0
+
+
+@pytest.mark.asyncio
+async def test_deterministic_session_doc_routing_for_reference_phrase_never_clarify() -> None:
+    """Stage M: Questions referring to attached document ('this fax', 'this document')
+
+    must deterministically route to 'session_document' before the model router, never to 'clarify'.
+    """
+    ctx = _create_mock_context(
+        question="what is the dosage in this fax?",
+        session_doc_name="skewed_fax.pdf",
+    )
+    mock_provider = MagicMock()
+    mock_provider.generate = AsyncMock(
+        return_value=_mock_model_response(
+            content='{"route": "clarify", "answer_mode": "short", "language": "en"}',
+            structured_output={"route": "clarify", "answer_mode": "short", "language": "en"},
+        )
+    )
+    ctx.ports.model_provider = mock_provider
+    ctx.ports.is_mock_profile = False
+
+    state: GraphState = {"request_id": str(uuid4()), "status": "in_progress"}
+    res = await node_route(state, runtime=MagicMock(context=ctx))
+
+    assert res["route"] == "session_document"
+    assert res.get("status") != "refusal"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_session_doc_routing_for_contained_value_phrasing() -> None:
+    """Stage M: Questions asking for a value the attached document may contain (e.g. date of birth)
+
+    must deterministically route to 'session_document' before the model router, never to 'clarify'.
+    """
+    ctx = _create_mock_context(
+        question="what is the patient's date of birth?",
+        session_doc_name="skewed_fax.pdf",
+    )
+    mock_provider = MagicMock()
+    mock_provider.generate = AsyncMock(
+        return_value=_mock_model_response(
+            content='{"route": "clarify", "answer_mode": "short", "language": "en"}',
+            structured_output={"route": "clarify", "answer_mode": "short", "language": "en"},
+        )
+    )
+    ctx.ports.model_provider = mock_provider
+    ctx.ports.is_mock_profile = False
+
+    state: GraphState = {"request_id": str(uuid4()), "status": "in_progress"}
+    res = await node_route(state, runtime=MagicMock(context=ctx))
+
+    assert res["route"] == "session_document"

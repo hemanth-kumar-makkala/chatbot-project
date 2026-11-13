@@ -647,7 +647,63 @@ async def node_route(
                 "evidence_ids": [],
             }
 
-        if ports.is_mock_profile and ports.mock_forced_route:
+        # Stage M: Deterministic routing for attached session documents.
+        # When an attached document is present and the question refers to it
+        # ("this fax", "this document", "the attachment") or asks for a value
+        # it may contain (dosage, date of birth, mrn, patient, etc.),
+        # route deterministically to session_document, never clarify.
+        has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)
+        session_doc_ref_phrases = (
+            "this fax",
+            "the fax",
+            "in this fax",
+            "in the fax",
+            "this document",
+            "the document",
+            "in this document",
+            "in the document",
+            "the attachment",
+            "this attachment",
+            "in the attachment",
+            "in this attachment",
+            "this file",
+            "the file",
+            "attached document",
+            "attached file",
+            "attached fax",
+            "this intake",
+        )
+        session_doc_value_phrases = (
+            "dosage",
+            "dose",
+            "date of birth",
+            "birth date",
+            "dob",
+            "patient name",
+            "patient's name",
+            "chart number",
+            "mrn",
+            "medical record number",
+            "refill count",
+            "clinic phone",
+            "referring provider",
+            "ordering clinician",
+            "prescriber",
+            "prescribed",
+            "procedure ordered",
+            "facility location",
+            "clinical justification",
+            "pain scale",
+            "prescriber npi",
+            "secondary insurance",
+        )
+        is_session_doc_ref = has_attached_doc and any(p in q for p in session_doc_ref_phrases)
+        is_session_doc_val = has_attached_doc and any(p in q for p in session_doc_value_phrases)
+
+        if is_session_doc_ref or is_session_doc_val:
+            computed_route = "session_document"
+            computed_mode = "short"
+        elif ports.is_mock_profile and ports.mock_forced_route:
             computed_route = ports.mock_forced_route
         elif ports.model_provider is not None and not ports.is_mock_profile:
             try:

@@ -19,15 +19,23 @@ from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from pydantic import BaseModel
 
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.normalization import normalize_dates
 from app.core.safety_lock import is_vision_model
-from app.ports.types import ModelRole
+from app.ports.types import ChatMessage, ModelRole
 
 if TYPE_CHECKING:
     from app.core.graph import GraphRuntimeContext, GraphState
+
+
+class OcrDosageExtraction(BaseModel):
+    """Schema for model reading dosage directions from OCR text (Stage M)."""
+
+    dosage: str | None = None
+
 
 EXTRACTION_VISION_PROMPT = """You are a clinical intake form reader.
 Read this page image carefully and return ONLY a valid JSON object containing
@@ -151,26 +159,33 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
             fields["authorization_date"] = sorted(norm_all)[0]
             confidences["authorization_date"] = 0.97
 
-    # 5. Dosage (Stage H: strictly from line labeled 'Dosage:', never neighbouring line)
+    # 5. Dosage (Stage H + M: strictly from line labeled 'Dosage:',
+    # never neighbouring line or scrambled labels)
+    dos_val: str | None = None
     m_dos_label = re.search(
         r"Dosage[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)",
         ocr_text,
         re.IGNORECASE,
     )
     if m_dos_label:
-        dos_val = m_dos_label.group(1).strip().rstrip(".")
-        if dos_val:
-            fields["dosage"] = dos_val
-            confidences["dosage"] = 0.95
-    elif "dosage:" not in ocr_text.lower():
+        cand_dos = m_dos_label.group(1).strip().rstrip(".")
+        if cand_dos and not re.search(
+            r"\b(?:Patient|Refill|Chart|Date|Attn|Dr\.)\b", cand_dos, re.IGNORECASE
+        ):
+            dos_val = cand_dos
+
+    if not dos_val:
         m_dos_take = re.search(
-            r"Take[^\S\r\n]+([^\r\n.]+)",
+            r"\bTake\b[^\S\r\n]+(?:\d+|one|two|three|four|five|half|a\b)[^\r\n:]+?(?:daily|day|days|hours|needed|mouth|capsule|tablet|pill)[^\r\n:]*?(?:\s*:|\s*\.|\s*Dosage|\s*Patient|\n|\r|$)",
             ocr_text,
             re.IGNORECASE,
         )
         if m_dos_take:
-            fields["dosage"] = m_dos_take.group(1).strip().rstrip(".")
-            confidences["dosage"] = 0.95
+            dos_val = m_dos_take.group(0).strip().rstrip(".:")
+
+    if dos_val:
+        fields["dosage"] = dos_val
+        confidences["dosage"] = 0.95
 
     # 6. Refill count
     m_refill = re.search(
@@ -412,6 +427,44 @@ async def node_extract_fields(
         for page in pages:
             parsed_page = await ctx.ports.document_parser.extract(page)
             page_ocr, page_conf = extract_fields_from_ocr_text(parsed_page.text)
+
+            # Stage M: Make OCR-side dosage read come from model reading OCR text when available
+            # (same approach planned for user-chosen fields)
+            if (
+                ctx.ports.model_provider is not None
+                and not ctx.ports.is_mock_profile
+                and parsed_page.text
+            ):
+                try:
+                    ocr_model_res = await ctx.ports.model_provider.generate(
+                        role=ModelRole.EXTRACT,
+                        messages=[
+                            ChatMessage(
+                                role="user",
+                                content=(
+                                    "Extract the prescription dosage directions from the "
+                                    "following OCR text. Return only the dosage instruction "
+                                    "string. If not found, return null.\n\n"
+                                    f"OCR Text:\n{parsed_page.text}"
+                                ),
+                            ),
+                            ChatMessage(role="assistant", content="</think>"),
+                        ],
+                        schema=OcrDosageExtraction,
+                        max_tokens=150,
+                    )
+                    if ocr_model_res.structured_output and ocr_model_res.structured_output.get(
+                        "dosage"
+                    ):
+                        dos_str = str(ocr_model_res.structured_output["dosage"]).strip().rstrip(".")
+                        if dos_str and not re.search(
+                            r"\b(?:Patient|Refill|Chart)\b", dos_str, re.IGNORECASE
+                        ):
+                            page_ocr["dosage"] = dos_str
+                            page_conf["dosage"] = 0.95
+                except Exception:
+                    pass
+
             for k, v in page_ocr.items():
                 if k not in ocr_dict or ocr_dict[k] is None:
                     ocr_dict[k] = v

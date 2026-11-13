@@ -45,6 +45,7 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   async function renderChatPage() {
@@ -155,5 +156,91 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       // "reading it now..." disappears after extraction finishes
       expect(screen.queryByTestId("live-extracting-status")).not.toBeInTheDocument();
     });
+  });
+
+  it("extraction request shows 'Still working, loading the vision model...' after 10s and never shows unexpected response format", async () => {
+    vi.mocked(api.uploadSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-sess-slow",
+        conversation_id: "conv-1",
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "uploaded",
+        retention_hours: 24,
+        extracted_fields: [],
+        page_image_url: "/v1/assistants/ast-1/conversations/conv-1/documents/doc-sess-slow/pages/1/image",
+      },
+    });
+
+    let resolveExtraction: ((val: unknown) => void) | undefined;
+    const delayedPromise = new Promise((resolve) => {
+      resolveExtraction = resolve;
+    });
+    vi.mocked(api.extractSessionDocument).mockReturnValue(delayedPromise as unknown as ReturnType<typeof api.extractSessionDocument>);
+
+    await renderChatPage();
+
+    const fileInput = await screen.findByTestId("live-file-input");
+    const fakeFile = new File(["%PDF-1.4 test"], "skewed_fax.pdf", { type: "application/pdf" });
+
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [fakeFile] } });
+    });
+
+    const extractBtn = await screen.findByTestId("extract-fields-button");
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    await act(async () => {
+      fireEvent.click(extractBtn);
+    });
+
+    // Initial status line
+    expect(screen.getByTestId("live-extracting-status")).toHaveTextContent(
+      "Page 1 is a scanned image, reading it now..."
+    );
+
+    // Fast-forward 10 seconds
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(screen.getByTestId("live-extracting-status")).toHaveTextContent(
+      "Still working, loading the vision model..."
+    );
+
+    // Now resolve delayed extraction
+    await act(async () => {
+      if (resolveExtraction) {
+        resolveExtraction({
+          ok: true,
+          status: 200,
+          data: {
+            session_document_id: "doc-sess-slow",
+            conversation_id: "conv-1",
+            file_name: "skewed_fax.pdf",
+            page_count: 1,
+            status: "extracted",
+            extracted_fields: [
+              {
+                name: "patient_name",
+                value: "Alex Morgan",
+                state: "FILLED_HIGH",
+                page_number: 1,
+                document_title: "skewed_fax.pdf",
+              },
+            ],
+            page_image_url: "/v1/assistants/ast-1/conversations/conv-1/documents/doc-sess-slow/pages/1/image",
+          },
+        });
+      }
+    });
+
+    expect(screen.queryByText(/unexpected response format/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Alex Morgan")).toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 });

@@ -77,3 +77,26 @@ def test_extraction_with_skewed_fax_layout() -> None:
     assert fields.get("chart_number") == "MRN-4412-A"
     assert "Amoxicillin 5oOmg" in str(fields.get("authorized_medication", ""))
     assert fields.get("refill_count") == "0"
+
+
+def test_dosage_extraction_with_scrambled_line_order_from_real_skewed_fax_ocr() -> None:
+    """Verify that scrambled OCR line order does not cause dosage to capture neighbouring lines.
+
+    In skewed_fax.pdf Docling OCR, 'Take 1 capsule...' appears before 'Dosage:', and 'Dosage:' is
+    immediately followed by 'Patient: Alex Morgan...'. The dosage extractor must return
+    'Take 1 capsule by mouth three times daily for 10 days' and NEVER capture 'Patient: Alex Morgan'
+    or refill lines.
+    """
+    real_ocr_text = (
+        "* * * SYNTHETIC TEST DOCUMENT *** TRANSMISSION CONFIDENTIAL MEDICAL RECORD FACSIMILE\n\n"
+        "NOTICE PEDIATRIC & ADULT URGENT CARE TRANSMISSION Date: 2026-02-14 "
+        "Attn: Pharmacy Dispensing Coordinator Clinic Phone: 555-0145\n\n"
+        "Prescription Refill Authorization: approved for Amoxicillin 5oOmg Dr. Evelyn Reed. "
+        "Urgent prescription refill request Take 1 capsule by mouth three times daily for 10 days: "
+        "Dosage: Patient: Alex Morgan (Chart #MRN-4412-A) Refill count: 0 (one-time course). by"
+    )
+    fields, confidences = extract_fields_from_ocr_text(real_ocr_text)
+    assert fields.get("dosage") == "Take 1 capsule by mouth three times daily for 10 days"
+    assert "Patient" not in str(fields.get("dosage", ""))
+    assert "Refill" not in str(fields.get("dosage", ""))
+    assert confidences.get("dosage", 0.0) >= 0.90

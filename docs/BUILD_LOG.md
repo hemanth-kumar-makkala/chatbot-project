@@ -4057,3 +4057,46 @@ Append-only record of all completed tasks, architectural choices, and test recor
   4. `backend/tests/unit/test_table_answering_closest_rows.py`
   5. `docs/BUILD_LOG.md`
   6. `docs/STATUS.md`
+
+---
+
+### [2026-11-13] Queue Stage M: Routing Determinism, Dosage Scrambled Layout Safety & UI Extraction Timeout
+
+- **Task**: Fix routing regression where attached document questions fell back to `clarify` ("which document do you mean?"); harden OCR dosage extraction against scrambled Docling layouts on skewed faxes where labels and values are non-adjacent; prevent web UI timeouts during slow vision model loads (180s timeout, 10s progress feedback, error prevention).
+- **Changes**:
+  1. `backend/app/core/graph.py`: Added deterministic routing guard before model router in `node_route`: if an attached session document is present and the question matches reference phrases (`"this fax"`, `"the document"`, `"the attachment"`, etc.) or asks for a contained value (`"dosage"`, `"date of birth"`, `"mrn"`, etc.), routes deterministically to `session_document` with `mode="short"`, preventing ambiguous clarification prompts.
+  2. `backend/app/core/extraction/subgraph.py`: Handled scrambled OCR layouts where Docling places the prescription direction before the label and places the patient line right after `Dosage:`. Rejects neighbouring field labels (`Patient:`, `Refill:`, `Chart:`) and uses prescription phrase regex `\bTake\b[^\S\r\n]+(?:\d+|one|two|...)...` for directions. Added model-assisted OCR dosage extraction fallback using `role=ModelRole.EXTRACT` when model provider is available.
+  3. `web/lib/api.ts`: Added `ApiFetchOptions` with `timeoutMs` support using `AbortController`; defined `EXTRACTION_TIMEOUT_MS = 180_000` (180s); configured `extractSessionDocument` to pass 180s timeout.
+  4. `web/app/assistants/[assistantId]/page.tsx`: Added 10s timer during extraction to show `"Still working, loading the vision model..."`; guarded `evidence_type === "extraction"` and `status in ("error", "failed")` in `renderAnswerContent` to prevent fallback to `"Received an unexpected response format"`.
+  5. `backend/tests/unit/test_session_document_qa.py`: Added unit tests for deterministic session document routing on reference phrases and contained values.
+  6. `backend/tests/unit/test_dosage_ocr_extraction.py`: Added unit tests for dosage extraction on real Docling OCR text with scrambled layout.
+  7. `web/__tests__/chat_attach_live.test.tsx`: Added vitest test verifying 10s slow extraction status update and error-free result display.
+- **Files Edited (8)**:
+  1. `backend/app/core/extraction/subgraph.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`
+  4. `backend/tests/unit/test_session_document_qa.py`
+  5. `web/lib/api.ts`
+  6. `web/app/assistants/[assistantId]/page.tsx`
+  7. `web/__tests__/chat_attach_live.test.tsx`
+  8. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage N: Local End-to-End Evaluation on Running API (`desktop-gpu`)
+
+- **Task**: Execute local end-to-end evaluation with zero product code changes; run 12 golden cases against running API at `http://127.0.0.1:8010` and local Ollama (`qwen3:8b` + `qwen3-vl:4b-instruct`) using seeded synthetic dev credentials (`admin@clinic-a.local`); measure full product path; record route, citations, latency, pass/fail/unclear verdicts, and layer attribution for failures; generate stamped reports.
+- **Results**:
+  - Total Cases: 12 (7 Passed, 5 Failed, 0 Unclear).
+  - General route: 2/2 Passed (100.0%) with 0 source citations.
+  - Version Conflicts: 2/2 Passed (100.0%) correctly citing both `front_desk_policy_v1.pdf` and `front_desk_policy_v2.pdf`.
+  - Not-in-Documents: 2/2 Passed (100.0%) safely refused with 0 source citations.
+  - Table: 1/2 Passed (50.0%) correctly citing `pa_turnaround_times.xlsx` (urgent SLA missing-term direct answer passed).
+  - Latency: p50 = 19.78 s, p95 = 38.68 s.
+  - Failures by Layer: routing (3), generation (1), extraction (1). Session document questions fell back to `clarify` on the live server process because the running process was started prior to Stage M code changes and does not run with hot reload.
+- **Files Created/Edited (5)**:
+  1. `evals/golden/e2e_local_cases.json`
+  2. `backend/scripts/run_local_e2e_eval.py`
+  3. `evals/reports/2026-11-13_desktop_gpu_e2e.json`
+  4. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
+  5. `docs/BUILD_LOG.md`

@@ -220,6 +220,11 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setExtractingStatusLine("Page 1 is a scanned image, reading it now...");
     setLiveExtractionError(null);
 
+    // Stage M: After 10s show loading vision model notice
+    const visionModelTimer = setTimeout(() => {
+      setExtractingStatusLine("Still working, loading the vision model...");
+    }, 10_000);
+
     const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
     try {
       const res = await extractSessionDocument(
@@ -227,6 +232,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         activeConvId,
         attachedDoc.session_document_id
       );
+      clearTimeout(visionModelTimer);
       if (!res.ok) {
         setLiveExtractionError(res.code || "EXTRACTION_FAILED");
         return;
@@ -268,8 +274,10 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
       setMessages((prev) => [...prev, asstMsg]);
     } catch {
+      clearTimeout(visionModelTimer);
       setLiveExtractionError("EXTRACTION_FAILED");
     } finally {
+      clearTimeout(visionModelTimer);
       setIsExtracting(false);
       setExtractingStatusLine(null);
     }
@@ -865,6 +873,24 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
     // 6. Safe friendly fallback on unknown response type
     if (status && status !== "answered" && status !== "unknown") {
+      // Stage M: If response is extraction evidence or failure, never show confusing "unexpected response format"
+      if (resp.evidence_type === "extraction" || status === "failed" || status === "error") {
+        return (
+          <div
+            data-testid="chat-fallback-card"
+            style={{
+              padding: "var(--spacing-3)",
+              backgroundColor: "var(--color-bg-subtle)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "var(--font-size-sm)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {resp.answer || "Unable to complete extraction. Please try again."}
+          </div>
+        );
+      }
+
       return (
         <div
           data-testid="chat-fallback-card"
