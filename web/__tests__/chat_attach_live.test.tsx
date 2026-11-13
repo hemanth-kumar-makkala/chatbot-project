@@ -12,6 +12,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     getCurrentUser: vi.fn(),
     uploadSessionDocument: vi.fn(),
+    extractSessionDocument: vi.fn(),
     logout: vi.fn(),
   };
 });
@@ -69,16 +70,31 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("uploading session document in live mode renders page preview and extraction table", async () => {
+  it("uploading session document uploads once, calls extraction zero times, and shows document card with retention", async () => {
     vi.mocked(api.uploadSessionDocument).mockResolvedValue({
       ok: true,
       status: 200,
       data: {
-        document_id: "doc-sess-1",
+        session_document_id: "doc-sess-1",
         conversation_id: "conv-1",
         file_name: "skewed_fax.pdf",
         page_count: 1,
+        status: "uploaded",
+        retention_hours: 24,
+        extracted_fields: [],
         page_image_url: "/v1/assistants/ast-1/conversations/conv-1/documents/doc-sess-1/pages/1/image",
+      },
+    });
+
+    vi.mocked(api.extractSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-sess-1",
+        conversation_id: "conv-1",
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "extracted",
         extracted_fields: [
           {
             name: "patient_name",
@@ -95,6 +111,7 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
             document_title: "skewed_fax.pdf",
           },
         ],
+        page_image_url: "/v1/assistants/ast-1/conversations/conv-1/documents/doc-sess-1/pages/1/image",
       },
     });
 
@@ -107,13 +124,36 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       fireEvent.change(fileInput, { target: { files: [fakeFile] } });
     });
 
+    // 1. One attach produces exactly 1 upload request and 0 extraction requests
     expect(api.uploadSessionDocument).toHaveBeenCalledTimes(1);
+    expect(api.extractSessionDocument).toHaveBeenCalledTimes(0);
+
+    // 2. Document card is shown at the top of the conversation
+    await waitFor(() => {
+      expect(screen.getByTestId("session-document-card")).toBeInTheDocument();
+      expect(screen.getByTestId("attached-doc-filename")).toHaveTextContent("skewed_fax.pdf");
+      expect(screen.getByTestId("attached-doc-page-count")).toHaveTextContent("1 page");
+      expect(screen.getByTestId("attached-doc-retention")).toHaveTextContent(
+        "Attached to this chat. Deleted after 24 hours"
+      );
+      expect(screen.getByTestId("extract-fields-button")).toBeInTheDocument();
+    });
+
+    // 3. Clicking "Extract fields" runs the extraction subgraph exactly once
+    const extractBtn = screen.getByTestId("extract-fields-button");
+    await act(async () => {
+      fireEvent.click(extractBtn);
+    });
+
+    expect(api.extractSessionDocument).toHaveBeenCalledTimes(1);
 
     await waitFor(() => {
       expect(screen.getByTestId("extraction-split-view")).toBeInTheDocument();
       expect(screen.getByTestId("extraction-page-image")).toBeInTheDocument();
       expect(screen.getByText("Alex Morgan")).toBeInTheDocument();
       expect(screen.getByText("Amoxicillin 500mg")).toBeInTheDocument();
+      // "reading it now..." disappears after extraction finishes
+      expect(screen.queryByTestId("live-extracting-status")).not.toBeInTheDocument();
     });
   });
 });

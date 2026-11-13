@@ -145,30 +145,14 @@ async def test_session_document_upload_and_extraction_route(
             assert data["conversation_id"] == str(conv_id)
             assert data["file_name"] == "arbitrary_intake_01.pdf"
             assert data["page_count"] >= 1
-            assert data["status"] == "extracted"
-            assert "extracted_fields" in data
-            assert len(data["extracted_fields"]) > 0
+            assert data["status"] == "uploaded"
+            assert data.get("retention_hours") == 24
+            assert data["extracted_fields"] == []
 
             doc_id = data["session_document_id"]
-            fields = {f["name"]: f for f in data["extracted_fields"]}
-            assert "patient_name" in fields
-            assert fields["patient_name"]["state"] in ("FILLED_HIGH", "FILLED_MEDIUM")
 
-            states_present = {f["state"] for f in data["extracted_fields"]}
-            assert "CONFLICTING" in states_present
-            assert "INVALID" in states_present
-            assert states_present & {"UNREADABLE", "NOT_PRESENT"}
-
-            serialized = str(data["extracted_fields"])
-            for forbidden in ("Amoxicillin 500mg", "MRN-4412-A", "Alex Morgan", "1982736451"):
-                assert forbidden not in serialized
-
-            # Invariant 6: UNREADABLE and CONFLICTING fields must have value=None / null
-            for f in data["extracted_fields"]:
-                if f["state"] in ("UNREADABLE", "CONFLICTING", "NOT_PRESENT"):
-                    assert f["value"] is None
-
-            # 2. Verify Invariant 7: Exists in session_documents, 0 chunks in index
+            # Verify Invariant 7: Exists in session_documents, 0 chunks in index,
+            # and 0 extractions before extract call
             async with tenant_session(ctx_a) as db:
                 s_doc_cnt = (
                     await db.execute(
@@ -179,6 +163,52 @@ async def test_session_document_upload_and_extraction_route(
                 ).scalar()
                 assert s_doc_cnt == 1
 
+                ext_cnt_before = (
+                    await db.execute(
+                        select(func.count(ExtractionResult.id)).where(
+                            ExtractionResult.session_document_id == UUID(doc_id)
+                        )
+                    )
+                ).scalar()
+                assert ext_cnt_before == 0
+
+                # Invariant 7: Chunks table must have 0 chunks for session doc
+                chunks_cnt = (await db.execute(select(func.count(Chunk.id)))).scalar()
+                assert chunks_cnt == 0, (
+                    f"Invariant 7 violation: session upload produced {chunks_cnt} chunks"
+                )
+
+            # 2. Extract endpoint: runs extraction subgraph on demand
+            extract_resp = await client.post(
+                f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents/{doc_id}/extract",
+                cookies=cookies_a,
+                headers={"X-CSRF-Token": csrf_a},
+            )
+            assert extract_resp.status_code == 200, f"Extraction failed: {extract_resp.text}"
+            ext_data = extract_resp.json()
+            assert ext_data["status"] == "extracted"
+            assert len(ext_data["extracted_fields"]) > 0
+
+            fields = {f["name"]: f for f in ext_data["extracted_fields"]}
+            assert "patient_name" in fields
+            assert fields["patient_name"]["state"] in ("FILLED_HIGH", "FILLED_MEDIUM")
+
+            states_present = {f["state"] for f in ext_data["extracted_fields"]}
+            assert "CONFLICTING" in states_present
+            assert "INVALID" in states_present
+            assert states_present & {"UNREADABLE", "NOT_PRESENT"}
+
+            serialized = str(ext_data["extracted_fields"])
+            for forbidden in ("Amoxicillin 500mg", "MRN-4412-A", "Alex Morgan", "1982736451"):
+                assert forbidden not in serialized
+
+            # Invariant 6: UNREADABLE and CONFLICTING fields must have value=None / null
+            for f in ext_data["extracted_fields"]:
+                if f["state"] in ("UNREADABLE", "CONFLICTING", "NOT_PRESENT"):
+                    assert f["value"] is None
+
+            # Verify ExtractionResult is created after extraction endpoint call
+            async with tenant_session(ctx_a) as db:
                 ext_cnt = (
                     await db.execute(
                         select(func.count(ExtractionResult.id)).where(
@@ -188,11 +218,14 @@ async def test_session_document_upload_and_extraction_route(
                 ).scalar()
                 assert ext_cnt == 1
 
-                # Invariant 7: Chunks table must have 0 chunks for session doc
-                chunks_cnt = (await db.execute(select(func.count(Chunk.id)))).scalar()
-                assert chunks_cnt == 0, (
-                    f"Invariant 7 violation: session upload produced {chunks_cnt} chunks"
-                )
+            # Cross-tenant isolation on extraction endpoint:
+            # Tenant B cannot extract Tenant A's document
+            b_ext_resp = await client.post(
+                f"/v1/assistants/{asst_a_id}/conversations/{conv_id}/documents/{doc_id}/extract",
+                cookies=cookies_b,
+                headers={"X-CSRF-Token": csrf_b},
+            )
+            assert b_ext_resp.status_code in (403, 404)
 
             # 3. Stream page image
             img_url = (

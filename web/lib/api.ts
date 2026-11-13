@@ -561,6 +561,7 @@ export interface SessionDocumentResponse {
   file_name: string;
   page_count: number;
   status: string;
+  retention_hours?: number;
   extracted_fields: ExtractedField[];
   page_image_url: string;
 }
@@ -583,6 +584,24 @@ export async function uploadSessionDocument(
     {
       method: "POST",
       body: formData,
+    }
+  );
+}
+
+export async function extractSessionDocument(
+  assistantId: string,
+  conversationId: string,
+  documentId: string
+): Promise<ApiResult<SessionDocumentResponse>> {
+  const normId =
+    assistantId === "00000000-0000-0002-0000-000000000001"
+      ? DEV_DEFAULT_ASSISTANT_ID
+      : assistantId;
+
+  return apiFetch<SessionDocumentResponse>(
+    `/v1/assistants/${encodeURIComponent(normId)}/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}/extract`,
+    {
+      method: "POST",
     }
   );
 }

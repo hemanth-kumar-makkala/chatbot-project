@@ -3990,3 +3990,70 @@ Append-only record of all completed tasks, architectural choices, and test recor
   16. `backend/tests/unit/test_report_stamping.py`
   17. `.env.example`
   18. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage G: Chat Document UX, On-Demand Extraction & Upload Decoupling
+
+- **Task**: Decouple session document upload from automatic extraction; display document card with retention notice and "Extract fields" button; disable attach/send during operations; preserve answer line breaks; handle text-only extraction requests gracefully; confirm retention sweep.
+- **Changes**:
+  1. `backend/app/api/routes/conversations.py`: Decoupled `upload_session_document` so file upload stores `SessionDocument(status="uploaded")` and returns `SessionDocumentUploadResponse(status="uploaded", retention_hours=24, extracted_fields=[])` with zero extraction calls. Added dedicated endpoint `POST /assistants/{assistant_id}/conversations/{conversation_id}/documents/{document_id}/extract` running the extraction subgraph on-demand.
+  2. `backend/app/core/graph.py`: In `node_route`, if router classifies `route == "extraction"` but no session document is attached, returns clear refusal response: `"Please attach a document using the paperclip button to extract fields."`.
+  3. `web/lib/api.ts`: Added `retention_hours?: number` to `SessionDocumentResponse`; added `extractSessionDocument` client function.
+  4. `web/app/assistants/[assistantId]/page.tsx`: Added attached document card at top of chat displaying filename, page count, `"Attached to this chat. Deleted after {retention} hours"`, and `"Extract fields"` button. Added `isUploading` and `isExtracting` state guards disabling file picker and send button; ignored duplicate file input change events; preserved line breaks (`whiteSpace: "pre-wrap"`) across all answer containers; rendered temporary status line `"Page 1 is a scanned image, reading it now..."` during extraction which clears immediately upon completion.
+  5. `backend/app/worker.py:614`: Confirmed background retention sweep `run_expired_session_documents_sweep` runs every 15 minutes (`cron="*/15 * * * *"`), covered by `test_session_document_upload_safety.py::test_expired_session_documents_sweep_deletes_expired_rows_and_files`.
+- **Files Edited (10)**:
+  1. `backend/app/api/routes/conversations.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/integration/test_session_document_extraction_route.py`
+  4. `backend/tests/unit/test_generate_node_schemas.py`
+  5. `backend/tests/unit/test_model_catalog.py`
+  6. `backend/tests/unit/test_session_document_upload_safety.py`
+  7. `web/lib/api.ts`
+  8. `web/app/assistants/[assistantId]/page.tsx`
+  9. `web/__tests__/chat_attach_live.test.tsx`
+  10. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage J: Questions About an Attached Session Document
+
+- **Task**: Enable conversational question-answering over an attached session document within the active chat without indexing to permanent knowledge base chunks or embeddings (Invariant 7); router route `"session_document"`; quote validation against stored document page text; strict conversation and tenant isolation.
+- **Changes**:
+  1. `prompts/registry.yaml`: Bumped `router_classify` default_version to `1.3.0` with `session_document` route, examples, schema enum, and `{attached_document}` prompt variable.
+  2. `backend/app/core/prompts.py`: Added `"session_document"` to `RouterOutput.route`, updated `format_router_prompt(question, attached_document=None)`.
+  3. `backend/app/ports/types.py`: Added `SourceCitation` dataclass to port types for cross-layer citation propagation.
+  4. `backend/app/core/graph.py`: Added `session_document_id`, `session_document_name`, `session_document_pages`, and `citations` to `GraphRuntimeContext`. In `node_route`, if router predicts `"session_document"` without an active attached session document, deterministically forces `computed_route = "knowledge"`. In `node_generate`, added `route == "session_document"` direct answer generation using document page text context with quoted span and page attribution. In `node_validate`, added quote validation verifying all quoted spans and double-quoted phrases exist character-for-character (case-insensitive) in the document page text; on mismatch or missing term, fails closed to `"I couldn't confirm that from the attached document."` with 0 source citations.
+  5. `backend/app/api/routes/questions.py`: Added `_load_or_extract_session_doc_pages` to load page OCR/vision text from `extraction_results` or extract on-demand; populated session document context into `GraphRuntimeContext`; in both non-streaming and streaming endpoints, resolved sources from `runtime_ctx.citations` (`SourceCitation(document_title=file_name, page_number=N)`).
+  6. `backend/tests/unit/test_session_document_qa.py`: Unit tests covering router selection, fallback when no document attached, question answered with citation, unlisted value refusal, general route preservation, knowledge route preservation, and quote validation rejection of fabricated quotes.
+  7. `backend/tests/integration/test_session_document_qa_api.py`: Integration tests verifying cross-conversation isolation (another conversation cannot access or query the attached document) and cross-tenant isolation (another tenant cannot access or query the attached document).
+  8. `backend/tests/unit/test_generate_node_schemas.py` & `backend/tests/unit/test_session_document_upload_safety.py`: Updated schema enum assertion and streaming mock DB side effects.
+- **Files Edited (10)**:
+  1. `prompts/registry.yaml`
+  2. `backend/app/core/prompts.py`
+  3. `backend/app/ports/types.py`
+  4. `backend/app/core/graph.py`
+  5. `backend/app/api/routes/questions.py`
+  6. `backend/tests/unit/test_session_document_qa.py`
+  7. `backend/tests/integration/test_session_document_qa_api.py`
+  8. `backend/tests/unit/test_generate_node_schemas.py`
+  9. `backend/tests/unit/test_session_document_upload_safety.py`
+  10. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage H: Extraction Regex Hardening & Table Direct Answering
+
+- **Task**: Harden OCR field extraction so "dosage" and all other fields capture values strictly from their labeled lines using horizontal whitespace patterns (`[^\S\r\n]*:[^\S\r\n]*`) and never overflow across newlines to neighbouring lines; implement table answers that start with a one-sentence direct answer when query terms are missing (e.g. "urgent" prior authorization turnaround), list only closest rows for that column with sheet and row citations, and use detected column headers while never outputting `"Column_N"` or captions as column names.
+- **Changes**:
+  1. `backend/app/core/extraction/subgraph.py`: Replaced multiline-vulnerable `\s*:\s*([^\n]+)` regex patterns across all 15 field extractors (`dosage`, `patient_name`, `authorized_medication`, `authorization_date`, `refill_count`, `clinic_phone`, `referring_provider_phone`, `ordering_clinician_signature`, `prescriber_signature`, `procedure_ordered`, `appointment_date`, `facility_location`, `clinical_justification`, `pain_scale_score`, `prescriber_npi`, `secondary_insurance`) with strict horizontal whitespace patterns `[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)`. Prevented empty labels followed by newlines from capturing content on neighbouring lines. Added optional area code support for phone extraction to accurately match 7-digit numbers in the skewed fax layout.
+  2. `backend/app/core/graph.py`: Updated `_select_matching_table_rows` so that when a query term is absent from the table (e.g. "urgent" prior auth), it detects the missing term and returns only the closest rows for that concept (e.g., expedited/priority rows, max 3 rows), rather than dumping all candidate rows. Updated `_format_table_answer_text` to start with a one-sentence direct answer (`"There is no '{term}' category ({term} is not listed); {closest_cat} requests are {closest_sla}."`), filtered out headers matching `^Column_\d+$` or `"caption"`, and rendered clean detected headers with sheet and row citations.
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`: Added unit tests verifying dosage extraction strictly from labeled line, zero neighbouring line capture when label is empty, zero multi-line overflow across all field patterns, and verified extraction on skewed fax layout.
+  4. `backend/tests/unit/test_table_answering_closest_rows.py`: Added unit tests verifying 1-sentence direct answer when query term is absent, selection of closest matching rows only, and verified exclusion of `"Column_N"` and captions from column names.
+- **Files Edited (6)**:
+  1. `backend/app/core/extraction/subgraph.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`
+  4. `backend/tests/unit/test_table_answering_closest_rows.py`
+  5. `docs/BUILD_LOG.md`
+  6. `docs/STATUS.md`

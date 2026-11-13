@@ -74,6 +74,7 @@ from app.ports.types import (
     ChatMessage,
     ModelRole,
     RerankCandidate,
+    SourceCitation,
     StepEndPayload,
     StepErrorPayload,
     StepStartPayload,
@@ -314,6 +315,10 @@ class GraphRuntimeContext:
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
     evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
     rate_limit_exceeded: bool = False
+    session_document_id: str | None = None
+    session_document_name: str | None = None
+    session_document_pages: list[dict[str, Any]] | None = None
+    citations: list[SourceCitation] = field(default_factory=list)
 
 
 # --- 2. Telemetry Node Wrapper ---
@@ -646,7 +651,9 @@ async def node_route(
             computed_route = ports.mock_forced_route
         elif ports.model_provider is not None and not ports.is_mock_profile:
             try:
-                router_prompt = format_router_prompt(ctx.question_text)
+                router_prompt = format_router_prompt(
+                    ctx.question_text, attached_document=ctx.session_document_name
+                )
                 model_res = await ports.model_provider.generate(
                     role=ModelRole.ROUTER,
                     messages=[
@@ -658,10 +665,14 @@ async def node_route(
                 )
                 if model_res.structured_output:
                     r_val = model_res.structured_output.get("route", "knowledge")
-                    if r_val in ("knowledge", "general", "clarify", "extraction"):
-                        computed_route = r_val
-                    else:
-                        computed_route = "knowledge"
+                    allowed_routes = (
+                        "knowledge",
+                        "general",
+                        "clarify",
+                        "extraction",
+                        "session_document",
+                    )
+                    computed_route = r_val if r_val in allowed_routes else "knowledge"
                     computed_mode = model_res.structured_output.get("answer_mode", "short")
                     computed_lang = model_res.structured_output.get("language", "en")
             except Exception:
@@ -681,8 +692,29 @@ async def node_route(
                 computed_route = "clarify"
             elif any(k in q for k in ("hello", "who are you", "help", "system status", "general")):
                 computed_route = "general"
+            elif ctx.session_document_name and any(
+                k in q
+                for k in (
+                    "this document",
+                    "the fax",
+                    "the attachment",
+                    "this file",
+                    "attached document",
+                    "patient name",
+                    "medication was prescribed",
+                    "prescribed",
+                    "chart number",
+                    "mrn",
+                    "dosage",
+                )
+            ):
+                computed_route = "session_document"
             else:
                 computed_route = "knowledge"
+
+        # Deterministic guard: session_document is allowed ONLY if a session document is attached
+        if computed_route == "session_document" and not ctx.session_document_name:
+            computed_route = "knowledge"
 
         if ports.is_mock_profile and ports.mock_forced_answer_mode:
             computed_mode = ports.mock_forced_answer_mode
@@ -736,6 +768,33 @@ async def node_route(
                 )
             ):
                 computed_mode = "exact"
+
+        if computed_route == "extraction":
+            has_attached_doc = (
+                bool(ctx.raw_document_bytes)
+                or bool(getattr(ctx, "session_document_id", None))
+                or bool(getattr(ctx, "attached_session_document", None))
+            )
+            if not has_attached_doc:
+                ctx.response_text = (
+                    "Please attach a document using the paperclip button to extract fields."
+                )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": router_fallback,
+                    },
+                )
+                return {
+                    "route": "general",
+                    "status": "refusal",
+                    "response_message_id": str(uuid4()),
+                    "evidence_ids": [],
+                }
 
         if computed_route == "clarify":
             if ports.is_mock_profile and ports.mock_titles:
@@ -1585,10 +1644,26 @@ def _select_matching_table_rows(
                 str(v).lower() for v in avail_table[rid].cells.values() if v is not None
             )
             is_fast = any(w in vals for w in ("expedited", "stat", "rush", "emergency", "priority"))
-            return (-scores[rid], 0 if is_fast else 1)
+            return (0 if is_fast else 1, -scores[rid])
 
         matched_ids.sort(key=_closest_priority)
-        matched_ids = matched_ids[:max_rows]
+        fast_ids = [
+            rid
+            for rid in matched_ids
+            if any(
+                w
+                in " ".join(
+                    str(v).lower() for v in avail_table[rid].cells.values() if v is not None
+                )
+                for w in ("expedited", "stat", "rush", "emergency", "priority")
+            )
+        ]
+        if fast_ids and any(
+            t in ("urgent", "stat", "rush", "emergency", "priority") for t in missing_terms
+        ):
+            matched_ids = fast_ids[:3]
+        else:
+            matched_ids = matched_ids[:3]
     elif len(matched_ids) > max_rows and max_score == 0:
         matched_ids = matched_ids[:max_rows]
 
@@ -1600,7 +1675,8 @@ def _format_table_answer_text(
     selected_ids: list[str],
     missing_terms: list[str],
 ) -> str:
-    """Build a short direct table answer from matching stored rows only."""
+    """Build a short direct table answer from matching stored rows only (Stage H)."""
+    import re
 
     def _display_cell(value: Any) -> str:
         if value is None:
@@ -1610,22 +1686,55 @@ def _format_table_answer_text(
     row_lines: list[str] = []
     for rid in selected_ids:
         tc = avail_table[rid]
-        pairs = [
-            f"{k}: {_display_cell(v)}"
-            for k, v in tc.cells.items()
-            if v is not None and str(v).strip() != ""
-        ]
+        pairs: list[str] = []
+        for k, v in tc.cells.items():
+            k_str = str(k).strip()
+            # Never use "Column_N" or the caption as a column name
+            if k_str.lower() == "caption" or (tc.caption and k_str == tc.caption.strip()):
+                continue
+            if re.match(r"^Column_\d+$", k_str, re.IGNORECASE):
+                continue
+            if v is not None and str(v).strip() != "":
+                pairs.append(f"{k_str}: {_display_cell(v)}")
         if not pairs:
-            pairs = [f"{k}: {_display_cell(v)}" for k, v in tc.cells.items()]
+            # Fallback if all headers were Column_N
+            pairs = [
+                f"{_display_cell(v)}"
+                for k, v in tc.cells.items()
+                if str(k).strip().lower() != "caption"
+                and not (tc.caption and str(k).strip() == tc.caption.strip())
+                and v is not None
+                and str(v).strip() != ""
+            ]
         row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
 
     if missing_terms:
-        terms_str = ", ".join(f"'{t}'" for t in missing_terms)
-        intro = (
-            f"Note: The table does not list {terms_str} directly. "
-            "Closest matching rows from stored data:"
-        )
-        return "\n".join([intro, *row_lines])
+        first_tc = avail_table[selected_ids[0]] if selected_ids else None
+        term = missing_terms[0]
+        closest_cat: str | None = None
+        closest_sla: str | None = None
+        if first_tc:
+            for k, v in first_tc.cells.items():
+                k_low = str(k).lower()
+                v_str = str(v).strip() if v is not None else ""
+                if any(w in k_low for w in ("urgency", "category", "priority", "tier", "type")):
+                    closest_cat = v_str
+                elif any(w in k_low for w in ("sla", "turnaround", "time", "hours", "days")):
+                    closest_sla = v_str
+
+        if closest_cat and closest_sla:
+            intro_sentence = (
+                f"There is no '{term}' category ({term} is not listed); "
+                f"{closest_cat} requests are {closest_sla.lower()}."
+            )
+        elif closest_cat:
+            intro_sentence = (
+                f"There is no '{term}' category ({term} is not listed); "
+                f"closest matching category is {closest_cat}."
+            )
+        else:
+            intro_sentence = f"There is no '{term}' category in the table ({term} is not listed)."
+        return "\n".join([intro_sentence, *row_lines])
 
     return "\n".join(row_lines)
 
@@ -1703,6 +1812,110 @@ async def node_generate(
                 "response_message_id": str(uuid4()),
                 "status": "in_progress",
                 "evidence_ids": [],
+            }
+
+        # Route session_document: questions about an attached session document
+        if route == "session_document":
+            pages = ctx.session_document_pages or []
+            doc_name = ctx.session_document_name or "session_document.pdf"
+            refusal_msg = "I couldn't confirm that from the attached document."
+            if not pages:
+                ctx.response_text = refusal_msg
+                ctx.citations = []
+                ctx.generated_answer = {
+                    "mode": "short",
+                    "answer": refusal_msg,
+                    "evidence_ids": [],
+                    "quoted_span": None,
+                    "evidence_type": "text",
+                }
+                return {
+                    "response_message_id": str(uuid4()),
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            ev_context_parts = []
+            for p in pages:
+                p_num = p.get("page_number", 1)
+                p_txt = p.get("text") or p.get("ocr_text") or ""
+                ev_context_parts.append(f"[{doc_name}, Page {p_num}]:\n{p_txt}")
+            ev_context = "\n\n".join(ev_context_parts)
+
+            content = refusal_msg
+            quoted_span: str | None = None
+            evidence_ids: list[str] = []
+
+            if model is not None and not ports.is_mock_profile:
+                qa_prompt = (
+                    "You are an assistant answering solely based on the "
+                    "attached session document.\n"
+                    "Answer the question directly and concisely from the document text.\n"
+                    "Quote the exact supporting text span in quoted_span.\n"
+                    "If the answer or requested value is not found in the document text, "
+                    f'answer strictly: "{refusal_msg}" with quoted_span null.\n\n'
+                    f"Document text:\n{ev_context}\n\n"
+                    f"Question: {ctx.question_text}\n"
+                    "Output strictly as JSON matching the schema."
+                )
+                try:
+                    resp = await model.generate(
+                        role=ModelRole.ANSWER,
+                        messages=[
+                            ChatMessage(role="user", content=qa_prompt),
+                            ChatMessage(role="assistant", content="</think>"),
+                        ],
+                        schema=AnswerOutput,
+                        max_tokens=MAX_REQUEST_TOKENS_EXACT,
+                    )
+                    if resp.structured_output:
+                        content = resp.structured_output.get("answer", content)
+                        quoted_span = resp.structured_output.get("quoted_span")
+                        evidence_ids = AnswerOutput.parse_evidence_ids(
+                            resp.structured_output.get("evidence_ids")
+                        )
+                    else:
+                        content = resp.content
+                except Exception:
+                    logger.warning("Session document QA generation failed", exc_info=True)
+                    content = refusal_msg
+            else:
+                q_low = ctx.question_text.lower()
+                all_text = " ".join(str(p.get("text") or p.get("ocr_text") or "") for p in pages)
+                matched_val = None
+                for line in all_text.splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        k_clean = k.strip().lower()
+                        if k_clean and (
+                            k_clean in q_low
+                            or any(w in q_low for w in k_clean.split() if len(w) > 3)
+                        ):
+                            val_clean = v.strip()
+                            if val_clean:
+                                matched_val = val_clean
+                                break
+                if matched_val:
+                    content = f"The value is {matched_val}."
+                    quoted_span = matched_val
+                    evidence_ids = ["page_1"]
+                else:
+                    content = refusal_msg
+                    quoted_span = None
+                    evidence_ids = []
+
+            ctx.response_text = content
+            ctx.generated_answer = {
+                "mode": "short",
+                "answer": content,
+                "evidence_ids": evidence_ids,
+                "quoted_span": quoted_span,
+                "evidence_type": "text",
+            }
+            return {
+                "response_message_id": str(uuid4()),
+                "status": "in_progress",
+                "evidence_ids": evidence_ids,
             }
 
         # Route knowledge
@@ -2096,6 +2309,104 @@ async def node_validate(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
+        attempts = state.get("validation_attempts", 0)
+        generated = runtime.context.generated_answer
+        route = state.get("route", "knowledge")
+
+        # Route session_document: validate against attached document page text
+        if route == "session_document":
+            refusal_text = "I couldn't confirm that from the attached document."
+            ans_text = (generated.get("answer") or runtime.context.response_text or "").strip()
+            pages = runtime.context.session_document_pages or []
+            doc_name = runtime.context.session_document_name or "session_document.pdf"
+
+            if not ans_text or refusal_text.lower() in ans_text.lower():
+                runtime.context.response_text = refusal_text
+                runtime.context.citations = []
+                return {
+                    "validation_attempts": attempts + 1,
+                    "fields_valid": True,
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            all_page_texts: list[tuple[int, str]] = [
+                (int(p.get("page_number", 1)), str(p.get("text") or p.get("ocr_text") or ""))
+                for p in pages
+            ]
+
+            raw_quoted = generated.get("quoted_span")
+            sdoc_quoted_span = str(raw_quoted).strip().strip("\"'") if raw_quoted else ""
+
+            import re
+
+            ans_quotes = re.findall(r'"([^"]+)"', ans_text)
+
+            matched_page: int | None = None
+            if sdoc_quoted_span:
+                q_lower = sdoc_quoted_span.lower()
+                for p_num, p_text in all_page_texts:
+                    if q_lower in p_text.lower():
+                        matched_page = p_num
+                        break
+
+            if matched_page is None and ans_quotes:
+                for aq in ans_quotes:
+                    aq_clean = aq.strip().lower()
+                    for p_num, p_text in all_page_texts:
+                        if aq_clean in p_text.lower():
+                            matched_page = p_num
+                            break
+                    if matched_page is not None:
+                        break
+
+            if matched_page is None and ans_text:
+                for p_num, p_text in all_page_texts:
+                    for phrase in ans_text.split("."):
+                        p_sub = phrase.strip().lower()
+                        if len(p_sub) > 5 and p_sub in p_text.lower():
+                            matched_page = p_num
+                            break
+                    if matched_page is not None:
+                        break
+
+            quote_failed = False
+            if sdoc_quoted_span and matched_page is None:
+                quote_failed = True
+
+            if ans_quotes:
+                for aq in ans_quotes:
+                    aq_clean = aq.strip().lower()
+                    if not any(aq_clean in p_text.lower() for _, p_text in all_page_texts):
+                        quote_failed = True
+                        break
+
+            if quote_failed or matched_page is None:
+                runtime.context.response_text = refusal_text
+                runtime.context.citations = []
+                return {
+                    "validation_attempts": attempts + 1,
+                    "fields_valid": False,
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            runtime.context.response_text = ans_text
+            runtime.context.citations = [
+                SourceCitation(
+                    document_title=doc_name,
+                    version="1",
+                    page_number=matched_page,
+                    evidence_type="text",
+                )
+            ]
+            return {
+                "validation_attempts": attempts + 1,
+                "fields_valid": True,
+                "status": "completed",
+                "evidence_ids": [f"session_doc_{matched_page}"],
+            }
+
         # Quote validation compares against the original stored chunk text (not the sanitized copy)
         evidence = runtime.context.evidence_text
         attempts = state.get("validation_attempts", 0)
@@ -2548,7 +2859,7 @@ def _route_from_route(state: GraphState) -> str:
     if state.get("status") in ("completed", "refusal"):
         return "respond"
     r = state.get("route", "knowledge")
-    if r == "general":
+    if r in ("general", "session_document"):
         return "generate"
     if r == "clarify":
         return "respond"

@@ -78,7 +78,7 @@ class RouterOutput(BaseModel):
     @classmethod
     def coerce_route(cls, v: Any) -> str:
         s = str(v).lower().strip() if v else "knowledge"
-        if s in ("knowledge", "general", "clarify", "extraction"):
+        if s in ("knowledge", "general", "clarify", "extraction", "session_document"):
             return s
         return "knowledge"
 
@@ -222,10 +222,11 @@ class AnswerOutput(BaseModel):
         return []
 
 
-def format_router_prompt(question: str) -> str:
+def format_router_prompt(question: str, attached_document: str | None = None) -> str:
     """Format prompt for Node 2 query routing from registry."""
     tmpl = load_prompt_template("router_classify")
-    return tmpl.format(question=question)
+    doc_info = f"Attached: {attached_document}" if attached_document else "None"
+    return tmpl.format(question=question, attached_document=doc_info)
 
 
 def format_answer_prompt(

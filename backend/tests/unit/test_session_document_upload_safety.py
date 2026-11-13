@@ -16,7 +16,10 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.api.config import ApiSettings
-from app.api.routes.conversations import upload_session_document
+from app.api.routes.conversations import (
+    extract_session_document_fields,
+    upload_session_document,
+)
 from app.ports.types import SessionContext, TenantContext, UserRole
 
 
@@ -231,13 +234,41 @@ async def test_renamed_skewed_fax_upload_uses_extraction_subgraph_without_hardco
             mock_db.execute.return_value = mock_result
             mock_ts.return_value.__aenter__.return_value = mock_db
 
-            return await upload_session_document(
+            upload_res = await upload_session_document(
                 conversation_id=conv_id,
                 request=req,
                 session=session_ctx,
                 auth_provider=mock_auth,
                 settings=mock_settings,
                 assistant_id=asst_id,
+            )
+
+            storage_root = Path(
+                mock_settings.storage_dir if hasattr(mock_settings, "storage_dir") else "storage"
+            )
+            session_dir = storage_root / "sessions" / tenant_id / conv_id
+            safe_name = f"{upload_res.session_document_id}_{filename}"
+            saved_path = session_dir / safe_name
+            if not saved_path.exists():
+                saved_path = list(session_dir.glob(f"{upload_res.session_document_id}_*"))[0]
+
+            mock_sdoc = MagicMock(
+                file_path=str(saved_path),
+                file_name=filename,
+                page_count=1,
+            )
+            mock_result.scalar_one_or_none.side_effect = [
+                mock_sdoc,  # sdoc query
+                None,  # existing_ext query
+            ]
+
+            return await extract_session_document_fields(
+                assistant_id=asst_id,
+                conversation_id=conv_id,
+                document_id=upload_res.session_document_id,
+                session=session_ctx,
+                auth_provider=mock_auth,
+                settings=mock_settings,
             )
 
     renamed_resp = await _upload_with_name("arbitrary_intake_01.pdf")
@@ -356,9 +387,9 @@ async def test_upload_session_document_on_new_conversation_auto_creates_conversa
             assistant_id=asst_id,
         )
 
-    assert resp.status == "extracted"
+    assert resp.status == "uploaded"
     assert resp.conversation_id != "00000000-0000-0000-0000-000000000001"
-    assert len(resp.extracted_fields) > 0
+    assert resp.extracted_fields == []
 
 
 @pytest.mark.asyncio
@@ -451,6 +482,9 @@ async def test_ask_question_stream_populates_page_images_and_ocr_confidences(
 
         res_empty = MagicMock()
         res_empty.all.return_value = []
+        res_empty_scalars = MagicMock()
+        res_empty_scalars.first.return_value = None
+        res_empty.scalars.return_value = res_empty_scalars
 
         mock_db.execute.side_effect = [
             res_asst,
@@ -459,6 +493,8 @@ async def test_ask_question_stream_populates_page_images_and_ocr_confidences(
             res_count,
             res_docs,
             res_visual,
+            res_empty,
+            res_empty,
             res_empty,
             res_empty,
         ]

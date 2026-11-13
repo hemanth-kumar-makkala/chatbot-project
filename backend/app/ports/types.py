@@ -424,3 +424,15 @@ class StepErrorPayload(BaseModel):
     duration_ms: float
     error_code: str
     error_type: str
+
+
+class SourceCitation(BaseModel):
+    """Grounding source citation for answered query."""
+
+    document_title: str
+    version: str = "1"
+    page_number: int | None = None
+    version_id: str | None = None
+    evidence_type: str = "text"
+    sheet_name: str | None = None
+    row_number: int | None = None

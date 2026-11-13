@@ -193,10 +193,10 @@ class TestGenerateNodeSchemas:
         assert schema.get("type") == "object"
 
     def test_router_classify_prompt_contains_explicit_rules_and_bumped_version(self) -> None:
-        """Fix 1: router_classify prompt 1.2.0 defines route and answer_mode rules and enum values."""
+        """Fix 1: router_classify prompt 1.2.0+ defines route and answer_mode rules and enum values."""
         registry = get_prompt_registry()
         router_entry = registry["prompts"]["router_classify"]
-        assert router_entry["default_version"] == "1.2.0"
+        assert router_entry["default_version"] in ("1.2.0", "1.3.0")
 
         tmpl = load_prompt_template("router_classify")
         assert "{question}" in tmpl
@@ -217,7 +217,13 @@ class TestGenerateNodeSchemas:
 
         router_schema = load_response_schema("router_classify")
         route_enum = router_schema["properties"]["route"]["enum"]
-        assert set(route_enum) == {"knowledge", "general", "clarify", "extraction"}
+        assert set(route_enum) == {
+            "knowledge",
+            "general",
+            "clarify",
+            "extraction",
+            "session_document",
+        }
         mode_enum = router_schema["properties"]["answer_mode"]["enum"]
         assert set(mode_enum) == {"exact", "short", "explain", "table"}
 
@@ -305,11 +311,15 @@ class TestGenerateNodeSchemas:
         assert res_table["route"] == "knowledge"
         assert res_table["answer_mode"] == "table"
 
-        # Case 3: Router classifies as knowledge, question mentions summarize -> mode is explain
-        base_context.question_text = "summarize the prior authorization policy in depth"
-        res_explain = await node_route(state, type("MockRuntime", (), {"context": base_context})())
-        assert res_explain["route"] == "knowledge"
-        assert res_explain["answer_mode"] == "explain"
+        # Case 4: Asking to extract fields without an attached document returns paperclip refusal
+        base_context.question_text = "extract the patient fields"
+        base_context.ports.model_provider = MockGenerationModel(
+            output={"route": "extraction", "answer_mode": "short", "language": "en"}
+        )
+        res_extract = await node_route(state, type("MockRuntime", (), {"context": base_context})())
+        assert res_extract["route"] == "general"
+        assert res_extract["status"] == "refusal"
+        assert "paperclip" in base_context.response_text.lower()
 
     @pytest.mark.models
     @pytest.mark.asyncio

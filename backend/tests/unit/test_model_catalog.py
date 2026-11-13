@@ -481,13 +481,37 @@ async def test_upload_session_document_does_not_fallback_to_qwen_on_desktop_api(
         mock_db.execute.return_value = mock_result
         mock_ts.return_value.__aenter__.return_value = mock_db
 
-        await conversations_route.upload_session_document(
+        upload_resp = await conversations_route.upload_session_document(
             conversation_id=conv_id,
             request=req,
             session=session_ctx,
             auth_provider=mock_auth,
             settings=settings,
             assistant_id=asst_id,
+        )
+        assert upload_resp.status == "uploaded"
+
+        session_dir = tmp_path / "sessions" / tenant_id / conv_id
+        saved_files = list(session_dir.glob(f"{upload_resp.session_document_id}_*"))
+        saved_path = saved_files[0] if saved_files else tmp_path / "fax.pdf"
+
+        mock_sdoc = MagicMock(
+            file_path=str(saved_path),
+            file_name="fax.pdf",
+            page_count=1,
+        )
+        mock_result.scalar_one_or_none.side_effect = [
+            mock_sdoc,
+            None,
+        ]
+
+        await conversations_route.extract_session_document_fields(
+            assistant_id=asst_id,
+            conversation_id=conv_id,
+            document_id=upload_resp.session_document_id,
+            session=session_ctx,
+            auth_provider=mock_auth,
+            settings=settings,
         )
 
     mock_extract.assert_awaited_once()

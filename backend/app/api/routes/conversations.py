@@ -295,7 +295,18 @@ class SessionDocumentUploadResponse(BaseModel):
     conversation_id: str
     file_name: str
     page_count: int
-    status: str
+    status: str = "uploaded"
+    retention_hours: int = 24
+    extracted_fields: list[dict[str, Any]] = []
+    page_image_url: str
+
+
+class SessionDocumentExtractionResponse(BaseModel):
+    session_document_id: str
+    conversation_id: str
+    file_name: str
+    page_count: int
+    status: str = "extracted"
     extracted_fields: list[dict[str, Any]]
     page_image_url: str
 
@@ -578,12 +589,132 @@ async def upload_session_document(
         db_session.add(session_doc)
         await db_session.flush()
 
-    # Execute extraction subgraph
+    asst_param = assistant_id or str(conv.assistant_id)
+    page_img_url = (
+        f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_id}/pages/1/image"
+    )
+
+    return SessionDocumentUploadResponse(
+        session_document_id=str(doc_id),
+        conversation_id=str(conv_uuid),
+        file_name=filename,
+        page_count=page_count,
+        status="uploaded",
+        retention_hours=retention_hours,
+        extracted_fields=[],
+        page_image_url=page_img_url,
+    )
+
+
+@router.post(
+    "/assistants/{assistant_id}/conversations/{conversation_id}/documents/{document_id}/extract",
+    response_model=SessionDocumentExtractionResponse,
+)
+@router.post(
+    "/conversations/{conversation_id}/documents/{document_id}/extract",
+    response_model=SessionDocumentExtractionResponse,
+)
+async def extract_session_document_fields(
+    conversation_id: str,
+    document_id: str,
+    session: Annotated[SessionContext, Depends(get_current_session)],
+    auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+    assistant_id: str | None = None,
+    _csrf: Annotated[None, Depends(validate_csrf)] = None,
+) -> SessionDocumentExtractionResponse:
+    """Execute extraction subgraph on an uploaded session document on demand."""
+    try:
+        conv_uuid = UUID(conversation_id)
+        doc_uuid = UUID(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND") from None
+
+    # Derive tenant context
+    found_tenant_ctx: TenantContext | None = None
+    if assistant_id:
+        found_tenant_ctx = await get_tenant_context_for_assistant(
+            assistant_id=assistant_id,
+            session=session,
+            auth_provider=auth_provider,
+        )
+    else:
+        async with unscoped_session() as db_session:
+            tenant_ids = (await db_session.execute(select(Tenant.id))).scalars().all()
+
+        for tid in tenant_ids:
+            roles = await auth_provider.roles(user_id=session.user_id, tenant_id=str(tid))
+            if not roles:
+                continue
+            cand_ctx = TenantContext(
+                tenant_id=str(tid),
+                user_id=session.user_id,
+                role=roles[0],
+                session_id=session.session_id,
+            )
+            async with tenant_session(cand_ctx) as t_sess:
+                c_exists = (
+                    await t_sess.execute(
+                        select(Conversation.id).where(Conversation.id == conv_uuid)
+                    )
+                ).scalar_one_or_none()
+                if c_exists:
+                    found_tenant_ctx = cand_ctx
+                    break
+
+    if not found_tenant_ctx:
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+
+    async with tenant_session(found_tenant_ctx) as db_session:
+        sdoc = (
+            await db_session.execute(
+                select(SessionDocument).where(
+                    SessionDocument.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    SessionDocument.conversation_id == conv_uuid,
+                    SessionDocument.id == doc_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+        if not sdoc:
+            raise HTTPException(status_code=404, detail="DOCUMENT_NOT_FOUND")
+
+        # Check if already extracted
+        existing_ext = (
+            await db_session.execute(
+                select(ExtractionResult).where(
+                    ExtractionResult.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    ExtractionResult.session_document_id == doc_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+
+        saved_file_path = Path(sdoc.file_path)
+        file_name = sdoc.file_name
+        page_count = sdoc.page_count
+
+    asst_param = assistant_id or "default"
+    page_img_url = (
+        f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_uuid}/pages/1/image"
+    )
+
+    if existing_ext is not None:
+        raw_fields = existing_ext.fields_data.get("fields", [])
+        return SessionDocumentExtractionResponse(
+            session_document_id=str(doc_uuid),
+            conversation_id=str(conv_uuid),
+            file_name=file_name,
+            page_count=page_count,
+            status="extracted",
+            extracted_fields=raw_fields,
+            page_image_url=page_img_url,
+        )
+
+    profile = getattr(settings, "profile", "mock")
     chat_model_name = settings.chat_model or None
     vision_model_name = settings.vision_model or None
     fields = await extract_fields_from_document_file(
         file_path=saved_file_path,
-        file_name=filename,
+        file_name=file_name,
         page_number=1,
         profile=profile,
         chat_model=chat_model_name,
@@ -595,26 +726,29 @@ async def upload_session_document(
         ),
     )
 
-    # Persist ExtractionResult
     async with tenant_session(found_tenant_ctx) as db_session:
         ext_result = ExtractionResult(
             tenant_id=UUID(found_tenant_ctx.tenant_id),
-            session_document_id=doc_id,
+            session_document_id=doc_uuid,
             schema_name="fax_intake",
             fields_data={"fields": [f.to_dict() for f in fields]},
         )
         db_session.add(ext_result)
+        sdoc_to_update = (
+            await db_session.execute(
+                select(SessionDocument).where(
+                    SessionDocument.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    SessionDocument.id == doc_uuid,
+                )
+            )
+        ).scalar_one()
+        sdoc_to_update.status = "extracted"
         await db_session.flush()
 
-    asst_param = assistant_id or str(conv.assistant_id)
-    page_img_url = (
-        f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_id}/pages/1/image"
-    )
-
-    return SessionDocumentUploadResponse(
-        session_document_id=str(doc_id),
+    return SessionDocumentExtractionResponse(
+        session_document_id=str(doc_uuid),
         conversation_id=str(conv_uuid),
-        file_name=filename,
+        file_name=file_name,
         page_count=page_count,
         status="extracted",
         extracted_fields=[f.to_dict() for f in fields],
