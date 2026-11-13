@@ -3,11 +3,11 @@
 # Model setup: Generation models fit within 12 GB VRAM; embeddings and reranker on CPU
 profile: home-gpu
 models:
-  router:  { provider: ollama, model: "qwen2.5:7b" }
-  answer:  { provider: ollama, model: "qwen2.5:7b" }
-  vision:  { provider: ollama, model: "qwen2-vl:7b" }
-  extract: { provider: ollama, model: "qwen2-vl:7b" }
-  judge:   { provider: ollama, model: "llama3.1:8b" }
+  router:  { provider: ollama, model: "qwen2.5:7b", supports_vision: false, remote: false, baa_covered: false }
+  answer:  { provider: ollama, model: "qwen2.5:7b", supports_vision: false, remote: false, baa_covered: false }
+  vision:  { provider: ollama, model: "qwen2-vl:7b", supports_vision: true, remote: false, baa_covered: false }
+  extract: { provider: ollama, model: "qwen2-vl:7b", supports_vision: true, remote: false, baa_covered: false }
+  judge:   { provider: ollama, model: "llama3.1:8b", supports_vision: false, remote: false, baa_covered: false }
 embeddings:
   provider: local
   model: "BAAI/bge-m3"

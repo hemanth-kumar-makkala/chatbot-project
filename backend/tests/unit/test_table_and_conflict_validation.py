@@ -71,6 +71,7 @@ async def test_table_answer_invented_row_id_rejected() -> None:
             "Payer Name": "Apex Health Insurance",
             "Deductible": "$250.00",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {"row-1": real_tc}
     ctx.evidence_text = {
@@ -104,6 +105,7 @@ async def test_table_answer_value_mismatch_rejected() -> None:
             "Payer Name": "Apex Health Insurance",
             "Deductible": "$250.00",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {"row-1": real_tc}
     ctx.evidence_text = {
@@ -144,6 +146,7 @@ async def test_table_answer_exact_stored_cells_accepted() -> None:
             sheet_name="Sheet1",
             row_index=idx,
             cells={"Payer Name": payer, "Plan Code": code, "Deductible": ded},
+            tenant_id="00000000-0000-0000-0000-000000000001",
         )
         ctx.table_candidates[rid] = tc
         ctx.evidence_text[rid] = (
@@ -167,9 +170,9 @@ async def test_table_answer_exact_stored_cells_accepted() -> None:
 
 @pytest.mark.asyncio
 async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_byte() -> None:
-    """Table answer must be built only by code from stored cells and match byte for byte."""
-
+    """Fix 3: Table answer is a short direct answer from matching rows only, never dumping the whole table."""
     ctx = _make_context()
+    ctx.question_text = "What is the standard copay for Crestview Health CRST-GLD-05?"
     stored_rows = [
         {
             "Payer Name": "Apex Health Insurance",
@@ -222,6 +225,7 @@ async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_by
             sheet_name="Sheet1",
             row_index=idx,
             cells=r_data,
+            tenant_id="00000000-0000-0000-0000-000000000001",
         )
         tcs[rid] = tc
         ctx.evidence_text[rid] = (
@@ -233,22 +237,223 @@ async def test_render_table_answer_compares_every_cell_to_stored_row_byte_for_by
     state: GraphState = {"answer_mode": "table", "evidence_ids": list(tcs.keys())}
     res = await node_generate(state, _make_runtime(ctx))
     assert res["status"] == "in_progress"
+    assert res["evidence_ids"] == ["row-4"]
 
     rendered_answer = ctx.response_text
-    expected_rows = ["| " + " | ".join(row.values()) + " |" for row in stored_rows]
-    rendered_lines = rendered_answer.splitlines()
-    assert rendered_lines[0] == "| " + " | ".join(stored_rows[0]) + " |"
-    assert rendered_lines[1] == "| " + " | ".join("---" for _ in stored_rows[0]) + " |"
-    assert rendered_lines[2:] == expected_rows
-
-    # Every rendered cell is checked byte for byte against the stored row.
-    for rendered_row, stored_row in zip(rendered_lines[2:], stored_rows, strict=True):
-        rendered_cells = rendered_row.strip("| ").split(" | ")
-        assert rendered_cells == list(stored_row.values())
+    assert not rendered_answer.lstrip().startswith("| ")
+    assert "Crestview Health" in rendered_answer
+    assert "CRST-GLD-05" in rendered_answer
+    assert "$15.00" in rendered_answer
+    assert "Beacon Mutual" not in rendered_answer
+    assert "Summit Care" not in rendered_answer
 
     # Invariant: validation passes
-    val_res = await node_validate(state, _make_runtime(ctx))
+    val_res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": res["evidence_ids"]},
+        _make_runtime(ctx),
+    )
     assert val_res["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_table_answer_unmatched_term_discloses_explicitly_and_shows_closest_rows() -> None:
+    """Fix 3: When question uses a term not in the table (e.g. 'urgent'), say so explicitly and give closest rows."""
+    ctx = _make_context()
+    ctx.question_text = "what is the turnaround time for an urgent prior authorization?"
+    pa_rows = [
+        {
+            "Payer Name": "Apex Health Insurance",
+            "Service Category": "Diagnostic Imaging",
+            "Urgency": "Routine",
+            "Standard SLA": "48 Hours",
+            "Liaison Contact": "555-0120",
+        },
+        {
+            "Payer Name": "Apex Health Insurance",
+            "Service Category": "Inpatient Surgery",
+            "Urgency": "Expedited",
+            "Standard SLA": "24 Hours",
+            "Liaison Contact": "555-0120",
+        },
+        {
+            "Payer Name": "Crestview Health",
+            "Service Category": "Specialty Medication",
+            "Urgency": "Expedited",
+            "Standard SLA": "24 Hours",
+            "Liaison Contact": "555-0122",
+        },
+    ]
+    tcs = {}
+    for idx, r_data in enumerate(pa_rows, start=1):
+        rid = f"pa-row-{idx}"
+        tc = TableCandidate(
+            id=rid,
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=idx,
+            caption="*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***",
+            cells=r_data,
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        )
+        tcs[rid] = tc
+        ctx.evidence_text[rid] = (
+            f"[Document: pa_turnaround_times.xlsx, Sheet: Sheet1, Row: {idx}] "
+            + ", ".join(f"{k}: {v}" for k, v in r_data.items())
+        )
+    ctx.table_candidates = tcs
+
+    state: GraphState = {"answer_mode": "table", "evidence_ids": list(tcs.keys())}
+    res = await node_generate(state, _make_runtime(ctx))
+    ans = ctx.response_text
+
+    assert "urgent" in ans.lower()
+    assert "does not" in ans.lower() or "not listed" in ans.lower()
+    assert "Expedited" in ans
+    assert "24 Hours" in ans
+
+    val_res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": res["evidence_ids"]},
+        _make_runtime(ctx),
+    )
+    assert val_res["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_table_validation_accepts_lead_sentence_and_real_columns_for_legacy_candidates() -> (
+    None
+):
+    """Stage R2: Table answer with lead sentence and real column names passes validation for legacy rows."""
+    ctx = _make_context()
+    doc_cap = "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    tcs: dict[str, TableCandidate] = {
+        "row-1": TableCandidate(
+            id="row-1",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=1,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Payer Name",
+                "Column_2": "Service Category",
+                "Column_3": "Urgency",
+                "Column_4": "Standard SLA",
+                "Column_5": "Liaison Contact",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-2": TableCandidate(
+            id="row-2",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=2,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Apex Health Insurance",
+                "Column_2": "Diagnostic Imaging",
+                "Column_3": "Routine",
+                "Column_4": "48 Hours",
+                "Column_5": "555-0120",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+    }
+    ctx.table_candidates = tcs
+    ans_text = (
+        "Routine requests take 48 to 72 hours depending on payer and service.\n"
+        "[Sheet: Sheet1, Row: 2] Payer Name: Apex Health Insurance, "
+        "Service Category: Diagnostic Imaging, Urgency: Routine, "
+        "Standard SLA: 48 Hours, Liaison Contact: 555-0120"
+    )
+    ctx.generated_answer = {
+        "mode": "table",
+        "answer": ans_text,
+        "evidence_ids": ["row-2"],
+    }
+    res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": ["row-2"]}, _make_runtime(ctx)
+    )
+    assert res["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_table_validation_rejects_fabricated_quoted_value() -> None:
+    """Fix 3: Double-quoted values in table answers must exist in cited rows."""
+    ctx = _make_context()
+    real_tc = TableCandidate(
+        id="row-1",
+        document_title="pa_turnaround_times.xlsx",
+        document_version_id=str(uuid4()),
+        sheet_name="Sheet1",
+        row_index=1,
+        cells={
+            "Payer Name": "Apex Health Insurance",
+            "Urgency": "Expedited",
+            "Standard SLA": "24 Hours",
+        },
+        tenant_id="00000000-0000-0000-0000-000000000001",
+    )
+    ctx.table_candidates = {"row-1": real_tc}
+    ctx.evidence_text = {
+        "row-1": "[Document: pa_turnaround_times.xlsx, Sheet: Sheet1, Row: 1] Payer Name: Apex Health Insurance, Urgency: Expedited, Standard SLA: 24 Hours"
+    }
+    ctx.generated_answer = {
+        "mode": "table",
+        "answer": '[Sheet: Sheet1, Row: 1] Payer Name: Apex Health Insurance, Standard SLA: 24 Hours ("5 Minutes")',
+        "evidence_ids": ["row-1"],
+    }
+    res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": ["row-1"]}, _make_runtime(ctx)
+    )
+    assert res["status"] in ("retry", "refusal")
+
+    # Prose answer containing a real value plus a fabricated double-quoted value must also fail
+    ctx.generated_answer = {
+        "mode": "table",
+        "answer": 'Apex Health Insurance turnaround time is "5 Minutes".',
+        "evidence_ids": ["row-1"],
+    }
+    res_prose = await node_validate(
+        {"answer_mode": "table", "evidence_ids": ["row-1"]}, _make_runtime(ctx)
+    )
+    assert res_prose["status"] in ("retry", "refusal")
+
+
+@pytest.mark.asyncio
+async def test_table_source_citation_shows_sheet_and_row_never_page() -> None:
+    """Fix 2: API _resolve_sources sets sheet_name and row_number for TableData and never page_number."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.api.routes.questions import _resolve_sources
+
+    tid = uuid4()
+    table_id = uuid4()
+    ver_id = uuid4()
+
+    empty_chunk_res = MagicMock()
+    empty_chunk_res.all.return_value = []
+
+    table_row_obj = MagicMock()
+    table_row_obj.id = table_id
+    table_row_obj.document_version_id = ver_id
+    table_row_obj.sheet_name = "Turnaround"
+    table_row_obj.row_index = 4
+    table_row_obj.document_title = "pa_turnaround_times.xlsx"
+    table_res = MagicMock()
+    table_res.all.return_value = [table_row_obj]
+
+    db_session = MagicMock()
+    db_session.execute = AsyncMock(side_effect=[empty_chunk_res, table_res])
+
+    sources = await _resolve_sources(db_session, tid, [str(table_id)])
+    assert len(sources) == 1
+    src = sources[0]
+    assert src.evidence_type == "table"
+    assert src.sheet_name == "Turnaround"
+    assert src.row_number == 4
+    assert src.page_number is None
 
 
 # --- 2. CONFLICT QUOTES TESTS ---

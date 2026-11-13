@@ -178,6 +178,7 @@ class PostgresRetriever(Retriever):
                 page_id=str(candidate_meta[cid]["page_id"]),
                 document_version_id=str(candidate_meta[cid]["document_version_id"]),
                 evidence_type=EvidenceType(candidate_meta[cid]["evidence_type"]),
+                tenant_id=str(tenant_ctx.tenant_id),
             )
             for cid in top_cids
         ]
@@ -454,6 +455,7 @@ class PostgresRetriever(Retriever):
             for r in rows:
                 raw_data = r["row_data"]
                 cells = raw_data.get("cells", raw_data) if isinstance(raw_data, dict) else {}
+                caption = raw_data.get("caption") if isinstance(raw_data, dict) else None
                 candidates.append(
                     TableCandidate(
                         id=str(r["id"]),
@@ -462,6 +464,8 @@ class PostgresRetriever(Retriever):
                         sheet_name=str(r["sheet_name"]),
                         row_index=int(r["row_index"]),
                         cells=cells,
+                        tenant_id=str(tenant_ctx.tenant_id),
+                        caption=str(caption) if caption is not None else None,
                     )
                 )
             return candidates
@@ -565,6 +569,7 @@ class PostgresRetriever(Retriever):
                     page_id=str(r["page_id"]),
                     document_version_id=str(r["document_version_id"]),
                     evidence_type=EvidenceType(r["evidence_type"]),
+                    tenant_id=str(tid),
                 )
                 for r in rows
             ]

@@ -34,6 +34,7 @@ from app.core.graph import (
     GraphRuntimeContext,
     GraphState,
     build_knowledge_graph,
+    invoke_graph,
     node_assess_evidence,
 )
 from app.ports.model_provider import ModelProvider
@@ -115,7 +116,16 @@ class StubRetriever(Retriever):
     async def search(
         self, tenant_ctx: TenantContext, query: str, filters: Any = None
     ) -> list[EvidenceId]:
-        return self.candidates
+        return [
+            EvidenceId(
+                chunk_id=c.chunk_id,
+                page_id=c.page_id,
+                document_version_id=c.document_version_id,
+                evidence_type=c.evidence_type,
+                tenant_id=getattr(c, "tenant_id", None) or str(tenant_ctx.tenant_id),
+            )
+            for c in self.candidates
+        ]
 
     async def search_titles(
         self, tenant_ctx: TenantContext, query: str, limit: int = 3
@@ -243,6 +253,7 @@ class TestEvidenceGateRouting:
                 page_id="p1",
                 document_version_id="ver-1",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(tenant_ctx.tenant_id),
             )
         ]
         retriever = StubRetriever(
@@ -338,12 +349,14 @@ class TestEvidenceGateRouting:
                 page_id="p1",
                 document_version_id="ver-1",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
             EvidenceId(
                 chunk_id=c2_id,
                 page_id="p2",
                 document_version_id="ver-2",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
         ]
         retriever = StubRetriever(
@@ -411,12 +424,14 @@ class TestEvidenceGateRouting:
                 page_id="p1",
                 document_version_id="ver-1",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
             EvidenceId(
                 chunk_id=c2_id,
                 page_id="p2",
                 document_version_id="ver-2",
                 evidence_type=EvidenceType.TEXT,
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
         ]
         retriever = StubRetriever(
@@ -486,3 +501,38 @@ class TestEvidenceGateRouting:
         )
         # Unverified quote must not be accepted as a valid conflict
         assert res["evidence_state"] != "CONFLICTING"
+
+    @pytest.mark.asyncio
+    async def test_evidence_with_mismatched_tenant_id_ends_in_safe_failure(
+        self, base_state: GraphState, tenant_ctx: TenantContext
+    ) -> None:
+        """Retrieved evidence belonging to an alien tenant must trigger TenantIsolationError and end in safe_failure."""
+        alien_tenant_id = "00000000-0000-0000-0000-999999999999"
+        c1_id = "00000000-0000-0000-0001-000000000001"
+        candidates = [
+            EvidenceId(
+                chunk_id=c1_id,
+                page_id="p1",
+                document_version_id="ver-1",
+                evidence_type=EvidenceType.TEXT,
+                tenant_id=alien_tenant_id,
+            )
+        ]
+
+        class AlienRetriever(StubRetriever):
+            async def search(
+                self, tenant_ctx: TenantContext, query: str, filters: Any = None
+            ) -> list[EvidenceId]:
+                return self.candidates
+
+        retriever = AlienRetriever(candidates=candidates, texts={c1_id: "Alien text"})
+        model = CountingModelProvider()
+        ports = GraphPorts(model_provider=model, retriever=retriever)
+        ctx = GraphRuntimeContext(
+            ports=ports,
+            tenant=tenant_ctx,
+            question_text="What is the acupuncture copay?",
+        )
+        res = await invoke_graph(base_state, ctx)
+        assert res["status"] == "safe_failure"
+        assert res.get("public_error_ref") is not None

@@ -17,6 +17,7 @@ import {
 } from "@/lib/demo/fixtures";
 import {
   askQuestion,
+  extractSessionDocument,
   getCurrentUser,
   submitFeedback,
   uploadSessionDocument,
@@ -31,13 +32,17 @@ interface HomePageProps {
 }
 
 interface AttachedDocument {
+  session_document_id?: string;
+  conversation_id?: string;
   filename: string;
   title: string;
   description?: string;
   page_count: number;
+  retention_hours?: number;
   preview_page?: number;
   image_stem?: string;
   path?: string;
+  isExtracted?: boolean;
 }
 
 interface ChatMessage {
@@ -72,6 +77,9 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
   const [arbitraryFileError, setArbitraryFileError] = useState<string | null>(null);
   const [liveExtractionError, setLiveExtractionError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractingStatusLine, setExtractingStatusLine] = useState<string | null>(null);
   const liveFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Feedback state (Task 5.5)
@@ -121,67 +129,161 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
   async function handleLiveFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (liveFileInputRef.current) {
+      liveFileInputRef.current.value = "";
+    }
+    if (!file || isUploading || isExtracting || isSubmitting) return;
 
     setLiveExtractionError(null);
+    setIsUploading(true);
 
-    const activeConvId = conversationId || "00000000-0000-0000-0000-000000000001";
-    const res = await uploadSessionDocument(assistantId, activeConvId, file);
-    if (!res.ok) {
-      setLiveExtractionError(res.code || "UPLOAD_FAILED");
+    const activeConvId = conversationId || "new";
+    try {
+      const res = await uploadSessionDocument(assistantId, activeConvId, file);
+      if (!res.ok) {
+        setLiveExtractionError(res.code || "UPLOAD_FAILED");
+        return;
+      }
+
+      const returnedConvId = res.data.conversation_id;
+      if (returnedConvId) {
+        setConversationId(returnedConvId);
+      }
+
+      const isAlreadyExtracted =
+        res.data.status === "extracted" &&
+        Boolean(res.data.extracted_fields && res.data.extracted_fields.length > 0);
+
+      setAttachedDoc({
+        session_document_id: res.data.session_document_id,
+        conversation_id: returnedConvId,
+        filename: res.data.file_name,
+        title: res.data.file_name,
+        page_count: res.data.page_count,
+        retention_hours: res.data.retention_hours || 24,
+        path: res.data.page_image_url,
+        isExtracted: isAlreadyExtracted,
+      });
+
+      if (isAlreadyExtracted) {
+        const extractionResp: QuestionResponse = {
+          request_id: `req-${Date.now()}`,
+          tenant_id: "",
+          conversation_id: res.data.conversation_id,
+          message_id: `msg-${Date.now()}-a`,
+          status: "answered",
+          answer: "Extracted document fields via dual-read extraction subgraph.",
+          citations: [],
+          evidence_type: "extraction",
+          extracted_fields: res.data.extracted_fields,
+          sources: [
+            {
+              document_title: res.data.file_name,
+              page_number: 1,
+              version: "1",
+              evidence_type: "visual",
+              version_id: res.data.page_image_url,
+            },
+          ],
+          status_lines: [
+            "Session document stored under Invariant 7 (strictly isolated from knowledge index)",
+            "Executed extraction subgraph: dual read compare and field state classification",
+          ],
+        };
+
+        const asstMsg: ChatMessage = {
+          id: `msg-${Date.now()}-a`,
+          role: "assistant",
+          content: extractionResp.answer,
+          response: extractionResp,
+        };
+
+        setMessages((prev) => [...prev, asstMsg]);
+      }
+    } catch {
+      setLiveExtractionError("UPLOAD_FAILED");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handleExtractFields() {
+    if (
+      !attachedDoc ||
+      !attachedDoc.session_document_id ||
+      isExtracting ||
+      isUploading ||
+      isSubmitting ||
+      attachedDoc.isExtracted
+    ) {
       return;
     }
 
-    if (!conversationId && res.data.conversation_id) {
-      setConversationId(res.data.conversation_id);
+    setIsExtracting(true);
+    setExtractingStatusLine("Page 1 is a scanned image, reading it now...");
+    setLiveExtractionError(null);
+
+    // Stage M: After 10s show loading vision model notice
+    const visionModelTimer = setTimeout(() => {
+      setExtractingStatusLine("Still working, loading the vision model...");
+    }, 10_000);
+
+    const activeConvId = conversationId || attachedDoc.conversation_id || "new";
+    try {
+      const res = await extractSessionDocument(
+        assistantId,
+        activeConvId,
+        attachedDoc.session_document_id
+      );
+      clearTimeout(visionModelTimer);
+      if (!res.ok) {
+        setLiveExtractionError(res.code || "EXTRACTION_FAILED");
+        return;
+      }
+
+      setAttachedDoc((prev) => (prev ? { ...prev, isExtracted: true } : null));
+
+      const extractionResp: QuestionResponse = {
+        request_id: `req-${Date.now()}`,
+        tenant_id: "",
+        conversation_id: res.data.conversation_id,
+        message_id: `msg-${Date.now()}-a`,
+        status: "answered",
+        answer: "Extracted document fields via dual-read extraction subgraph.",
+        citations: [],
+        evidence_type: "extraction",
+        extracted_fields: res.data.extracted_fields,
+        sources: [
+          {
+            document_title: res.data.file_name,
+            page_number: 1,
+            version: "1",
+            evidence_type: "visual",
+            version_id: res.data.page_image_url,
+          },
+        ],
+        status_lines: [
+          "Session document stored under Invariant 7 (strictly isolated from knowledge index)",
+          "Executed extraction subgraph: dual read compare and field state classification",
+        ],
+      };
+
+      const asstMsg: ChatMessage = {
+        id: `msg-${Date.now()}-a`,
+        role: "assistant",
+        content: extractionResp.answer,
+        response: extractionResp,
+      };
+
+      setMessages((prev) => [...prev, asstMsg]);
+    } catch {
+      clearTimeout(visionModelTimer);
+      setLiveExtractionError("EXTRACTION_FAILED");
+    } finally {
+      clearTimeout(visionModelTimer);
+      setIsExtracting(false);
+      setExtractingStatusLine(null);
     }
-
-    setAttachedDoc({
-      filename: res.data.file_name,
-      title: res.data.file_name,
-      page_count: res.data.page_count,
-      path: res.data.page_image_url,
-    });
-
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}-u`,
-      role: "user",
-      content: `Attached session document: ${res.data.file_name}`,
-    };
-
-    const extractionResp: QuestionResponse = {
-      request_id: `req-${Date.now()}`,
-      tenant_id: "",
-      conversation_id: res.data.conversation_id,
-      message_id: `msg-${Date.now()}-a`,
-      status: "answered",
-      answer: "Extracted document fields via dual-read extraction subgraph.",
-      citations: [],
-      evidence_type: "extraction",
-      extracted_fields: res.data.extracted_fields,
-      sources: [
-        {
-          document_title: res.data.file_name,
-          page_number: 1,
-          version: "1",
-          evidence_type: "visual",
-          version_id: res.data.page_image_url,
-        },
-      ],
-      status_lines: [
-        "Session document stored under Invariant 7 (strictly isolated from knowledge index)",
-        "Executed extraction subgraph: dual read compare and field state classification",
-      ],
-    };
-
-    const asstMsg: ChatMessage = {
-      id: `msg-${Date.now()}-a`,
-      role: "assistant",
-      content: extractionResp.answer,
-      response: extractionResp,
-    };
-
-    setMessages((prev) => [...prev, userMsg, asstMsg]);
   }
 
   // "New chat" button always starts an empty conversation
@@ -191,6 +293,9 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setInputValue("");
     setAttachedDoc(null);
     setDemoStatusLines([]);
+    setExtractingStatusLine(null);
+    setIsUploading(false);
+    setIsExtracting(false);
     setActiveReasonMsgId(null);
     setLiveFeedbackWarningId(null);
     setLiveSourceWarning(false);
@@ -336,12 +441,12 @@ export default function AssistantHomePage({ params }: HomePageProps) {
       }
     } else {
       setDemoStatusLines([]);
+    setExtractingStatusLine(null);
+    setIsUploading(false);
+    setIsExtracting(false);
     }
 
     const currentAttachedDocName = attachedDoc?.filename;
-    if (attachedDoc) {
-      setAttachedDoc(null);
-    }
 
     try {
       if (!isLiveAssistant) {
@@ -362,7 +467,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         };
         setMessages((prev) => [...prev, asstMsg]);
       } else {
-        const res = await askQuestion(assistantId, trimmed, conversationId);
+        const activeConvId = conversationId || attachedDoc?.conversation_id || null;
+        const res = await askQuestion(assistantId, trimmed, activeConvId);
         if (res.ok) {
           if (res.data.conversation_id) {
             setConversationId(res.data.conversation_id);
@@ -379,6 +485,12 @@ export default function AssistantHomePage({ params }: HomePageProps) {
           if (res.code === "RATE_LIMIT_EXCEEDED" || res.status === 429) {
             errorMsgText =
               "You've reached the query rate limit. Please wait a moment and try again.";
+          } else if (res.code === "ASSISTANT_NOT_FOUND") {
+            errorMsgText =
+              "This assistant is unavailable for your account (not found or no tenant membership). Sign in with an authorized clinic account or select another assistant.";
+          } else if (res.code === "CONVERSATION_NOT_FOUND") {
+            errorMsgText =
+              "This conversation could not be found. Start a + New chat and try again.";
           }
           const errorMsg: ChatMessage = {
             id: `err-${Date.now()}`,
@@ -468,7 +580,11 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     if (isExtraction) {
       const fields = resp.extracted_fields || [];
       const firstSource = resp.sources?.[0];
-      const docTitle = firstSource?.document_title || attachedDoc?.name || "session_document.pdf";
+      const docTitle =
+        firstSource?.document_title ||
+        attachedDoc?.filename ||
+        attachedDoc?.title ||
+        "session_document.pdf";
       const pageNum = firstSource?.page_number || 1;
       const stem = docTitle
         .toLowerCase()
@@ -577,9 +693,20 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               borderRadius: "var(--radius-md)",
               border: "1px solid var(--color-border)",
               fontSize: "var(--font-size-sm)",
+              whiteSpace: "pre-wrap",
             }}
           >
             {resp.answer}
+          </div>
+          <div
+            data-testid="refusal-no-evidence-note"
+            style={{
+              marginTop: "var(--spacing-2)",
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            No supporting evidence found in the documents
           </div>
         </div>
       );
@@ -595,6 +722,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               version: s.version || "",
               page_number: s.page_number,
               evidence_type: s.evidence_type || "text",
+              sheet_name: s.sheet_name,
+              row_number: s.row_number,
             }));
 
       return (
@@ -619,7 +748,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             >
               Conflicting Sources
             </div>
-            <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5 }}>
+            <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
               {resp.answer}
             </div>
           </div>
@@ -630,7 +759,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 <button
                   key={`conf-s-${idx}`}
                   type="button"
-                  onClick={() => handleOpenSource(s.document_title, s.page_number)}
+                  onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1)}
                   style={{
                     fontSize: "var(--font-size-xs)",
                     padding: "2px 8px",
@@ -640,7 +769,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                   }}
                 >
                   <span>{s.document_title}</span>
-                  {s.page_number ? ` p.${s.page_number}` : ""}
+                  {s.evidence_type === "table" || s.sheet_name ? (
+                    <>
+                      {s.sheet_name ? ` Sheet: ${s.sheet_name}` : ""}
+                      {s.row_number != null ? ` Row ${s.row_number}` : ""}
+                    </>
+                  ) : (
+                    s.page_number != null ? ` p.${s.page_number}` : ""
+                  )}
                 </button>
               ))}
             </div>
@@ -655,7 +791,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
       return (
         <div data-testid="chat-clarify-card">
           {statusLinesHeader}
-          <div style={{ fontSize: "var(--font-size-sm)", marginBottom: "var(--spacing-3)" }}>
+          <div style={{ fontSize: "var(--font-size-sm)", marginBottom: "var(--spacing-3)", whiteSpace: "pre-wrap" }}>
             {resp.answer}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -704,7 +840,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               General Task Draft — Not grounded in client documents
             </span>
           </div>
-          <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5 }}>
+          <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
             {resp.answer}
           </div>
         </div>
@@ -724,6 +860,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               color: "var(--color-status-error-text)",
               borderRadius: "var(--radius-md)",
               fontSize: "var(--font-size-sm)",
+              whiteSpace: "pre-wrap",
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: "4px" }}>System Error</div>
@@ -737,13 +874,33 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
     // 6. Safe friendly fallback on unknown response type
     if (status && status !== "answered" && status !== "unknown") {
+      // Stage M: If response is extraction evidence or failure, never show confusing "unexpected response format"
+      if (resp.evidence_type === "extraction" || status === "failed" || status === "error") {
+        return (
+          <div
+            data-testid="chat-fallback-card"
+            style={{
+              padding: "var(--spacing-3)",
+              backgroundColor: "var(--color-bg-subtle)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "var(--font-size-sm)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {resp.answer || "Unable to complete extraction. Please try again."}
+          </div>
+        );
+      }
+
       return (
         <div
+          data-testid="chat-fallback-card"
           style={{
             padding: "var(--spacing-3)",
             backgroundColor: "var(--color-bg-subtle)",
             borderRadius: "var(--radius-md)",
             fontSize: "var(--font-size-sm)",
+            whiteSpace: "pre-wrap",
           }}
         >
           Received an unexpected response format. Please try again.
@@ -824,12 +981,12 @@ export default function AssistantHomePage({ params }: HomePageProps) {
           );
         })()}
 
-        <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5, marginBottom: "var(--spacing-3)" }}>
+        <div style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.5, marginBottom: "var(--spacing-3)", whiteSpace: "pre-wrap" }}>
           {resp.answer}
         </div>
 
         {/* Source Chips */}
-        {resp.sources && resp.sources.length > 0 && (
+        {!isGeneral && status !== "refusal" && resp.sources && resp.sources.length > 0 && (
           <div
             data-testid="chat-source-chips"
             style={{
@@ -847,7 +1004,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 key={`source-${sIdx}`}
                 type="button"
                 data-testid={`source-chip-${s.document_title}`}
-                onClick={() => handleOpenSource(s.document_title, s.page_number, s.version_id || s.version)}
+                onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1, s.version_id || s.version)}
                 style={{
                   fontSize: "var(--font-size-xs)",
                   padding: "2px 8px",
@@ -863,12 +1020,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               >
                 <span>{s.document_title}</span>
                 {s.version && <span>{s.version}</span>}
-                {s.sheet_name ? (
-                  <span>Sheet: {s.sheet_name}</span>
+                {s.evidence_type === "table" || s.sheet_name ? (
+                  <>
+                    {s.sheet_name && <span>Sheet: {s.sheet_name}</span>}
+                    {s.row_number != null && <span>Row {s.row_number}</span>}
+                  </>
                 ) : (
-                  <span>Page {s.page_number}</span>
+                  s.page_number != null && <span>Page {s.page_number}</span>
                 )}
-                {s.row_number && <span>Row {s.row_number}</span>}
                 {s.language && (
                   <span style={{ color: "var(--color-text-secondary)" }}>
                     Source ({s.language})
@@ -953,6 +1112,75 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             gap: "var(--spacing-4)",
           }}
         >
+          {/* Document card at the top of the conversation */}
+          {attachedDoc && (
+            <div
+              data-testid="session-document-card"
+              style={{
+                padding: "12px 16px",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-bg-card)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "var(--spacing-2)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "20px" }}>📄</span>
+                <div>
+                  <div
+                    style={{ fontWeight: 600, fontSize: "var(--font-size-sm)" }}
+                    data-testid="attached-doc-filename"
+                  >
+                    {attachedDoc.filename}
+                  </div>
+                  <div
+                    style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}
+                  >
+                    <span data-testid="attached-doc-page-count">
+                      {attachedDoc.page_count} page{attachedDoc.page_count !== 1 ? "s" : ""}
+                    </span>
+                    {" • "}
+                    <span data-testid="attached-doc-retention">
+                      Attached to this chat. Deleted after {attachedDoc.retention_hours || 24} hours
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="extract-fields-button"
+                onClick={handleExtractFields}
+                disabled={
+                  isExtracting || isUploading || isSubmitting || Boolean(attachedDoc.isExtracted)
+                }
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "var(--radius-md)",
+                  fontSize: "var(--font-size-sm)",
+                  fontWeight: 600,
+                  backgroundColor: attachedDoc.isExtracted
+                    ? "var(--color-bg-subtle)"
+                    : "var(--color-primary)",
+                  color: attachedDoc.isExtracted
+                    ? "var(--color-text-secondary)"
+                    : "var(--color-text-on-primary)",
+                  border: "none",
+                  cursor: attachedDoc.isExtracted || isExtracting ? "not-allowed" : "pointer",
+                }}
+              >
+                {isExtracting
+                  ? "Extracting..."
+                  : attachedDoc.isExtracted
+                  ? "Fields Extracted"
+                  : "Extract fields"}
+              </button>
+            </div>
+          )}
+
           {messages.length === 0 && (
             <div style={{ textAlign: "center", marginTop: "var(--spacing-8)" }}>
               <h2
@@ -1226,9 +1454,24 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             );
           })}
 
-          {isSubmitting && (
+          {(isSubmitting || extractingStatusLine) && (
             <div>
-              {isLiveAssistant ? (
+              {extractingStatusLine ? (
+                <div
+                  data-testid="live-extracting-status"
+                  style={{
+                    padding: "var(--spacing-3)",
+                    borderRadius: "var(--radius-md)",
+                    backgroundColor: "var(--color-bg-card)",
+                    border: "1px solid var(--color-border)",
+                    maxWidth: "360px",
+                    fontSize: "var(--font-size-xs)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  › {extractingStatusLine}
+                </div>
+              ) : isLiveAssistant ? (
                 <div
                   data-testid="live-loading-indicator"
                   style={{
@@ -1330,6 +1573,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             <button
               type="button"
               data-testid="chat-attach-button"
+              disabled={isSubmitting || isUploading || isExtracting}
               onClick={() => {
                 if (isLiveAssistant) {
                   liveFileInputRef.current?.click();
@@ -1344,7 +1588,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 border: "1px solid var(--color-border)",
                 backgroundColor: "var(--color-bg-page)",
                 fontSize: "var(--font-size-sm)",
-                cursor: "pointer",
+                cursor:
+                  isSubmitting || isUploading || isExtracting ? "not-allowed" : "pointer",
               }}
             >
               📎
@@ -1356,7 +1601,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               placeholder="Ask a question about clinic documents..."
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isUploading || isExtracting}
               style={{
                 flex: 1,
                 padding: "10px 14px",
@@ -1372,23 +1617,25 @@ export default function AssistantHomePage({ params }: HomePageProps) {
               type="submit"
               data-testid="chat-submit-button"
               aria-label="Send"
-              disabled={isSubmitting || !inputValue.trim()}
+              disabled={isSubmitting || isUploading || isExtracting || !inputValue.trim()}
               style={{
                 padding: "10px 18px",
                 borderRadius: "var(--radius-md)",
                 backgroundColor:
-                  isSubmitting || !inputValue.trim()
+                  isSubmitting || isUploading || isExtracting || !inputValue.trim()
                     ? "var(--color-bg-subtle)"
                     : "var(--color-primary)",
                 color:
-                  isSubmitting || !inputValue.trim()
+                  isSubmitting || isUploading || isExtracting || !inputValue.trim()
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-on-primary)",
                 fontSize: "var(--font-size-sm)",
                 fontWeight: 600,
                 border: "none",
                 cursor:
-                  isSubmitting || !inputValue.trim() ? "not-allowed" : "pointer",
+                  isSubmitting || isUploading || isExtracting || !inputValue.trim()
+                    ? "not-allowed"
+                    : "pointer",
               }}
             >
               Send

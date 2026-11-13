@@ -1,33 +1,29 @@
 # Runtime Profile: desktop-gpu (Default profile for real-model work)
 # Hardware: Intel Core i7-12700F, 32 GB RAM, NVIDIA RTX 3050 6 GB
-# Model setup: Single multimodal model (qwen3-vl:4b) for answer and vision roles to fit 6 GB VRAM;
+# Model setup: qwen3:8b for router/answer and qwen3-vl:4b-instruct for vision/extract/judge to fit 6 GB VRAM;
 # embeddings and reranker offloaded to CPU.
 profile: desktop-gpu
+catalog_providers:
+  - ollama
 models:
-  router:  { provider: ollama, model: "qwen3-vl:4b" }
-  answer:  { provider: ollama, model: "qwen3-vl:4b" }
-  vision:  { provider: ollama, model: "qwen3-vl:4b" }
-  extract: { provider: ollama, model: "qwen3-vl:4b" }
-  judge:   { provider: ollama, model: "qwen3-vl:4b" }
+  router:  { provider: ollama, model: "qwen3:8b", supports_vision: false, remote: false, baa_covered: false, temperature: 0.0, reasoning: false }
+  answer:  { provider: ollama, model: "qwen3:8b", supports_vision: false, remote: false, baa_covered: false, temperature: 0.0, reasoning: false }
+  vision:  { provider: ollama, model: "qwen3-vl:4b-instruct", supports_vision: true, remote: false, baa_covered: false, temperature: 0.0, reasoning: false }
+  extract: { provider: ollama, model: "qwen3-vl:4b-instruct", supports_vision: true, remote: false, baa_covered: false, temperature: 0.0, reasoning: false }
+  judge:   { provider: ollama, model: "qwen3-vl:4b-instruct", supports_vision: true, remote: false, baa_covered: false, temperature: 0.0, reasoning: false }
 generation_limits:
   "beam:cloud":
     router: 1024
     answer: 2048
     extract: 2048
     judge: 1024
-  "nvidia:mistralai/mistral-large-4-1t-a52b":
+  "qwen3:8b":
     router: 1024
     answer: 4096
     vision: 4096
     extract: 4096
     judge: 1024
-  "nvidia:*":
-    router: 1024
-    answer: 4096
-    vision: 4096
-    extract: 4096
-    judge: 1024
-  "inception:*":
+  "qwen3-vl:4b-instruct":
     router: 1024
     answer: 4096
     vision: 4096

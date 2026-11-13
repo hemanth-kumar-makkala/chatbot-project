@@ -12,7 +12,7 @@ config:
     curve: linear
 ---
 graph TD;
-	__start__(<p>__start__</p>)
+	__start__([<p>__start__</p>]):::first
 	guard_input(guard_input)
 	rewrite(rewrite)
 	route(route)
@@ -25,10 +25,11 @@ graph TD;
 	respond(respond)
 	safe_failure(safe_failure)
 	extraction_subgraph(extraction_subgraph)
-	__end__(<p>__end__</p>)
+	__end__([<p>__end__</p>]):::last
 	__start__ --> guard_input;
 	assess_evidence -.-> generate;
 	assess_evidence -.-> respond;
+	assess_evidence -.-> safe_failure;
 	assess_evidence -.-> vision_read;
 	extraction_subgraph --> respond;
 	generate --> validate;
@@ -47,6 +48,7 @@ graph TD;
 	vision_read -.-> generate;
 	vision_read -.-> respond;
 	respond --> __end__;
+	safe_failure --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

@@ -33,38 +33,73 @@ from app.core.safety_lock import (
     CloudModelSafetyLockError,
     is_cloud_model,
     is_vision_model,
+    resolve_model_capabilities,
     verify_cloud_model_safety_lock,
 )
+from app.ports.errors import ConfigurationError
+from app.ports.model_provider import ModelCapabilities
 from app.ports.storage import StorageKey
 from app.ports.types import TenantContext, UserRole
 
+TEST_CAPS: dict[tuple[str, str], ModelCapabilities] = {
+    ("beam", "beam:cloud"): ModelCapabilities(
+        supports_vision=False, remote=True, baa_covered=False
+    ),
+    ("ollama", "qwen2.5:72b-cloud"): ModelCapabilities(
+        supports_vision=False, remote=True, baa_covered=False
+    ),
+    ("ollama", "qwen3-vl:4b"): ModelCapabilities(
+        supports_vision=True, remote=False, baa_covered=False
+    ),
+    ("ollama", "qwen2-vl:7b"): ModelCapabilities(
+        supports_vision=True, remote=False, baa_covered=False
+    ),
+    ("ollama", "llama3.3:70b"): ModelCapabilities(
+        supports_vision=False, remote=False, baa_covered=False
+    ),
+    ("local", "bge-m3"): ModelCapabilities(supports_vision=False, remote=False, baa_covered=False),
+    ("gemini", "gemini-3.5-flash"): ModelCapabilities(
+        supports_vision=True, remote=True, baa_covered=False
+    ),
+    ("gemini", "gemini-vision-cloud"): ModelCapabilities(
+        supports_vision=True, remote=True, baa_covered=False
+    ),
+    ("mock", "mock-answer-v1"): ModelCapabilities(
+        supports_vision=True, remote=False, baa_covered=False
+    ),
+}
+
 
 def test_is_cloud_model_detection() -> None:
-    """Verifies that cloud model tags are accurately identified."""
-    assert is_cloud_model("beam:cloud") is True
-    assert is_cloud_model("qwen2.5:72b-cloud") is True
-    assert is_cloud_model("cloud/llama3") is True
-    assert is_cloud_model("hosted/deepseek") is True
-    assert is_cloud_model("custom-cloud") is True
-    assert is_cloud_model("qwen3-vl:4b") is False
-    assert is_cloud_model("bge-m3") is False
-    assert is_cloud_model("") is False
-    assert is_cloud_model(None) is False
-    assert is_cloud_model("local-model", is_cloud_override=True) is True
+    """Verifies that cloud model capabilities are accurately identified from capabilities map."""
+    assert is_cloud_model("beam:cloud", capabilities_map=TEST_CAPS) is True
+    assert is_cloud_model("qwen2.5:72b-cloud", capabilities_map=TEST_CAPS) is True
+    assert is_cloud_model("qwen3-vl:4b", capabilities_map=TEST_CAPS) is False
+    assert is_cloud_model("bge-m3", capabilities_map=TEST_CAPS) is False
+    assert is_cloud_model("", capabilities_map=TEST_CAPS) is False
+    assert is_cloud_model(None, capabilities_map=TEST_CAPS) is False
+    assert is_cloud_model("local-model", is_cloud_override=True, capabilities_map=TEST_CAPS) is True
+
+    # Fail-closed check: undeclared model raises ConfigurationError
+    with pytest.raises(ConfigurationError) as exc_info:
+        is_cloud_model("unknown/undeclared-model", capabilities_map=TEST_CAPS)
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
 
 
 def test_is_vision_model_detection() -> None:
-    """Verifies that multimodal vision capabilities are detected from model tags."""
-    assert is_vision_model("qwen3-vl:4b") is True
-    assert is_vision_model("qwen2-vl:7b") is True
-    assert is_vision_model("gpt-4-vision-preview") is True
-    assert is_vision_model("omni-model") is True
-    assert is_vision_model("multimodal-v1") is True
-    assert is_vision_model("beam:cloud") is False
-    assert is_vision_model("deepseek-r1:70b-cloud") is False
-    assert is_vision_model("llama3.3:70b") is False
-    assert is_vision_model("") is False
-    assert is_vision_model(None) is False
+    """Verifies that multimodal vision capabilities are detected from capabilities map."""
+    assert is_vision_model("qwen3-vl:4b", capabilities_map=TEST_CAPS) is True
+    assert is_vision_model("qwen2-vl:7b", capabilities_map=TEST_CAPS) is True
+    assert is_vision_model("gemini-3.5-flash", capabilities_map=TEST_CAPS) is True
+    assert is_vision_model("beam:cloud", capabilities_map=TEST_CAPS) is False
+    assert is_vision_model("llama3.3:70b", capabilities_map=TEST_CAPS) is False
+    assert is_vision_model("", capabilities_map=TEST_CAPS) is False
+    assert is_vision_model(None, capabilities_map=TEST_CAPS) is False
+
+    # Fail-closed check: undeclared model raises ConfigurationError
+    with pytest.raises(ConfigurationError) as exc_info:
+        is_vision_model("unknown/undeclared-model", capabilities_map=TEST_CAPS)
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
 
 
 def test_safety_lock_allows_golden_synthetic_documents() -> None:
@@ -87,6 +122,7 @@ def test_safety_lock_allows_golden_synthetic_documents() -> None:
         active_document_hashes=[
             GOLDEN_SYNTHETIC_HASHES_BY_NAME[Path(doc).name.lower()] for doc in golden_docs
         ],
+        capabilities_map=TEST_CAPS,
     )
 
 
@@ -96,6 +132,7 @@ def test_safety_lock_allows_non_golden_with_local_model() -> None:
     verify_cloud_model_safety_lock(
         model_name="qwen3-vl:4b",
         active_document_titles=non_golden_docs,
+        capabilities_map=TEST_CAPS,
     )
 
 
@@ -113,6 +150,7 @@ def test_safety_lock_refuses_non_golden_document() -> None:
                 GOLDEN_SYNTHETIC_HASHES_BY_NAME["prior_auth_guide.pdf"],
                 sha256(b"non-golden document").hexdigest(),
             ],
+            capabilities_map=TEST_CAPS,
         )
 
     err_msg = str(exc_info.value)
@@ -132,6 +170,7 @@ def test_safety_lock_rejects_non_golden_bytes_even_when_renamed_like_golden() ->
             model_name="beam:cloud",
             active_document_titles=[renamed_title],
             active_document_hashes=[forged_file_hash],
+            capabilities_map=TEST_CAPS,
         )
 
 
@@ -148,6 +187,7 @@ def test_safety_lock_handles_paths_and_casing() -> None:
             GOLDEN_SYNTHETIC_HASHES_BY_NAME["prior_auth_guide.pdf"],
             GOLDEN_SYNTHETIC_HASHES_BY_NAME["accepted_plans.csv"],
         ],
+        capabilities_map=TEST_CAPS,
     )
 
     bad_docs = [
@@ -157,6 +197,7 @@ def test_safety_lock_handles_paths_and_casing() -> None:
         verify_cloud_model_safety_lock(
             model_name="beam:cloud",
             active_document_titles=bad_docs,
+            capabilities_map=TEST_CAPS,
         )
     assert "Patient_PHI_2026.pdf" in str(exc_info.value)
 
@@ -188,9 +229,40 @@ async def test_cloud_lock_hashes_original_bytes_from_storage(
 
 
 @pytest.mark.asyncio
+async def test_verify_active_documents_fails_closed_when_capabilities_map_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """_verify_active_documents_for_cloud_models fails closed when
+    capabilities map is missing/empty.
+    """
+    empty_ports = GraphPorts(capabilities_map={})
+    monkeypatch.setattr(questions_route, "get_engine_ports", lambda _settings: empty_ports)
+
+    settings = ApiSettings(
+        profile="mock",
+        chat_model="gemini:gemini-3.5-flash",
+        storage_dir=str(tmp_path),
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        await questions_route._verify_active_documents_for_cloud_models(
+            settings,
+            UUID("00000000-0000-0000-0000-000000000001"),
+            [("doc.pdf", "version-1", "pdf")],
+        )
+
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
+
+
+@pytest.mark.asyncio
 async def test_node_guard_enforces_cloud_safety_for_vision_model() -> None:
     ctx = GraphRuntimeContext(
-        ports=GraphPorts(is_mock_profile=True, vision_model="nvidia:mistralai/vision"),
+        ports=GraphPorts(
+            is_mock_profile=True,
+            vision_model="gemini:gemini-vision-cloud",
+            capabilities_map=TEST_CAPS,
+        ),
         tenant=TenantContext(
             tenant_id="00000000-0000-0000-0000-000000000001",
             user_id="user-1",
@@ -219,7 +291,11 @@ async def test_node_guard_input_enforces_cloud_safety_lock() -> None:
     when non-golden file is active.
     """
     ctx = GraphRuntimeContext(
-        ports=GraphPorts(is_mock_profile=True, chat_model="beam:cloud"),
+        ports=GraphPorts(
+            is_mock_profile=True,
+            chat_model="beam:cloud",
+            capabilities_map=TEST_CAPS,
+        ),
         tenant=TenantContext(
             tenant_id="00000000-0000-0000-0000-000000000001",
             user_id="user-1",
@@ -256,6 +332,7 @@ async def test_assess_evidence_uses_independent_vision_model() -> None:
             chat_model="beam:cloud",
             vision_model="qwen3-vl:4b",
             mock_evidence_state="VISUAL_REQUIRED",
+            capabilities_map=TEST_CAPS,
         ),
         tenant=TenantContext(
             tenant_id="00000000-0000-0000-0000-000000000001",
@@ -289,6 +366,7 @@ async def test_node_assess_evidence_skips_vision_for_non_vision_cloud_model() ->
             chat_model="beam:cloud",
             vision_model="beam:cloud",
             mock_evidence_state="VISUAL_REQUIRED",
+            capabilities_map=TEST_CAPS,
         ),
         tenant=TenantContext(
             tenant_id="00000000-0000-0000-0000-000000000001",
@@ -317,3 +395,38 @@ async def test_node_assess_evidence_skips_vision_for_non_vision_cloud_model() ->
     # and evidence_state falls back to RELIABLE_TEXT
     assert result["needs_vision"] is False
     assert result["evidence_state"] == "RELIABLE_TEXT"
+
+
+def test_empty_capabilities_map_raises_model_capabilities_not_declared() -> None:
+    """Empty capabilities map raises MODEL_CAPABILITIES_NOT_DECLARED fail-closed."""
+    empty_caps: dict[tuple[str, str], ModelCapabilities] = {}
+    with pytest.raises(ConfigurationError) as exc_info:
+        resolve_model_capabilities("qwen3-vl:4b", capabilities_map=empty_caps)
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        is_cloud_model("qwen3-vl:4b", capabilities_map=empty_caps)
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        is_vision_model("qwen3-vl:4b", capabilities_map=empty_caps)
+    assert exc_info.value.error_code == "MODEL_CAPABILITIES_NOT_DECLARED"
+
+
+@pytest.mark.asyncio
+async def test_extract_fields_from_document_file_missing_tenant_raises_typed_error(
+    tmp_path: Path,
+) -> None:
+    """Missing tenant context raises typed AuthorizationError (403) before reading file."""
+    from app.api.routes.conversations import extract_fields_from_document_file
+    from app.ports.errors import AuthorizationError
+
+    dummy_file = tmp_path / "dummy.pdf"
+    with pytest.raises(AuthorizationError) as exc_info:
+        await extract_fields_from_document_file(
+            file_path=dummy_file,
+            file_name="dummy.pdf",
+            tenant_ctx=None,
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.error_code == "TENANT_CONTEXT_REQUIRED"

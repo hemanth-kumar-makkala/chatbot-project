@@ -4,7 +4,9 @@ import contextlib
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -35,15 +37,19 @@ from app.db.models import (
     Conversation,
     Document,
     DocumentVersion,
+    ExtractionResult,
     Message,
     Page,
+    SessionDocument,
     TableData,
 )
 from app.db.session import tenant_session
 from app.observability.logger import scrub_exception_for_log
 from app.ports.auth import AuthProvider
+from app.ports.errors import ConfigurationError, UnresolvableEvidenceError
+from app.ports.model_provider import ModelCapabilities
 from app.ports.storage import StorageKey
-from app.ports.types import SessionContext
+from app.ports.types import SessionContext, SourceCitation
 from app.wiring import (
     build_app_graph,
     create_mock_ports,
@@ -52,6 +58,7 @@ from app.wiring import (
     create_reranker,
     create_retriever,
     create_storage_backend,
+    load_and_validate_profile_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,12 +106,39 @@ async def _verify_active_documents_for_cloud_models(
     tenant_uuid: UUID,
     rows: Sequence[Any],
 ) -> list[str]:
-    """Hash active files once and validate every selected cloud answer/vision model."""
-    cloud_models = list(
-        dict.fromkeys(
-            model for model in (settings.chat_model, settings.vision_model) if is_cloud_model(model)
-        )
-    )
+    """Hash active files once and validate every selected cloud role model."""
+    ports = get_engine_ports(settings)
+    caps_map: Mapping[tuple[str, str], ModelCapabilities] = ports.capabilities_map
+    explicit_selectors = [
+        m
+        for m in (settings.chat_model, settings.vision_model, ports.chat_model, ports.vision_model)
+        if m
+    ]
+    if not caps_map:
+        if settings.profile != "mock" or explicit_selectors:
+            raise ConfigurationError(
+                message="Model capabilities map is not declared or missing in GraphPorts",
+                error_code="MODEL_CAPABILITIES_NOT_DECLARED",
+            )
+        return []
+
+    role_selectors: list[str] = []
+    if settings.profile != "mock":
+        profile_models = load_and_validate_profile_models(settings.profile)
+        for role_name in ("router", "answer", "vision", "extract", "judge"):
+            role_cfg = profile_models.get(role_name)
+            if isinstance(role_cfg, dict) and role_cfg.get("provider") and role_cfg.get("model"):
+                role_selectors.append(f"{role_cfg['provider']}:{role_cfg['model']}")
+
+    caps_selectors = [f"{prov}:{mod}" for prov, mod in caps_map]
+    models_to_check = list(dict.fromkeys([*explicit_selectors, *role_selectors, *caps_selectors]))
+    if not models_to_check:
+        return []
+
+    cloud_models: list[str] = []
+    for m in models_to_check:
+        if is_cloud_model(m, capabilities_map=caps_map):
+            cloud_models.append(m)
     if not cloud_models:
         return []
     hashes = await _hash_active_stored_documents(settings, tenant_uuid, rows, cloud_models[0])
@@ -114,6 +148,7 @@ async def _verify_active_documents_for_cloud_models(
             model_name=model_name,
             active_document_titles=titles,
             active_document_hashes=hashes,
+            capabilities_map=caps_map,
         )
     return hashes
 
@@ -128,21 +163,26 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
 
     profile = settings.profile
     if profile == "mock":
-        ports = create_mock_ports()
+        profile_models = load_and_validate_profile_models("mock")
+        ports = create_mock_ports(capabilities_map=profile_models["_capabilities_map"])
     else:
+        profile_models = load_and_validate_profile_models(profile)
+        caps_map = profile_models["_capabilities_map"]
+        resolved_chat_model = (
+            settings.chat_model
+            or f"{profile_models['answer']['provider']}:{profile_models['answer']['model']}"
+        )
+        resolved_vision_model = (
+            settings.vision_model
+            or f"{profile_models['vision']['provider']}:{profile_models['vision']['model']}"
+        )
         model_provider = create_model_provider(
             profile,
-            chat_model=settings.chat_model,
-            vision_model=settings.vision_model,
-            nvidia_base_url=settings.nvidia_base_url,
-            nvidia_api_key=(
-                settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-            ),
-            inception_base_url=settings.inception_base_url,
-            inception_api_key=(
-                settings.inception_api_key.get_secret_value()
-                if settings.inception_api_key
-                else None
+            chat_model=settings.chat_model or None,
+            vision_model=settings.vision_model or None,
+            gemini_base_url=settings.gemini_base_url,
+            gemini_api_key=(
+                settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
             ),
         )
         retriever = create_retriever(profile)
@@ -153,8 +193,9 @@ def get_engine_ports(settings: ApiSettings) -> GraphPorts:
             model_provider=model_provider,
             retriever=retriever,
             reranker=reranker,
-            chat_model=settings.chat_model,
-            vision_model=settings.vision_model,
+            chat_model=resolved_chat_model,
+            vision_model=resolved_vision_model,
+            capabilities_map=caps_map,
         )
 
     _ports_cache[cache_key] = ports
@@ -189,20 +230,13 @@ class QuestionRequest(BaseModel):
             raise ValueError("INVALID_CONVERSATION_ID") from exc
 
 
-class SourceCitation(BaseModel):
-    document_title: str
-    version: str
-    page_number: int
-    version_id: str | None = None
-    evidence_type: str = "text"
-
-
 class QuestionResponse(BaseModel):
     request_id: str
     tenant_id: str
     conversation_id: str
     message_id: str
     status: str
+    route: str | None = None
     answer: str
     answer_mode: str | None = None
     evidence_state: str | None = None
@@ -214,12 +248,22 @@ class QuestionResponse(BaseModel):
     rewritten_question: str | None = None
 
 
+def _should_include_sources(status_val: str, route_val: str | None) -> bool:
+    """Return True only when responses may display document source citations."""
+    return status_val not in ("refusal", "clarify") and route_val != "general"
+
+
 async def _resolve_sources(
     db_session: Any,
     tenant_uuid: UUID,
     evidence_ids: list[str],
+    route_val: str | None = None,
+    runtime_citations: list[SourceCitation] | None = None,
 ) -> list[SourceCitation]:
     """Resolve database metadata for cited chunk and table evidence."""
+    if route_val == "session_document":
+        return list(runtime_citations or [])
+
     sources_list: list[SourceCitation] = []
     if not evidence_ids:
         return sources_list
@@ -231,85 +275,192 @@ async def _resolve_sources(
         except (ValueError, TypeError):
             continue
 
-    if not chunk_uuids:
-        return sources_list
+    chunk_rows: list[Any] = []
+    table_rows: list[Any] = []
+    found_chunk_ids: set[UUID] = set()
 
-    chunk_stmt = (
-        select(
-            Chunk.id,
-            Chunk.page_id,
-            Chunk.document_version_id,
-            Chunk.evidence_type,
-            Document.title.label("document_title"),
-            Page.page_number,
-        )
-        .join(
-            DocumentVersion,
-            (DocumentVersion.id == Chunk.document_version_id)
-            & (DocumentVersion.tenant_id == Chunk.tenant_id),
-        )
-        .join(
-            Document,
-            (Document.id == DocumentVersion.document_id)
-            & (Document.tenant_id == DocumentVersion.tenant_id),
-        )
-        .join(
-            Page,
-            (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
-        )
-        .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
-    )
-    chunk_rows = (await db_session.execute(chunk_stmt)).all()
-    for crow in chunk_rows:
-        sources_list.append(
-            SourceCitation(
-                document_title=crow.document_title,
-                version="1",
-                page_number=crow.page_number,
-                version_id=str(crow.document_version_id),
-                evidence_type=crow.evidence_type,
-            )
-        )
-
-    # Also resolve any TableData rows
-    found_chunk_ids = {crow.id for crow in chunk_rows}
-    unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
-    if unresolved_uuids:
-        table_stmt = (
+    if chunk_uuids:
+        chunk_stmt = (
             select(
-                TableData.id,
-                TableData.document_version_id,
-                TableData.sheet_name,
-                TableData.row_index,
+                Chunk.id,
+                Chunk.page_id,
+                Chunk.document_version_id,
+                Chunk.evidence_type,
                 Document.title.label("document_title"),
+                Page.page_number,
             )
             .join(
                 DocumentVersion,
-                (DocumentVersion.id == TableData.document_version_id)
-                & (DocumentVersion.tenant_id == TableData.tenant_id),
+                (DocumentVersion.id == Chunk.document_version_id)
+                & (DocumentVersion.tenant_id == Chunk.tenant_id),
             )
             .join(
                 Document,
                 (Document.id == DocumentVersion.document_id)
                 & (Document.tenant_id == DocumentVersion.tenant_id),
             )
-            .where(
-                TableData.tenant_id == tenant_uuid,
-                TableData.id.in_(unresolved_uuids),
+            .join(
+                Page,
+                (Page.id == Chunk.page_id) & (Page.tenant_id == Chunk.tenant_id),
             )
+            .where(Chunk.tenant_id == tenant_uuid, Chunk.id.in_(chunk_uuids))
         )
-        table_rows = (await db_session.execute(table_stmt)).all()
-        for trow in table_rows:
+        chunk_rows = list((await db_session.execute(chunk_stmt)).all())
+        for crow in chunk_rows:
             sources_list.append(
                 SourceCitation(
-                    document_title=trow.document_title,
+                    document_title=crow.document_title,
                     version="1",
-                    page_number=trow.row_index,
-                    version_id=str(trow.document_version_id),
-                    evidence_type="table",
+                    page_number=crow.page_number,
+                    version_id=str(crow.document_version_id),
+                    evidence_type=crow.evidence_type,
                 )
             )
+
+        # Also resolve any TableData rows
+        found_chunk_ids = {crow.id for crow in chunk_rows}
+        unresolved_uuids = [cid for cid in chunk_uuids if cid not in found_chunk_ids]
+        if unresolved_uuids:
+            table_stmt = (
+                select(
+                    TableData.id,
+                    TableData.document_version_id,
+                    TableData.sheet_name,
+                    TableData.row_index,
+                    Document.title.label("document_title"),
+                )
+                .join(
+                    DocumentVersion,
+                    (DocumentVersion.id == TableData.document_version_id)
+                    & (DocumentVersion.tenant_id == TableData.tenant_id),
+                )
+                .join(
+                    Document,
+                    (Document.id == DocumentVersion.document_id)
+                    & (Document.tenant_id == DocumentVersion.tenant_id),
+                )
+                .where(
+                    TableData.tenant_id == tenant_uuid,
+                    TableData.id.in_(unresolved_uuids),
+                )
+            )
+            table_rows = list((await db_session.execute(table_stmt)).all())
+            for trow in table_rows:
+                sources_list.append(
+                    SourceCitation(
+                        document_title=trow.document_title,
+                        version="1",
+                        page_number=None,
+                        version_id=str(trow.document_version_id),
+                        evidence_type="table",
+                        sheet_name=trow.sheet_name,
+                        row_number=trow.row_index,
+                    )
+                )
+
+    # Fail closed: never synthesize citations for unresolvable IDs
+    resolved_str_ids = {str(crow.id) for crow in chunk_rows} | {str(trow.id) for trow in table_rows}
+    unresolved_ids = [str(eid) for eid in evidence_ids if str(eid) not in resolved_str_ids]
+    if unresolved_ids:
+        raise UnresolvableEvidenceError(
+            f"Evidence IDs {unresolved_ids} cannot be resolved to active chunks "
+            f"for tenant {tenant_uuid}",
+            error_code="UNRESOLVABLE_EVIDENCE_ID",
+        )
+
     return sources_list
+
+
+async def _load_or_extract_session_doc_pages(
+    db_session: Any,
+    sdoc: SessionDocument,
+    profile: str = "mock",
+) -> list[dict[str, Any]]:
+    """Retrieve stored page text for session document or parse and persist."""
+    ext_stmt = (
+        select(ExtractionResult)
+        .where(
+            ExtractionResult.tenant_id == sdoc.tenant_id,
+            ExtractionResult.session_document_id == sdoc.id,
+        )
+        .order_by(ExtractionResult.created_at.desc())
+    )
+    ext_results = (await db_session.execute(ext_stmt)).scalars().all()
+    for ext in ext_results:
+        raw_pages = ext.fields_data.get("pages")
+        if isinstance(raw_pages, list):
+            res_pages: list[dict[str, Any]] = [p for p in raw_pages if isinstance(p, dict)]
+            if res_pages:
+                return res_pages
+
+    fields_lines: list[str] = []
+    for ext in ext_results:
+        f_list = ext.fields_data.get("fields", [])
+        for f in f_list:
+            if isinstance(f, dict) and f.get("name") and f.get("value"):
+                fields_lines.append(f"{f.get('name')}: {f.get('value')}")
+
+    pages: list[dict[str, Any]] = []
+    fpath = Path(sdoc.file_path)
+    if fpath.exists():
+        if fpath.suffix.lower() == ".pdf":
+            try:
+                import pypdfium2 as pdfium  # type: ignore[import-untyped]
+
+                pdf = pdfium.PdfDocument(str(fpath))
+                for idx, page in enumerate(pdf):
+                    txt = page.get_textpage().get_text_range().strip()
+                    if idx == 0 and fields_lines and len(txt) < 50:
+                        txt = (txt + "\n" + "\n".join(fields_lines)).strip()
+                    if len(txt) < 50:
+                        try:
+                            from app.wiring import create_document_parser
+
+                            parser = create_document_parser(profile)
+                            content_bytes = fpath.read_bytes()
+                            doc_pages = [
+                                p async for p in parser.split_pages(content_bytes, sdoc.file_name)
+                            ]
+                            if idx < len(doc_pages):
+                                parsed = await parser.extract(doc_pages[idx])
+                                if parsed and parsed.text:
+                                    txt = parsed.text.strip()
+                        except Exception:
+                            logger.warning(
+                                "Session document parser extraction failed for %s",
+                                sdoc.file_name,
+                                exc_info=True,
+                            )
+                    pages.append({"page_number": idx + 1, "text": txt, "ocr_text": txt})
+            except Exception:
+                pass
+        else:
+            try:
+                txt = fpath.read_text(encoding="utf-8", errors="ignore").strip()
+                pages.append({"page_number": 1, "text": txt, "ocr_text": txt})
+            except Exception:
+                pass
+
+    if not pages and fields_lines:
+        pages.append(
+            {
+                "page_number": 1,
+                "text": "\n".join(fields_lines),
+                "ocr_text": "\n".join(fields_lines),
+            }
+        )
+
+    if pages:
+        text_ext = ExtractionResult(
+            tenant_id=sdoc.tenant_id,
+            session_document_id=sdoc.id,
+            schema_name="session_text",
+            fields_data={"pages": pages},
+        )
+        db_session.add(text_ext)
+        await db_session.flush()
+
+    return pages
 
 
 @router.post("/questions", response_model=QuestionResponse)
@@ -425,6 +576,8 @@ async def ask_question(
             )
         except CloudModelSafetyLockError as lock_err:
             raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        except ConfigurationError as cfg_err:
+            raise HTTPException(status_code=500, detail=str(cfg_err)) from cfg_err
 
         # 4. Load visual page metadata inside the pre-graph DB transaction
         page_images: dict[str, bytes] = {}
@@ -443,8 +596,30 @@ async def ask_question(
             for vrow in (await db_session.execute(visual_stmt)).all()
         ]
 
+        # 4b. Load any attached session document for the conversation
+        sdoc_stmt = (
+            select(SessionDocument)
+            .where(
+                SessionDocument.tenant_id == tenant_uuid,
+                SessionDocument.conversation_id == conv_uuid,
+                SessionDocument.retention_until > datetime.now(UTC),
+            )
+            .order_by(SessionDocument.created_at.desc())
+        )
+        sdoc = (await db_session.execute(sdoc_stmt)).scalars().first()
+        session_doc_name: str | None = None
+        session_doc_id: str | None = None
+        session_doc_pages: list[dict[str, Any]] | None = None
+
+        ports = get_engine_ports(settings=settings)
+        if sdoc is not None:
+            session_doc_name = sdoc.file_name
+            session_doc_id = str(sdoc.id)
+            session_doc_pages = await _load_or_extract_session_doc_pages(
+                db_session, sdoc, profile=settings.profile
+            )
+
     # Release DB connection before invoking model/GPU pipeline (matching ask_question_stream)
-    ports = get_engine_ports(settings=settings)
     if visual_rows:
         storage = create_storage_backend(profile=settings.profile, base_dir=settings.storage_dir)
         for cid_str, image_key, ocr_conf in visual_rows:
@@ -468,9 +643,12 @@ async def ask_question(
         active_document_count=doc_count,
         active_document_titles=active_doc_titles,
         active_document_hashes=active_doc_hashes,
-        chat_model=settings.chat_model,
+        chat_model=ports.chat_model or settings.chat_model,
         page_images=page_images,
         page_ocr_confidences=page_ocr_confidences,
+        session_document_id=session_doc_id,
+        session_document_name=session_doc_name,
+        session_document_pages=session_doc_pages,
     )
     state: GraphState = {
         "request_id": request_id,
@@ -533,13 +711,46 @@ async def ask_question(
         if "status" in result:
             status_val = result["status"]
 
+        route_val: str | None = result.get("route")
         ev_type = "visual" if ("needs_vision" in result and result["needs_vision"]) else "text"
         evidence_ids: list[str] = []
-        if "evidence_ids" in result and status_val not in ("refusal", "clarify"):
+        if "evidence_ids" in result and _should_include_sources(status_val, route_val):
             evidence_ids = result["evidence_ids"]
 
         # 7. Resolve real source chips from database (Rule E.4)
-        sources_list = await _resolve_sources(db_session, tenant_uuid, evidence_ids)
+        sources_list: list[SourceCitation] = []
+        if route_val == "session_document":
+            if status_val != "refusal" and runtime_ctx.citations:
+                sources_list = list(runtime_ctx.citations)
+        elif evidence_ids:
+            try:
+                sources_list = await _resolve_sources(
+                    db_session,
+                    tenant_uuid,
+                    evidence_ids,
+                    route_val=route_val,
+                    runtime_citations=runtime_ctx.citations,
+                )
+            except UnresolvableEvidenceError:
+                logger.error(
+                    "Evidence ID could not be resolved to tenant chunk",
+                    extra={
+                        "request_id": request_id,
+                        "tenant_id": tenant_ctx.tenant_id,
+                        "node": "resolve_sources",
+                        "status": "safe_failure",
+                        "error_code": "UNRESOLVABLE_EVIDENCE_ID",
+                    },
+                )
+                err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                status_val = "safe_failure"
+                answer_text = (
+                    "An error occurred while evaluating evidence. "
+                    f"Please quote reference {err_ref}."
+                )
+                result["public_error_ref"] = err_ref
+                evidence_ids = []
+                sources_list = []
 
         conflict_sources_list: list[SourceCitation] = []
         if status_val == "conflicting":
@@ -555,6 +766,7 @@ async def ask_question(
             conversation_id=str(conv_uuid),
             message_id=str(asst_msg.id),
             status=status_val,
+            route=route_val,
             answer=answer_text,
             answer_mode=result.get("answer_mode"),
             evidence_state=result.get("evidence_state"),
@@ -677,6 +889,8 @@ async def ask_question_stream(
             )
         except CloudModelSafetyLockError as lock_err:
             raise HTTPException(status_code=403, detail=str(lock_err)) from lock_err
+        except ConfigurationError as cfg_err:
+            raise HTTPException(status_code=500, detail=str(cfg_err)) from cfg_err
 
         visual_stmt = (
             select(Chunk.id, Page.image_key, Page.ocr_confidence)
@@ -692,147 +906,211 @@ async def ask_question_stream(
             for vrow in (await db_session.execute(visual_stmt)).all()
         ]
 
-    async def event_generator() -> AsyncIterator[str]:
-        settings = get_api_settings(request)
+        # 4b. Load any attached session document for the conversation
+        sdoc_stmt = (
+            select(SessionDocument)
+            .where(
+                SessionDocument.tenant_id == tenant_uuid,
+                SessionDocument.conversation_id == conv_uuid,
+                SessionDocument.retention_until > datetime.now(UTC),
+            )
+            .order_by(SessionDocument.created_at.desc())
+        )
+        sdoc = (await db_session.execute(sdoc_stmt)).scalars().first()
+        session_doc_name: str | None = None
+        session_doc_id: str | None = None
+        session_doc_pages: list[dict[str, Any]] | None = None
+
         ports = get_engine_ports(settings=settings)
-        page_images: dict[str, bytes] = {}
-        page_ocr_confidences: dict[str, float] = {}
-        if visual_rows:
-            storage = create_storage_backend(
-                profile=settings.profile, base_dir=settings.storage_dir
+        if sdoc is not None:
+            session_doc_name = sdoc.file_name
+            session_doc_id = str(sdoc.id)
+            session_doc_pages = await _load_or_extract_session_doc_pages(
+                db_session, sdoc, profile=settings.profile
             )
-            for cid_str, image_key, ocr_conf in visual_rows:
-                if ocr_conf is not None:
-                    page_ocr_confidences[cid_str] = float(ocr_conf)
-                if image_key:
-                    rel_path = str(image_key)
-                    prefix = f"{tenant_ctx.tenant_id}/"
-                    if rel_path.startswith(prefix):
-                        rel_path = rel_path[len(prefix) :]
-                    with contextlib.suppress(Exception):
-                        page_images[cid_str] = await storage.get(
-                            StorageKey(tenant_id=tenant_uuid, path=rel_path)
-                        )
 
-        runtime_ctx = GraphRuntimeContext(
-            ports=ports,
-            tenant=tenant_ctx,
-            question_text=payload.question_text,
-            conversation_history=history_turns,
-            active_document_count=doc_count,
-            active_document_titles=active_doc_titles,
-            active_document_hashes=active_doc_hashes,
-            chat_model=settings.chat_model,
-            page_images=page_images,
-            page_ocr_confidences=page_ocr_confidences,
-        )
-        state: GraphState = {
-            "request_id": request_id,
-            "status": "pending",
-            "conversation_id": str(conv_uuid),
-        }
-        graph = get_compiled_graph()
+        async def event_generator() -> AsyncIterator[str]:
+            page_images: dict[str, bytes] = {}
+            page_ocr_confidences: dict[str, float] = {}
+            if visual_rows:
+                storage = create_storage_backend(
+                    profile=settings.profile, base_dir=settings.storage_dir
+                )
+                for cid_str, image_key, ocr_conf in visual_rows:
+                    if ocr_conf is not None:
+                        page_ocr_confidences[cid_str] = float(ocr_conf)
+                    if image_key:
+                        rel_path = str(image_key)
+                        prefix = f"{tenant_ctx.tenant_id}/"
+                        if rel_path.startswith(prefix):
+                            rel_path = rel_path[len(prefix) :]
+                        with contextlib.suppress(Exception):
+                            page_images[cid_str] = await storage.get(
+                                StorageKey(tenant_id=tenant_uuid, path=rel_path)
+                            )
 
-        # Emit initial status event
-        init_payload = {"status_line": f"Searching {asst_name} documents...", "step": "retrieve"}
-        yield f"event: status\ndata: {json.dumps(init_payload)}\n\n"
-
-        result: dict[str, Any] = dict(state)
-        try:
-            async for step in graph.astream(state, context=runtime_ctx, stream_mode="updates"):
-                if not isinstance(step, dict):
-                    continue
-                for node_name, node_update in step.items():
-                    if isinstance(node_update, dict):
-                        result.update(node_update)
-
-                    if node_name == "retrieve":
-                        assess_payload = {
-                            "status_line": "Assessing retrieved evidence...",
-                            "step": "assess_evidence",
-                        }
-                        yield f"event: status\ndata: {json.dumps(assess_payload)}\n\n"
-                    elif node_name == "assess_evidence":
-                        if result.get("needs_vision"):
-                            page_num = result.get("visual_page_number", 1)
-                            s_line = f"Page {page_num} is a scanned image, reading it now..."
-                            vision_payload = {
-                                "status_line": s_line,
-                                "step": "vision_read",
-                            }
-                            yield f"event: status\ndata: {json.dumps(vision_payload)}\n\n"
-                        else:
-                            gen_payload = {
-                                "status_line": "Generating answer from validated evidence...",
-                                "step": "generate",
-                            }
-                            yield f"event: status\ndata: {json.dumps(gen_payload)}\n\n"
-                    elif node_name == "generate":
-                        val_payload = {
-                            "status_line": "Validating quotes and citations...",
-                            "step": "validate",
-                        }
-                        yield f"event: status\ndata: {json.dumps(val_payload)}\n\n"
-        except Exception as exc:
-            scrubbed_exc = scrub_exception_for_log(exc)
-            logger.error(
-                "Streaming graph invocation error: %s",
-                scrubbed_exc.scrubbed_message,
-                extra={
-                    "node": "ask_question_stream",
-                    "status": "error",
-                    "error_code": "ERR_STREAM_GRAPH_INVOCATION",
-                    "error_type": scrubbed_exc.error_type,
-                },
+            runtime_ctx = GraphRuntimeContext(
+                ports=ports,
+                tenant=tenant_ctx,
+                question_text=payload.question_text,
+                conversation_history=history_turns,
+                active_document_count=doc_count,
+                active_document_titles=active_doc_titles,
+                active_document_hashes=active_doc_hashes,
+                chat_model=ports.chat_model or settings.chat_model,
+                page_images=page_images,
+                page_ocr_confidences=page_ocr_confidences,
+                session_document_id=session_doc_id,
+                session_document_name=session_doc_name,
+                session_document_pages=session_doc_pages,
             )
-            err_ref = f"ERR-{uuid4().hex[:6].upper()}"
-            err_payload = {
-                "public_error_ref": err_ref,
-                "message": "An error occurred processing your request.",
+            state: GraphState = {
+                "request_id": request_id,
+                "status": "pending",
+                "conversation_id": str(conv_uuid),
             }
-            yield f"event: error\ndata: {json.dumps(err_payload)}\n\n"
-            return
+            graph = get_compiled_graph()
 
-        status_val = result.get("status", "answered")
-        if status_val in ("in_progress", "completed"):
-            status_val = "answered"
+            # Emit initial status event
+            init_payload = {
+                "status_line": f"Searching {asst_name} documents...",
+                "step": "retrieve",
+            }
+            yield f"event: status\ndata: {json.dumps(init_payload)}\n\n"
 
-        if runtime_ctx.response_text:
-            answer_text = runtime_ctx.response_text
-        else:
-            answer_text = "I am unable to answer this question based on validated clinic documents."
+            result: dict[str, Any] = dict(state)
+            try:
+                async for step in graph.astream(state, context=runtime_ctx, stream_mode="updates"):
+                    if not isinstance(step, dict):
+                        continue
+                    for node_name, node_update in step.items():
+                        if isinstance(node_update, dict):
+                            result.update(node_update)
 
-        # Emit token chunks
-        words = answer_text.split(" ")
-        for i, word in enumerate(words):
-            token = word + (" " if i < len(words) - 1 else "")
-            yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
+                        if node_name == "retrieve":
+                            assess_payload = {
+                                "status_line": "Assessing retrieved evidence...",
+                                "step": "assess_evidence",
+                            }
+                            yield f"event: status\ndata: {json.dumps(assess_payload)}\n\n"
+                        elif node_name == "assess_evidence":
+                            if result.get("needs_vision"):
+                                page_num = result.get("visual_page_number", 1)
+                                s_line = f"Page {page_num} is a scanned image, reading it now..."
+                                vision_payload = {
+                                    "status_line": s_line,
+                                    "step": "vision_read",
+                                }
+                                yield f"event: status\ndata: {json.dumps(vision_payload)}\n\n"
+                            else:
+                                gen_payload = {
+                                    "status_line": "Generating answer from validated evidence...",
+                                    "step": "generate",
+                                }
+                                yield f"event: status\ndata: {json.dumps(gen_payload)}\n\n"
+                        elif node_name == "generate":
+                            val_payload = {
+                                "status_line": "Validating quotes and citations...",
+                                "step": "validate",
+                            }
+                            yield f"event: status\ndata: {json.dumps(val_payload)}\n\n"
+            except Exception as exc:
+                scrubbed_exc = scrub_exception_for_log(exc)
+                logger.error(
+                    "Streaming graph invocation error: %s",
+                    scrubbed_exc.scrubbed_message,
+                    extra={
+                        "node": "ask_question_stream",
+                        "status": "error",
+                        "error_code": "ERR_STREAM_GRAPH_INVOCATION",
+                        "error_type": scrubbed_exc.error_type,
+                    },
+                )
+                err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                err_payload = {
+                    "public_error_ref": err_ref,
+                    "message": "An error occurred processing your request.",
+                }
+                yield f"event: error\ndata: {json.dumps(err_payload)}\n\n"
+                return
 
-        evidence_ids = (
-            result.get("evidence_ids", []) if status_val not in ("refusal", "clarify") else []
-        )
+            status_val = result.get("status", "answered")
+            if status_val in ("in_progress", "completed"):
+                status_val = "answered"
 
-        async with tenant_session(tenant_ctx) as post_session:
-            asst_msg = Message(
-                tenant_id=tenant_uuid,
-                conversation_id=conv_uuid,
-                role="assistant",
-                content=answer_text,
+            if runtime_ctx.response_text:
+                answer_text = runtime_ctx.response_text
+            else:
+                answer_text = (
+                    "I am unable to answer this question based on validated clinic documents."
+                )
+
+            # Emit token chunks
+            words = answer_text.split(" ")
+            for i, word in enumerate(words):
+                token = word + (" " if i < len(words) - 1 else "")
+                yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
+
+            route_val: str | None = result.get("route")
+            evidence_ids = (
+                result.get("evidence_ids", [])
+                if _should_include_sources(status_val, route_val)
+                else []
             )
-            post_session.add(asst_msg)
-            await post_session.flush()
 
-            audit = AuditEvent(
-                tenant_id=tenant_uuid,
-                user_id=user_uuid,
-                event_type="question",
-                action="question.answered",
-                resource_id=request_id,
-            )
-            post_session.add(audit)
-            await post_session.flush()
+            async with tenant_session(tenant_ctx) as post_session:
+                asst_msg = Message(
+                    tenant_id=tenant_uuid,
+                    conversation_id=conv_uuid,
+                    role="assistant",
+                    content=answer_text,
+                )
+                post_session.add(asst_msg)
+                await post_session.flush()
 
-            sources_list = await _resolve_sources(post_session, tenant_uuid, evidence_ids)
+                audit = AuditEvent(
+                    tenant_id=tenant_uuid,
+                    user_id=user_uuid,
+                    event_type="question",
+                    action="question.answered",
+                    resource_id=request_id,
+                )
+                post_session.add(audit)
+                await post_session.flush()
+
+                sources_list: list[SourceCitation] = []
+                if route_val == "session_document":
+                    if status_val != "refusal" and runtime_ctx.citations:
+                        sources_list = list(runtime_ctx.citations)
+                elif evidence_ids:
+                    try:
+                        sources_list = await _resolve_sources(
+                            post_session,
+                            tenant_uuid,
+                            evidence_ids,
+                            route_val=route_val,
+                            runtime_citations=runtime_ctx.citations,
+                        )
+                    except UnresolvableEvidenceError:
+                        logger.error(
+                            "Evidence ID could not be resolved to tenant chunk",
+                            extra={
+                                "request_id": request_id,
+                                "tenant_id": tenant_ctx.tenant_id,
+                                "node": "resolve_sources",
+                                "status": "safe_failure",
+                                "error_code": "UNRESOLVABLE_EVIDENCE_ID",
+                            },
+                        )
+                        err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                        status_val = "safe_failure"
+                        answer_text = (
+                            "An error occurred while evaluating evidence. "
+                            f"Please quote reference {err_ref}."
+                        )
+                        result["public_error_ref"] = err_ref
+                        evidence_ids = []
+                        sources_list = []
 
             conflict_sources_list: list[SourceCitation] = []
             if status_val == "conflicting":
@@ -847,6 +1125,7 @@ async def ask_question_stream(
                 "conversation_id": str(conv_uuid),
                 "message_id": str(asst_msg.id),
                 "status": status_val,
+                "route": route_val,
                 "answer": answer_text,
                 "answer_mode": result.get("answer_mode"),
                 "evidence_state": result.get("evidence_state"),

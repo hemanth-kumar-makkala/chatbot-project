@@ -1,0 +1,155 @@
+[
+  {
+    "id": "E2E-SD-001",
+    "category": "SESSION_DOCUMENT",
+    "type": "question",
+    "question": "what is the dosage in this fax?",
+    "attachment": "skewed_fax.pdf",
+    "expected_route": "session_document",
+    "expected_mode": "short",
+    "expected_answer": "Take 1 capsule by mouth three times daily for 10 days",
+    "expected_citations": ["skewed_fax.pdf"],
+    "notes": "Value present in attached session document."
+  },
+  {
+    "id": "E2E-SD-002",
+    "category": "SESSION_DOCUMENT",
+    "type": "question",
+    "question": "what is the patient's date of birth in this fax?",
+    "attachment": "skewed_fax.pdf",
+    "expected_route": "session_document",
+    "expected_mode": "short",
+    "expected_answer": "I couldn't confirm that from the attached document.",
+    "expected_citations": [],
+    "notes": "Value absent from attached session document, must refuse safely."
+  },
+  {
+    "id": "E2E-SD-003",
+    "category": "SESSION_DOCUMENT",
+    "type": "question",
+    "question": "please summarize this fax",
+    "attachment": "skewed_fax.pdf",
+    "expected_route": "session_document",
+    "expected_mode": "explain",
+    "expected_answer": "Alex Morgan; Amoxicillin",
+    "expected_citations": ["skewed_fax.pdf"],
+    "notes": "Summary of attached prescription refill authorization fax; expects at least two cited points (patient name and medication or dosage)."
+  },
+  {
+    "id": "E2E-GEN-001",
+    "category": "GENERAL",
+    "type": "question",
+    "question": "hello",
+    "attachment": null,
+    "expected_route": "general",
+    "expected_mode": "short",
+    "expected_answer": "Hello",
+    "expected_citations": [],
+    "notes": "Conversational greeting on general route without document sources."
+  },
+  {
+    "id": "E2E-GEN-002",
+    "category": "GENERAL",
+    "type": "question",
+    "question": "draft a short email to a clinic about a delayed prior authorization",
+    "attachment": null,
+    "expected_route": "general",
+    "expected_mode": "short",
+    "expected_answer": "prior authorization",
+    "expected_citations": [],
+    "notes": "Email draft on general route without document sources."
+  },
+  {
+    "id": "E2E-TAB-001",
+    "category": "TABLE",
+    "type": "question",
+    "question": "what is the turnaround time for a routine prior authorization?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "table",
+    "expected_answer": "48 to 72 hours",
+    "expected_citations": ["pa_turnaround_times.xlsx"],
+    "notes": "Turnaround time lookup with lead sentence; expects 48 and 72 hours."
+  },
+  {
+    "id": "E2E-TAB-002",
+    "category": "TABLE",
+    "type": "question",
+    "question": "what is the turnaround time for an urgent prior authorization?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "table",
+    "expected_answer": "urgent",
+    "expected_citations": ["pa_turnaround_times.xlsx"],
+    "notes": "Turnaround time lookup where 'urgent' is not listed and closest row is cited."
+  },
+  {
+    "id": "E2E-CONF-001",
+    "category": "VERSION_CONFLICT",
+    "type": "question",
+    "question": "what is the front desk intake fax number for transmitting outside patient referrals?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "short",
+    "expected_answer": "555-0102",
+    "expected_citations": ["front_desk_policy_v1.pdf", "front_desk_policy_v2.pdf"],
+    "notes": "Conflict between Policy v1 (555-0101) and Policy v2 (555-0102); current value is 555-0102."
+  },
+  {
+    "id": "E2E-CONF-002",
+    "category": "VERSION_CONFLICT",
+    "type": "question",
+    "question": "how early before a scheduled appointment must routine patients check in at the front desk?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "short",
+    "expected_answer": "20 minutes",
+    "expected_citations": ["front_desk_policy_v1.pdf", "front_desk_policy_v2.pdf"],
+    "notes": "Conflict between Policy v1 (15 min) and Policy v2 (20 min); current value is 20 minutes."
+  },
+  {
+    "id": "E2E-NOA-001",
+    "category": "NOT_IN_DOCUMENTS",
+    "type": "question",
+    "question": "what is the parking policy for patients?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "refusal",
+    "expected_answer": "I couldn't confirm that from the documents.",
+    "expected_citations": [],
+    "notes": "Fact not present in documents, must safely refuse."
+  },
+  {
+    "id": "E2E-NOA-002",
+    "category": "NOT_IN_DOCUMENTS",
+    "type": "question",
+    "question": "what are the clinic cafeteria hours?",
+    "attachment": null,
+    "expected_route": "knowledge",
+    "expected_mode": "refusal",
+    "expected_answer": "I couldn't confirm that from the documents.",
+    "expected_citations": [],
+    "notes": "Fact not present in documents, must safely refuse."
+  },
+  {
+    "id": "E2E-EXT-001",
+    "category": "EXTRACTION",
+    "type": "extract",
+    "question": "Extract fields from attached session document",
+    "attachment": "skewed_fax.pdf",
+    "expected_route": "extraction",
+    "expected_mode": "extraction",
+    "expected_answer": "Alex Morgan",
+    "expected_citations": ["skewed_fax.pdf"],
+    "expected_fields": {
+      "patient_name": "Alex Morgan",
+      "authorized_medication": {
+        "state": "CONFLICTING",
+        "ocr_read": "5oOmg",
+        "vision_read": "500mg"
+      },
+      "dosage": "Take 1 capsule by mouth three times daily for 10 days"
+    },
+    "notes": "On-demand extraction run on attached skewed fax."
+  }
+]

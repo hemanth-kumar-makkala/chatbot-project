@@ -55,4 +55,3 @@ We implemented an end-to-end scale benchmark in `backend/tests/integration/test_
 - **PostgreSQL & pgvector Validated**: No separate vector database is necessary. PostgreSQL with `pgvector` handles 10,000+ chunks with 100% recall and sub-2ms query times.
 - **Production Tuning**: While default `ef_search=40` achieves 100% recall, setting `hnsw.ef_search = 64` in production connections provides an additional margin of safety at 1.19ms latency.
 - **Architectural Question Closed**: Closes the open question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md`.
-

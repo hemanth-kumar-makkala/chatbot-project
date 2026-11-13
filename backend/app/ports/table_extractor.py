@@ -18,6 +18,7 @@ class ExtractedTableSheet:
     sheet_name: str
     headers: list[str]
     rows: list[dict[str, Any]]
+    caption: str | None = None
 
 
 @dataclass(frozen=True)

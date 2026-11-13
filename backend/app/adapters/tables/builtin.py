@@ -45,27 +45,54 @@ def _normalize_headers(raw_headers: list[Any]) -> list[str]:
     return normalized
 
 
-def _header_row_offset(rows: list[list[Any]]) -> int:
-    """Skip a single-cell title/banner when a multi-column header follows."""
-    populated: list[tuple[int, int]] = []
+def _detect_header_and_caption(rows: list[list[Any]]) -> tuple[int, str | None]:
+    """Skip leading rows where fewer than half the columns have values and store them as caption."""
+    if not rows:
+        return 0, None
+
+    col_count = max(
+        (
+            max(
+                (
+                    idx + 1
+                    for idx, val in enumerate(row)
+                    if val is not None and str(val).strip() != ""
+                ),
+                default=0,
+            )
+            for row in rows
+        ),
+        default=0,
+    )
+    if col_count == 0:
+        return 0, None
+
+    header_offset: int | None = None
+    first_non_empty: int | None = None
+    caption_lines: list[str] = []
+
     for index, row in enumerate(rows):
-        count = sum(value is not None and str(value).strip() != "" for value in row)
-        if count:
-            populated.append((index, count))
-        if len(populated) == 2:
-            break
-    if len(populated) == 2:
-        first_index, first_count = populated[0]
-        second_index, second_count = populated[1]
-        first_text = " ".join(
-            str(value).strip().lower()
-            for value in rows[first_index]
-            if value is not None and str(value).strip()
-        )
-        marked_title = first_text.startswith("***") or first_text.startswith(("title:", "report:"))
-        if marked_title or (first_count == 1 and second_count > 1):
-            return second_index
-    return populated[0][0] if populated else 0
+        non_empty_vals = [
+            str(val).strip() for val in row if val is not None and str(val).strip() != ""
+        ]
+        if not non_empty_vals:
+            continue
+        if first_non_empty is None:
+            first_non_empty = index
+        if non_empty_vals[0].startswith("#"):
+            caption_lines.append(" ".join(non_empty_vals))
+            continue
+        if len(non_empty_vals) * 2 < col_count:
+            caption_lines.append(" ".join(non_empty_vals))
+            continue
+        header_offset = index
+        break
+
+    if header_offset is None:
+        return (first_non_empty if first_non_empty is not None else 0), None
+
+    caption = " | ".join(caption_lines) if caption_lines else None
+    return header_offset, caption
 
 
 def _format_xlsx_cell_value(cell_data: Any, cell_formula: Any) -> tuple[Any, bool]:
@@ -176,7 +203,9 @@ class BuiltinTableExtractor(TableExtractor):
 
         csv_reader = csv.reader(io.StringIO(text), delimiter=delimiter)
         reader_preview, actual_reader = itertools.tee(csv_reader)
-        header_offset = _header_row_offset(list(itertools.islice(reader_preview, 25)))
+        header_offset, caption = _detect_header_and_caption(
+            list(itertools.islice(reader_preview, 25))
+        )
 
         headers: list[str] | None = None
         rows: list[dict[str, Any]] = []
@@ -228,7 +257,12 @@ class BuiltinTableExtractor(TableExtractor):
         if not rows:
             raise FileValidationError("Spreadsheet must contain at least one row of data")
 
-        sheet = ExtractedTableSheet(sheet_name="Sheet1", headers=headers, rows=rows)
+        sheet = ExtractedTableSheet(
+            sheet_name="Sheet1",
+            headers=headers,
+            rows=rows,
+            caption=caption,
+        )
         return TableExtractionResult(sheets=[sheet], skipped_hidden_sheets_count=0)
 
     def _extract_xlsx(self, file: bytes) -> TableExtractionResult:
@@ -258,7 +292,7 @@ class BuiltinTableExtractor(TableExtractor):
                 preview = [
                     list(row) for row in ws_data.iter_rows(min_row=1, max_row=25, values_only=True)
                 ]
-                header_offset = _header_row_offset(preview)
+                header_offset, caption = _detect_header_and_caption(preview)
 
                 # Stream rows simultaneously
                 iter_data = ws_data.iter_rows(values_only=False)
@@ -324,7 +358,12 @@ class BuiltinTableExtractor(TableExtractor):
                     raise FileValidationError("Spreadsheet must contain at least one row of data")
 
                 sheets.append(
-                    ExtractedTableSheet(sheet_name=sheet_name, headers=headers, rows=rows)
+                    ExtractedTableSheet(
+                        sheet_name=sheet_name,
+                        headers=headers,
+                        rows=rows,
+                        caption=caption,
+                    )
                 )
 
         finally:

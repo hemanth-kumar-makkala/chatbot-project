@@ -1,15 +1,13 @@
-"""Comprehensive Model Comparison Runner: Local, Cloud, and Hosted Models.
+"""Comprehensive Model Comparison Runner: Local and Cloud Models.
 
 Evaluates:
 - Answer models:
   1. qwen3-vl:4b (Local 4B)
   2. beam:cloud (Ollama Cloud)
-  3. nvidia:mistralai/mistral-large-4-1t-a52b (NVIDIA Cloud)
   Against: 12 smoke questions + 3-turn follow-up chain (15 queries total).
 
 - Vision models:
   1. qwen3-vl:4b (Local 4B)
-  2. nvidia:mistralai/mistral-large-4-1t-a52b (NVIDIA Cloud)
   Against: invalid_npi_fax.pdf, skewed_fax.pdf, faint_fax_2page.pdf
   Graded against evals/golden/extractions.json into:
   correct, correctly_blank, missed, false_fill.
@@ -17,12 +15,12 @@ Evaluates:
 Workflow:
 1. Isolated throwaway database initialized; migrations run to head.
 2. 6 golden smoke documents ingested once with qwen3-vl:4b on desktop-gpu profile.
-3. Answer models evaluated sequentially (NVIDIA paced <= 40 RPM).
+3. Answer models evaluated sequentially.
 4. Vision extraction evaluated sequentially per vision model (Docling OCR Read 1 + Vision Read 2).
 5. Generates authoritative markdown and JSON reports in docs/reports/2026-11-05-model-comparison.
 """
 
-# ruff: noqa: E501, ARG001, ARG005, E402
+# ruff: noqa: E501, ARG001, ARG005, E402, I001
 
 from __future__ import annotations
 
@@ -85,6 +83,7 @@ from app.db.session import (
     tenant_session,
     unscoped_session,
 )
+from app.observability.report_stamping import create_report_stamp
 from app.ports.types import TenantContext, UploadPayload, UserRole
 from app.wiring import create_upload_service
 from app.worker import app as worker_app
@@ -537,7 +536,6 @@ async def run_evaluation_suite(
     cookies: dict[str, str],
     csrf_token: str,
     model_label: str,
-    is_nvidia: bool = False,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     chain_conv_id: str | None = None
@@ -557,9 +555,6 @@ async def run_evaluation_suite(
         }
         if is_followup and chain_conv_id:
             payload["conversation_id"] = chain_conv_id
-
-        if is_nvidia:
-            await asyncio.sleep(1.5)  # Enforce <= 40 requests/minute on NVIDIA hosted endpoint
 
         t0 = time.monotonic()
         resp = await client.post(
@@ -684,91 +679,10 @@ async def call_qwen_vision(
     return cleaned, parsed, dur
 
 
-async def call_nvidia_vision(
-    image_bytes: bytes,
-    prompt: str,
-    base_url: str,
-    api_key: str,
-    timeout_seconds: float = 300.0,
-) -> tuple[str, dict[str, Any], float]:
-    img_processor = PillowImageProcessor()
-    scaled = img_processor.prepare_image_for_vision(
-        image_bytes=image_bytes,
-        max_dimension=1024,
-        max_bytes=4 * 1024 * 1024,
-    )
-    b64_img = base64.b64encode(scaled).decode("utf-8")
-
-    payload = {
-        "model": "mistralai/mistral-large-4-1t-a52b",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64_img}"},
-                    },
-                ],
-            }
-        ],
-        "temperature": 0.0,
-        "max_tokens": 2048,
-        "response_format": {"type": "json_object"},
-    }
-
-    cleaned_url = base_url.strip().rstrip("/")
-    endpoint = (
-        cleaned_url
-        if cleaned_url.endswith("/chat/completions")
-        else f"{cleaned_url}/chat/completions"
-    )
-
-    t0 = time.perf_counter()
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            resp = await client.post(
-                endpoint,
-                json=payload,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        dur = round(time.perf_counter() - t0, 2)
-        print(f"    [WARN] NVIDIA vision call error ({dur}s): {exc}")
-        return "", {}, dur
-
-    dur = round(time.perf_counter() - t0, 2)
-
-    choice_msg = data.get("choices", [{}])[0].get("message", {})
-    content = choice_msg.get("content") or ""
-    if not content:
-        content = choice_msg.get("reasoning_content") or ""
-
-    try:
-        clean_json = content
-        code_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content)
-        if code_match:
-            clean_json = code_match.group(1).strip()
-        elif "{" in clean_json and "}" in clean_json:
-            s_idx = clean_json.find("{")
-            e_idx = clean_json.rfind("}") + 1
-            clean_json = clean_json[s_idx:e_idx]
-        parsed = json.loads(clean_json)
-    except Exception:
-        parsed = {}
-
-    return content, parsed, dur
-
-
 async def run_vision_benchmark(
     vision_models: list[tuple[str, str]],
     docling_artifacts: Path,
     base_ollama_url: str,
-    nvidia_base_url: str | None,
-    nvidia_api_key: str | None,
 ) -> dict[str, Any]:
     print("\n=======================================================")
     print("STARTING VISION BENCHMARK ON 3 GOLDEN FAXES")
@@ -840,21 +754,11 @@ async def run_vision_benchmark(
                 print(
                     f"    Extracting {doc_name} with {model_label} (page {_p_idx + 1}/{len(pages)})..."
                 )
-                if model_id == "qwen3-vl:4b":
-                    _, parsed_v, dur_v = await call_qwen_vision(
-                        image_bytes=page.image_bytes,
-                        prompt=vision_prompt,
-                        base_url=base_ollama_url,
-                    )
-                else:
-                    await asyncio.sleep(1.5)  # Respect <= 40 RPM
-                    _, parsed_v, dur_v = await call_nvidia_vision(
-                        image_bytes=page.image_bytes,
-                        prompt=vision_prompt,
-                        base_url=nvidia_base_url or "",
-                        api_key=nvidia_api_key or "",
-                        timeout_seconds=300.0,
-                    )
+                _, parsed_v, dur_v = await call_qwen_vision(
+                    image_bytes=page.image_bytes,
+                    prompt=vision_prompt,
+                    base_url=base_ollama_url,
+                )
                 dur_vis_doc += dur_v
                 vis_per_page.append(parsed_v)
 
@@ -960,8 +864,6 @@ async def main() -> None:
     docling_artifacts = Path(raw_artifacts_path.strip())
 
     base_ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-    nvidia_base_url = os.environ.get("NVIDIA_BASE_URL")
-    nvidia_api_key = os.environ.get("NVIDIA_API_KEY")
 
     storage_dir = PROJECT_ROOT / "data" / "smoke_storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
@@ -1103,16 +1005,11 @@ async def main() -> None:
                             print(f"    [TIMEOUT] {doc_name} did not reach ready within 180s")
 
                     # =========================================================
-                    # ANSWER MODELS MATRIX (3 MODELS)
+                    # ANSWER MODELS MATRIX (2 MODELS)
                     # =========================================================
                     answer_model_specs = [
                         ("qwen3-vl:4b", "qwen3-vl:4b (Local 4B)", False),
                         ("beam:cloud", "beam:cloud (Ollama Cloud)", False),
-                        (
-                            "nvidia:mistralai/mistral-large-4-1t-a52b",
-                            "NVIDIA mistralai/mistral-large-4-1t-a52b",
-                            True,
-                        ),
                     ]
 
                     cache_ans_path = PROJECT_ROOT / "docs" / "reports" / "cache_answer_results.json"
@@ -1125,7 +1022,7 @@ async def main() -> None:
 
                     all_answer_results: dict[str, list[dict[str, Any]]] = {}
 
-                    for model_tag, model_label, is_nv in answer_model_specs:
+                    for model_tag, model_label, _ in answer_model_specs:
                         if model_tag in cached_answers and len(cached_answers[model_tag]) == len(
                             EVAL_ITEMS
                         ):
@@ -1171,7 +1068,6 @@ async def main() -> None:
                                 cookies=cookies,
                                 csrf_token=csrf,
                                 model_label=model_label,
-                                is_nvidia=is_nv,
                             )
                             all_answer_results[model_tag] = results
                             cached_answers[model_tag] = results
@@ -1180,22 +1076,16 @@ async def main() -> None:
                             )
 
                     # =========================================================
-                    # VISION MODELS MATRIX (2 MODELS)
+                    # VISION MODELS MATRIX (1 MODEL)
                     # =========================================================
                     vision_model_specs = [
                         ("qwen3-vl:4b", "qwen3-vl:4b (Local 4B)"),
-                        (
-                            "nvidia:mistralai/mistral-large-4-1t-a52b",
-                            "NVIDIA mistralai/mistral-large-4-1t-a52b",
-                        ),
                     ]
 
                     vision_benchmark_results = await run_vision_benchmark(
                         vision_models=vision_model_specs,
                         docling_artifacts=docling_artifacts,
                         base_ollama_url=base_ollama_url,
-                        nvidia_base_url=nvidia_base_url,
-                        nvidia_api_key=nvidia_api_key,
                     )
 
                     # =========================================================
@@ -1203,16 +1093,15 @@ async def main() -> None:
                     # =========================================================
                     results_4b = all_answer_results["qwen3-vl:4b"]
                     results_beam = all_answer_results["beam:cloud"]
-                    results_nvidia = all_answer_results["nvidia:mistralai/mistral-large-4-1t-a52b"]
 
                     per_model_summary: dict[str, Any] = {}
                     for model_tag, model_label, _ in answer_model_specs:
-                        res = all_answer_results[model_tag]
-                        tot = len(res)
-                        corr = sum(1 for r in res if r["correct"])
-                        ref = sum(1 for r in res if r["is_refusal"])
-                        inv_j = sum(1 for r in res if r["json_error"])
-                        avg_time = round(sum(r["seconds"] for r in res) / tot, 2)
+                        model_results_list = all_answer_results[model_tag]
+                        tot = len(model_results_list)
+                        corr = sum(1 for r in model_results_list if r["correct"])
+                        ref = sum(1 for r in model_results_list if r["is_refusal"])
+                        inv_j = sum(1 for r in model_results_list if r["json_error"])
+                        avg_time = round(sum(r["seconds"] for r in model_results_list) / tot, 2)
                         acc = round((corr / tot) * 100, 2)
                         per_model_summary[model_tag] = {
                             "model_tag": model_tag,
@@ -1236,15 +1125,14 @@ async def main() -> None:
                         qtext = item["question"]
                         r4b = results_4b[i]
                         rbm = results_beam[i]
-                        rnv = results_nvidia[i]
 
-                        c4b, cbm, cnv = r4b["correct"], rbm["correct"], rnv["correct"]
-                        s4b, sbm, snv = r4b["seconds"], rbm["seconds"], rnv["seconds"]
-                        a4b, abm, anv = r4b["answer"], rbm["answer"], rnv["answer"]
+                        c4b, cbm = r4b["correct"], rbm["correct"]
+                        s4b, sbm = r4b["seconds"], rbm["seconds"]
+                        a4b, abm = r4b["answer"], rbm["answer"]
 
-                        if not c4b and not cbm and not cnv:
+                        if not c4b and not cbm:
                             cat = "ALL-FAIL"
-                        elif c4b and cbm and cnv:
+                        elif c4b and cbm:
                             cat = "ALL-PASS"
                         else:
                             cat = "SOME-FAIL"
@@ -1266,13 +1154,6 @@ async def main() -> None:
                                 "answer": abm,
                                 "state": rbm["evidence_state"],
                                 "sources": rbm["sources"],
-                            },
-                            "nvidia_mistral": {
-                                "correct": cnv,
-                                "seconds": snv,
-                                "answer": anv,
-                                "state": rnv["evidence_state"],
-                                "sources": rnv["sources"],
                             },
                         }
                         answer_grid.append(grid_entry)
@@ -1305,22 +1186,22 @@ async def main() -> None:
                                     "reason": f"State: {rbm['evidence_state']}, Sources: {rbm['sources']}",
                                 }
                             )
-                        if not cnv:
-                            failed_answer_texts.append(
-                                {
-                                    "question_id": qid,
-                                    "question": qtext,
-                                    "model": "nvidia:mistralai/mistral-large-4-1t-a52b",
-                                    "answer": anv,
-                                    "reason": f"State: {rnv['evidence_state']}, Sources: {rnv['sources']}",
-                                }
-                            )
 
                     # =========================================================
                     # BUILD AUTHORITATIVE MARKDOWN & JSON REPORTS
                     # =========================================================
+                    models_by_role = {
+                        "answer": ", ".join(tag for tag, _, _ in answer_model_specs),
+                        "vision": ", ".join(tag for tag, _ in vision_model_specs),
+                    }
+                    telemetry_stamp = create_report_stamp(
+                        profile=os.getenv("APP_PROFILE", "desktop-gpu"),
+                        models_by_role=models_by_role,
+                        repo_root=PROJECT_ROOT,
+                    )
                     report_json_data = {
                         "timestamp": datetime.now(UTC).isoformat(),
+                        "telemetry_stamp": telemetry_stamp,
                         "run_status": "complete",
                         "answer_models": [tag for tag, _, _ in answer_model_specs],
                         "vision_models": [tag for tag, _ in vision_model_specs],
@@ -1357,12 +1238,9 @@ async def main() -> None:
                         "- **Answer Models Evaluated**:",
                         "  1. `qwen3-vl:4b` (Local 4B multimodal model)",
                         "  2. `beam:cloud` (Ollama Cloud hosted model)",
-                        "  3. `nvidia:mistralai/mistral-large-4-1t-a52b` (NVIDIA Cloud OpenAI-compatible hosted model)",
                         "- **Vision Models Evaluated**:",
                         "  1. `qwen3-vl:4b` (Local 4B vision)",
-                        "  2. `nvidia:mistralai/mistral-large-4-1t-a52b` (NVIDIA Cloud vision)",
                         "- **Safety Lock**: Enforced SHA-256 validation verifying that all active documents come from `evals/golden/docs/`.",
-                        "- **Rate Limiting**: NVIDIA requests were sequenced one question at a time with a 1.5s delay (respecting the <= 40 RPM quota).",
                         "",
                         "## 2. Per-Model Summary",
                         "",
@@ -1382,18 +1260,17 @@ async def main() -> None:
                             "",
                             "## 3. Answer Comparison Grid",
                             "",
-                            "| # | Question | qwen3-vl:4b (Correct / Time) | beam:cloud (Correct / Time) | NVIDIA mistral-large (Correct / Time) | Category |",
-                            "|---|---|:---:|:---:|:---:|:---:|",
+                            "| # | Question | qwen3-vl:4b (Correct / Time) | beam:cloud (Correct / Time) | Category |",
+                            "|---|---|:---:|:---:|:---:|",
                         ]
                     )
 
                     for entry in answer_grid:
                         clean_q = entry["question"].replace("|", "\\|")
-                        r4b = f"{'Yes' if entry['qwen_4b']['correct'] else 'No'} ({entry['qwen_4b']['seconds']}s)"
-                        rbm = f"{'Yes' if entry['beam_cloud']['correct'] else 'No'} ({entry['beam_cloud']['seconds']}s)"
-                        rnv = f"{'Yes' if entry['nvidia_mistral']['correct'] else 'No'} ({entry['nvidia_mistral']['seconds']}s)"
+                        display_4b = f"{'Yes' if entry['qwen_4b']['correct'] else 'No'} ({entry['qwen_4b']['seconds']}s)"
+                        display_bm = f"{'Yes' if entry['beam_cloud']['correct'] else 'No'} ({entry['beam_cloud']['seconds']}s)"
                         md_lines.append(
-                            f"| {entry['id']} | {clean_q} | {r4b} | {rbm} | {rnv} | **{entry['category']}** |"
+                            f"| {entry['id']} | {clean_q} | {display_4b} | {display_bm} | **{entry['category']}** |"
                         )
 
                     md_lines.extend(
@@ -1422,8 +1299,6 @@ async def main() -> None:
                                     f"  *Answer*: `{entry['qwen_4b']['answer'][:150]}...`",
                                     f"- **beam:cloud Trace**: State `{entry['beam_cloud']['state']}`, Sources: `{entry['beam_cloud']['sources']}`",
                                     f"  *Answer*: `{entry['beam_cloud']['answer'][:150]}...`",
-                                    f"- **NVIDIA mistral Trace**: State `{entry['nvidia_mistral']['state']}`, Sources: `{entry['nvidia_mistral']['sources']}`",
-                                    f"  *Answer*: `{entry['nvidia_mistral']['answer'][:150]}...`",
                                     "- **Root Cause Analysis**:",
                                 ]
                             )
@@ -1454,10 +1329,9 @@ async def main() -> None:
                         md_lines.extend(
                             [
                                 f"#### `{entry['id']}`: {entry['question']}",
-                                f"- **4B**: {'PASS' if entry['qwen_4b']['correct'] else 'FAIL'} ({entry['qwen_4b']['seconds']}s) | **beam**: {'PASS' if entry['beam_cloud']['correct'] else 'FAIL'} ({entry['beam_cloud']['seconds']}s) | **NVIDIA**: {'PASS' if entry['nvidia_mistral']['correct'] else 'FAIL'} ({entry['nvidia_mistral']['seconds']}s)",
+                                f"- **4B**: {'PASS' if entry['qwen_4b']['correct'] else 'FAIL'} ({entry['qwen_4b']['seconds']}s) | **beam**: {'PASS' if entry['beam_cloud']['correct'] else 'FAIL'} ({entry['beam_cloud']['seconds']}s)",
                                 f"- **4B Answer**: `{entry['qwen_4b']['answer'][:120]}...`",
                                 f"- **Beam Answer**: `{entry['beam_cloud']['answer'][:120]}...`",
-                                f"- **NVIDIA Answer**: `{entry['nvidia_mistral']['answer'][:120]}...`",
                                 "",
                             ]
                         )
@@ -1473,7 +1347,7 @@ async def main() -> None:
 
                     for entry in all_pass:
                         md_lines.append(
-                            f"- `{entry['id']}`: {entry['question']} (4B: {entry['qwen_4b']['seconds']}s, beam: {entry['beam_cloud']['seconds']}s, NVIDIA: {entry['nvidia_mistral']['seconds']}s)"
+                            f"- `{entry['id']}`: {entry['question']} (4B: {entry['qwen_4b']['seconds']}s, beam: {entry['beam_cloud']['seconds']}s)"
                         )
 
                     md_lines.extend(

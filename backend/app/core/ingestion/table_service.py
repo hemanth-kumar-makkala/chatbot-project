@@ -54,6 +54,9 @@ class TableIngestionService:
         for sheet in result.sheets:
             batch: list[dict[str, Any]] = []
             for row_idx, row_dict in enumerate(sheet.rows, start=1):
+                stored_row_data = dict(row_dict)
+                if sheet.caption is not None:
+                    stored_row_data["caption"] = sheet.caption
                 batch.append(
                     {
                         "id": uuid4(),
@@ -63,7 +66,7 @@ class TableIngestionService:
                         "page_id": None,
                         "table_index": 0,
                         "row_index": row_idx,
-                        "row_data": row_dict,
+                        "row_data": stored_row_data,
                     }
                 )
                 if len(batch) >= BATCH_SIZE:

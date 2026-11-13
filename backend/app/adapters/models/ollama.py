@@ -27,6 +27,7 @@ import logging
 import math
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,9 @@ from app.ports.errors import (
     TransientIngestionError,
 )
 from app.ports.image_processor import ImageProcessor
+from app.ports.model_catalog import StructuredOutputMode
 from app.ports.model_provider import (
+    ModelCapabilities,
     ModelProvider,
     is_cloud_model,
     is_vision_model,
@@ -295,6 +298,7 @@ class OllamaModelProvider(ModelProvider):
     def __init__(
         self,
         profile: str,
+        capabilities_map: Mapping[tuple[str, str], ModelCapabilities],
         base_url: str | None = None,
         config_path: Path | None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -302,7 +306,47 @@ class OllamaModelProvider(ModelProvider):
         timeout_seconds: float = 120.0,
         chat_model: str | None = None,
         vision_model: str | None = None,
+        structured_output_mode: StructuredOutputMode | None = None,
+        reasoning: bool = False,
+        reasoning_off_params: Mapping[str, Any] | None = None,
+        num_ctx: int | None = None,
+        temperature: float = 0.0,
     ) -> None:
+        if structured_output_mode is not None and structured_output_mode not in (
+            "json_schema",
+            "json_object",
+        ):
+            raise ConfigurationError(
+                message="Ollama structured_output_mode must be 'json_schema' or 'json_object'",
+                error_code="OLLAMA_CONFIGURATION_INVALID",
+            )
+        if not isinstance(reasoning, bool):
+            raise ConfigurationError(
+                message="Ollama reasoning flag must be a boolean",
+                error_code="OLLAMA_CONFIGURATION_INVALID",
+            )
+        if reasoning_off_params is not None and not isinstance(reasoning_off_params, Mapping):
+            raise ConfigurationError(
+                message="Ollama reasoning_off_params must be a mapping",
+                error_code="OLLAMA_CONFIGURATION_INVALID",
+            )
+        if num_ctx is not None and (
+            not isinstance(num_ctx, int) or isinstance(num_ctx, bool) or num_ctx <= 0
+        ):
+            raise ConfigurationError(
+                message="Ollama num_ctx must be a positive integer",
+                error_code="OLLAMA_CONFIGURATION_INVALID",
+            )
+        if (
+            not isinstance(temperature, int | float)
+            or isinstance(temperature, bool)
+            or temperature < 0
+        ):
+            raise ConfigurationError(
+                message="Ollama temperature must be a non-negative number",
+                error_code="OLLAMA_CONFIGURATION_INVALID",
+            )
+
         if base_url is not None:
             cleaned_url = base_url.strip()
             if len(cleaned_url) == 0:
@@ -326,6 +370,7 @@ class OllamaModelProvider(ModelProvider):
             self._base_url = env_url.rstrip("/")
 
         self._profile = profile
+        self._capabilities_map = capabilities_map
         self._models = _load_profile_models(profile=profile, config_path=config_path)
         self._generation_limits = _load_profile_generation_limits(
             profile=profile, config_path=config_path
@@ -340,7 +385,7 @@ class OllamaModelProvider(ModelProvider):
             self._models["router"] = cm
             self._models["judge"] = cm
             self._models["extract"] = cm
-            if is_vision_model(cm):
+            if is_vision_model(cm, capabilities_map=self._capabilities_map, provider="ollama"):
                 self._models["vision"] = cm
             # Note: If cm has no vision, vision role retains profile model (e.g. qwen3-vl:4b)
 
@@ -359,14 +404,35 @@ class OllamaModelProvider(ModelProvider):
 
         self._http_client = http_client
         self._timeout_seconds = timeout_seconds
+        self._structured_output_mode: StructuredOutputMode = (
+            structured_output_mode if structured_output_mode is not None else "json_schema"
+        )
+        self._reasoning = reasoning
+        self._reasoning_off_params: dict[str, Any] = (
+            dict(reasoning_off_params) if reasoning_off_params is not None else {}
+        )
+        self._num_ctx = num_ctx
+        self._temperature = float(temperature)
         self._model_digests: dict[str, str] = {}
+
+    def _apply_inference_params(
+        self,
+        payload: dict[str, Any],
+        options: dict[str, Any],
+    ) -> None:
+        """Apply configured reasoning_off_params, temperature, and num_ctx to a request."""
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
+        if not self._reasoning and self._reasoning_off_params:
+            for param_key, param_val in self._reasoning_off_params.items():
+                payload[param_key] = param_val
 
     async def _get_model_digest(self, model_name: str, client: httpx.AsyncClient) -> str:
         """Fetch model digest from /api/tags, cached per provider instance."""
         if model_name in self._model_digests:
             return self._model_digests[model_name]
 
-        if is_cloud_model(model_name):
+        if is_cloud_model(model_name, capabilities_map=self._capabilities_map, provider="ollama"):
             digest_val = f"cloud:{model_name}"
             self._model_digests[model_name] = digest_val
             return digest_val
@@ -458,16 +524,18 @@ class OllamaModelProvider(ModelProvider):
 
         b64_image = base64.b64encode(scaled_image).decode("utf-8")
 
-        # Disable thinking explicitly via think: False for thinking-capable models
+        # Merge reasoning_off_params and num_ctx from configured settings
+        options = dict(TRANSCRIPTION_GENERATION_OPTIONS)
+        options["temperature"] = self._temperature
         payload: dict[str, Any] = {
             "model": model_name,
             "prompt": DEFAULT_TRANSCRIPTION_PROMPT,
             "images": [b64_image],
             "stream": False,
-            "think": False,
             "logprobs": True,
-            "options": dict(TRANSCRIPTION_GENERATION_OPTIONS),
+            "options": options,
         }
+        self._apply_inference_params(payload, options)
 
         url = self._base_url + "/api/generate"
 
@@ -574,20 +642,25 @@ class OllamaModelProvider(ModelProvider):
                 if not (m.role == "assistant" and m.content.strip() == "</think>")
             ]
 
+        options: dict[str, Any] = {
+            "temperature": self._temperature,
+            "seed": 42,
+        }
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+
         payload: dict[str, Any] = {
             "model": model_name,
             "messages": chat_messages,
             "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.0,
-                "seed": 42,
-            },
+            "options": options,
         }
-        if max_tokens is not None:
-            payload["options"]["num_predict"] = max_tokens
+        self._apply_inference_params(payload, options)
         if schema is not None:
-            payload["format"] = schema.model_json_schema()
+            if self._structured_output_mode == "json_schema":
+                payload["format"] = schema.model_json_schema()
+            else:
+                payload["format"] = "json"
 
         headers: dict[str, str] = {}
         api_key = os.getenv("OLLAMA_API_KEY")
@@ -753,15 +826,17 @@ class OllamaModelProvider(ModelProvider):
             "State clearly if the target region is illegible or unreadable."
         )
 
+        options = dict(TRANSCRIPTION_GENERATION_OPTIONS)
+        options["temperature"] = self._temperature
         payload: dict[str, Any] = {
             "model": model_name,
             "prompt": prompt_text,
             "images": [b64_image],
             "stream": False,
-            "think": False,
             "logprobs": True,
-            "options": dict(TRANSCRIPTION_GENERATION_OPTIONS),
+            "options": options,
         }
+        self._apply_inference_params(payload, options)
 
         url = self._base_url + "/api/generate"
 

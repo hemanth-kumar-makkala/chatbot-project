@@ -2,11 +2,11 @@
 # Deterministic fake provider returning fixed outputs for testing graph, data model, and fallbacks at $0 with no external dependencies
 profile: mock
 models:
-  router:  { provider: mock, model: "mock-router-v1" }
-  answer:  { provider: mock, model: "mock-answer-v1" }
-  vision:  { provider: mock, model: "mock-vision-v1" }
-  extract: { provider: mock, model: "mock-extract-v1" }
-  judge:   { provider: mock, model: "mock-judge-v1" }
+  router:  { provider: mock, model: "mock-router-v1", supports_vision: true, remote: false, baa_covered: false }
+  answer:  { provider: mock, model: "mock-answer-v1", supports_vision: true, remote: false, baa_covered: false }
+  vision:  { provider: mock, model: "mock-vision-v1", supports_vision: true, remote: false, baa_covered: false }
+  extract: { provider: mock, model: "mock-extract-v1", supports_vision: true, remote: false, baa_covered: false }
+  judge:   { provider: mock, model: "mock-judge-v1", supports_vision: false, remote: false, baa_covered: false }
 embeddings: { provider: mock, model: "mock-embed-v1", dimension: 1024, device: cpu }
 reranker:   { provider: mock, model: "mock-rerank-v1", device: cpu }
 storage:    { backend: local, path: ./data/files }

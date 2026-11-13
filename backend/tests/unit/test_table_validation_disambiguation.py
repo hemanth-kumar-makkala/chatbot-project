@@ -69,6 +69,7 @@ async def test_colliding_sheet_and_row_indices_validate_cleanly() -> None:
             "Standard SLA": "48 Hours",
             "Liaison Contact": "555-0120",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
 
     # Candidate 2 from accepted_plans.csv (Sheet1, Row 1)
@@ -86,6 +87,7 @@ async def test_colliding_sheet_and_row_indices_validate_cleanly() -> None:
             "Deductible": "$250.00",
             "Pre-Auth": "Yes",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
 
     # Note the order: tc_xlsx is inserted first in dictionary
@@ -156,6 +158,7 @@ async def test_colliding_sheet_and_row_cell_tampering_still_rejected() -> None:
             "Service Category": "Diagnostic Imaging",
             "Standard SLA": "48 Hours",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     tc_csv = TableCandidate(
         id="csv-row-1",
@@ -168,6 +171,7 @@ async def test_colliding_sheet_and_row_cell_tampering_still_rejected() -> None:
             "Plan Code": "APX-HMO-01",
             "Deductible": "$250.00",
         },
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {
         "xlsx-row-1": tc_xlsx,
@@ -207,6 +211,7 @@ async def test_invented_row_id_with_multi_tables_still_rejected() -> None:
         sheet_name="Sheet1",
         row_index=1,
         cells={"Plan Code": "APX-HMO-01"},
+        tenant_id="00000000-0000-0000-0000-000000000001",
     )
     ctx.table_candidates = {"csv-row-1": tc_csv}
     ctx.evidence_text = {

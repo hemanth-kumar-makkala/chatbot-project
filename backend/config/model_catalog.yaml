@@ -1,0 +1,205 @@
+# Curated Model & Provider Catalog
+# Single source of truth for UI provider cards, selectable per-assistant models,
+# explicit capability flags, generation settings, and client pacing/retry limits.
+version: "1.0"
+
+providers:
+  ollama:
+    display_name: "Ollama (Local)"
+    transport: ollama
+    coming_later: false
+    structured_output_mode: json_schema
+    reasoning_off_params:
+      think: false
+    num_ctx: 6144
+    required_env:
+      - OLLAMA_BASE_URL
+    runtime_settings:
+      timeout_seconds: 120.0
+      max_retries: 0
+      max_total_wait_seconds: 0.0
+      requests_per_minute: 120
+      max_image_dimension: 1024
+    notes: "Local inference daemon. Only curated models currently downloaded in Ollama are selectable."
+    models:
+      - provider: ollama
+        model: "qwen3:8b"
+        display_name: "Qwen 3 8B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer", "router"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only local model for desktop-gpu router and answer roles."
+      - provider: ollama
+        model: "qwen3-vl:4b-instruct"
+        display_name: "Qwen 3 VL 4B Instruct (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["vision", "extract", "judge"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Multimodal local model for desktop-gpu vision, extract, and judge roles (fits 6 GB VRAM)."
+      - provider: ollama
+        model: "qwen2.5:7b"
+        display_name: "Qwen 2.5 7B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only local model from home-gpu profile."
+      - provider: ollama
+        model: "qwen2-vl:7b"
+        display_name: "Qwen 2 VL 7B (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Multimodal local vision model from home-gpu profile."
+      - provider: ollama
+        model: "llama3.1:8b"
+        display_name: "Llama 3.1 8B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["judge", "answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Text-only local judge/answer model from home-gpu profile."
+      - provider: ollama
+        model: "qwen2.5:3b"
+        display_name: "Qwen 2.5 3B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU text model from office-cpu profile."
+      - provider: ollama
+        model: "qwen2-vl:2b"
+        display_name: "Qwen 2 VL 2B (Local)"
+        supports_vision: true
+        remote: false
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU vision model from office-cpu profile."
+      - provider: ollama
+        model: "llama3.2:3b"
+        display_name: "Llama 3.2 3B (Local)"
+        supports_vision: false
+        remote: false
+        baa_covered: false
+        allowed_roles: ["judge", "answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Compact CPU judge/text model from office-cpu profile."
+
+  gemini:
+    display_name: "Google Gemini (AI Studio)"
+    transport: openai_compatible
+    coming_later: false
+    structured_output_mode: json_schema
+    reasoning_off_params:
+      reasoning_effort: "none"
+    required_env:
+      - GEMINI_API_KEY
+      - GEMINI_BASE_URL
+    runtime_settings:
+      timeout_seconds: 60.0
+      max_retries: 3
+      max_total_wait_seconds: 20.0
+      requests_per_minute: 10
+      max_image_dimension: 1536
+    notes: "OpenAI-compatible Google AI Studio endpoint (synthetic test data only; no BAA)."
+    models:
+      - provider: gemini
+        model: "gemini-3.5-flash"
+        display_name: "Gemini 3.5 Flash"
+        supports_vision: true
+        remote: true
+        baa_covered: false
+        allowed_roles: ["answer"]
+        temperature: 0.0
+        reasoning: false
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Fast multimodal answer model via AI Studio (synthetic test data only)."
+      - provider: gemini
+        model: "gemini-3.5-flash-lite"
+        display_name: "Gemini 3.5 Flash Lite"
+        supports_vision: false
+        remote: true
+        baa_covered: false
+        allowed_roles: ["judge"]
+        temperature: 0.0
+        reasoning: false
+        # Google AI Studio rejects reasoning_effort="none" on gemini-3.5-flash-lite (400 INVALID_ARGUMENT).
+        reasoning_off_params: {}
+        generation_limits:
+          router: 1024
+          answer: 4096
+          vision: 4096
+          extract: 4096
+          judge: 1024
+        notes: "Lightweight text-only judge model via AI Studio (synthetic test data only)."

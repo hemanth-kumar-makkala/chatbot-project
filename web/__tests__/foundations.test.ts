@@ -154,6 +154,11 @@ describe("Error sanitization (never passes raw server text to UI)", () => {
     expect(extractErrorCode(403, null)).toBe("FORBIDDEN");
     expect(extractErrorCode(422, null)).toBe("VALIDATION_ERROR");
   });
+
+  it("maps Assistant not found 404 detail to ASSISTANT_NOT_FOUND", () => {
+    expect(extractErrorCode(404, { detail: "Assistant not found" })).toBe("ASSISTANT_NOT_FOUND");
+    expect(extractErrorCode(404, { detail: "CONVERSATION_NOT_FOUND" })).toBe("CONVERSATION_NOT_FOUND");
+  });
 });
 
 describe("Review reasons mapping", () => {

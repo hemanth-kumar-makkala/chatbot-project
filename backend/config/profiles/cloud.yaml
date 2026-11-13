@@ -2,20 +2,13 @@
 # Target: Cloud Run, Vertex AI (BAA covered), Cloud SQL pgvector, Cloud Storage
 profile: cloud
 models:
-  router:  { provider: vertex, model: "gemini-1.5-flash-002" }
-  answer:  { provider: vertex, model: "gemini-1.5-pro-002" }
-  vision:  { provider: vertex, model: "gemini-1.5-pro-002" }
-  extract: { provider: vertex, model: "gemini-1.5-pro-002" }
-  judge:   { provider: vertex, model: "gemini-1.5-pro-002" }
+  router:  { provider: vertex, model: "gemini-1.5-flash-002", supports_vision: true, remote: true, baa_covered: true, temperature: 0.0, reasoning: false }
+  answer:  { provider: vertex, model: "gemini-1.5-pro-002", supports_vision: true, remote: true, baa_covered: true, temperature: 0.0, reasoning: false }
+  vision:  { provider: vertex, model: "gemini-1.5-pro-002", supports_vision: true, remote: true, baa_covered: true, temperature: 0.0, reasoning: false }
+  extract: { provider: vertex, model: "gemini-1.5-pro-002", supports_vision: true, remote: true, baa_covered: true, temperature: 0.0, reasoning: false }
+  judge:   { provider: vertex, model: "gemini-1.5-flash-002", supports_vision: true, remote: true, baa_covered: true, temperature: 0.0, reasoning: false }
 generation_limits:
-  "nvidia:mistralai/mistral-large-4-1t-a52b":
-    router: 1024
-    answer: 4096
-    vision: 4096
-    extract: 4096
-    judge: 1024
-  "nvidia:*": {router: 1024, answer: 4096, vision: 4096, extract: 4096, judge: 1024}
-  "inception:*": {router: 1024, answer: 4096, vision: 4096, extract: 4096, judge: 1024}
+  "vertex:*": {router: 1024, answer: 4096, vision: 4096, extract: 4096, judge: 1024}
 embeddings: { provider: vertex, model: "text-embedding-004", dimension: 768 }
 reranker:   { provider: local, model: "BAAI/bge-reranker-v2-m3", device: cpu }
 storage:    { backend: gcs, bucket: "${GCS_STORAGE_BUCKET}" }

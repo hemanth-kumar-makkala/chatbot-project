@@ -47,6 +47,7 @@ class StubTableRetriever(Retriever):
                 sheet_name="Sheet1",
                 row_index=1,
                 cells={"Plan Name": "Aetna Choice POS II", "Status": "In-Network", "Copay": "$25"},
+                tenant_id="00000000-0000-0000-0000-000000000001",
             ),
             TableCandidate(
                 id="tab-row-2",
@@ -59,6 +60,7 @@ class StubTableRetriever(Retriever):
                     "Status": "In-Network",
                     "Copay": "$20",
                 },
+                tenant_id="00000000-0000-0000-0000-000000000001",
             ),
         ]
 
@@ -141,6 +143,7 @@ async def test_table_answer_uses_readable_headers_and_stored_values(
             sheet_name="Sheet1",
             row_index=1,
             cells={"Payer Name": "Apex Health Insurance", "Plan Code": "APX-HMO-01"},
+            tenant_id="00000000-0000-0000-0000-000000000001",
         )
     }
     table_context.evidence_text = {"tab-row-1": "stored row evidence"}
@@ -155,9 +158,10 @@ async def test_table_answer_uses_readable_headers_and_stored_values(
 
     await node_generate(state, MockRuntime())  # type: ignore
 
-    assert "| Payer Name | Plan Code |" in table_context.response_text
-    assert "| Apex Health Insurance | APX-HMO-01 |" in table_context.response_text
-    assert "[Sheet:" not in table_context.response_text
+    assert "[Sheet: Sheet1, Row: 1]" in table_context.response_text
+    assert "Apex Health Insurance" in table_context.response_text
+    assert "APX-HMO-01" in table_context.response_text
+    assert "| Payer Name | Plan Code |" not in table_context.response_text
 
 
 @pytest.mark.asyncio

@@ -103,3 +103,41 @@ async def test_run_split_document_job_missing_version_raises_typed_error(
         )
 
     assert f"Document version {vid} not found in tenant {tid}" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_run_split_document_job_propagates_configuration_error_when_app_profile_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing APP_PROFILE must raise ConfigurationError instead of marking version failed."""
+    tid = str(uuid4())
+    vid = str(uuid4())
+
+    mock_context = MagicMock()
+    mock_context.job.id = 1
+
+    fake_version = MagicMock()
+    fake_version.file_extension = "csv"
+
+    mock_session = AsyncMock()
+    mock_exec = MagicMock()
+    mock_exec.scalars.return_value.first.return_value = fake_version
+    mock_session.execute.return_value = mock_exec
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _mock_worker_session(_worker_ctx):
+        yield mock_session
+
+    monkeypatch.setattr("app.worker.worker_tenant_session", _mock_worker_session)
+    monkeypatch.delenv("APP_PROFILE", raising=False)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        await run_split_document_job(
+            context=mock_context,
+            tenant_id=tid,
+            document_version_id=vid,
+        )
+
+    assert "APP_PROFILE" in str(exc_info.value)

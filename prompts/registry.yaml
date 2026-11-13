@@ -6,7 +6,7 @@ version: "1.0.0"
 
 prompts:
   router_classify:
-    default_version: "1.0.0"
+    default_version: "1.3.0"
     versions:
       "1.0.0":
         role: "router"
@@ -22,6 +22,121 @@ prompts:
             route:
               type: "string"
               enum: ["knowledge", "general", "clarify"]
+            answer_mode:
+              type: "string"
+              enum: ["exact", "short", "explain", "table"]
+            language:
+              type: "string"
+          required: ["route", "answer_mode", "language"]
+      "1.1.0":
+        role: "router"
+        description: "Classify incoming user query into route (knowledge, general, clarify, extraction) and answer mode (exact, short, explain, table)."
+        template: |
+          You are the query router for a client knowledge assistant.
+          Analyze the user question and determine the appropriate route and answer mode.
+
+          Route rules:
+          - general: greetings and small talk, drafting emails/messages/templates without client facts, arithmetic and calculations, explaining general concepts.
+            Example: "hello", "draft an email to a clinic about a delayed authorization", "what is 15% of 240".
+          - knowledge: anything about a client, payer, policy, procedure, SOP, document, patient, turnaround time or internal rule.
+            Example: "what is the front desk policy for identity verification", "which plans are accepted".
+          - extraction: the user attached a document and asks to pull fields from it.
+          When unsure between general and knowledge, choose knowledge.
+
+          Question: {question}
+          Output JSON matching the required schema.
+        response_schema:
+          type: "object"
+          properties:
+            route:
+              type: "string"
+              enum: ["knowledge", "general", "clarify", "extraction"]
+            answer_mode:
+              type: "string"
+              enum: ["exact", "short", "explain", "table"]
+            language:
+              type: "string"
+          required: ["route", "answer_mode", "language"]
+      "1.2.0":
+        role: "router"
+        description: "Classify incoming user query into route (knowledge, general, clarify, extraction) and answer mode (exact, short, explain, table)."
+        template: |
+          You are the query router for a client knowledge assistant.
+          Analyze the user question and determine the appropriate route and answer_mode.
+          Return ONLY valid values from the JSON schema enums.
+
+          Route rules:
+          - general: greetings and small talk, drafting emails/messages/templates without client facts, arithmetic and calculations, explaining general concepts.
+            Example: "hello", "draft a short email to a clinic about a delayed prior authorization", "what is 15% of 240".
+          - knowledge: anything about a client, payer, policy, procedure, SOP, document, patient, turnaround time, fee schedule, accepted plans, or internal rule.
+            Example: "what is the front desk policy for identity verification", "which plans are accepted", "what is the turnaround time for an urgent prior authorization".
+          - extraction: the user attached a document and asks to pull fields from it.
+          When unsure between general and knowledge, choose knowledge.
+
+          Answer mode rules:
+          - For route "general", answer_mode MUST be "short".
+            Examples: "hello" -> route "general", answer_mode "short"; "draft a short email to a clinic about a delayed prior authorization" -> route "general", answer_mode "short"; "what is 15% of 240" -> route "general", answer_mode "short".
+          - "exact": ONLY when asking for a single value (a number, phone number, fax number, code, or date).
+            Example: "what is the front desk fax number" -> route "knowledge", answer_mode "exact".
+          - "explain": for procedures, policies, multi-step workflows, or explanations.
+            Example: "what is the front desk policy for identity verification" -> route "knowledge", answer_mode "explain".
+          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables).
+            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table".
+          - "short": brief 1-2 sentence factual questions or general replies.
+
+          Question: {question}
+          Output strictly as JSON matching the required schema enums only.
+        response_schema:
+          type: "object"
+          properties:
+            route:
+              type: "string"
+              enum: ["knowledge", "general", "clarify", "extraction"]
+            answer_mode:
+              type: "string"
+              enum: ["exact", "short", "explain", "table"]
+            language:
+              type: "string"
+          required: ["route", "answer_mode", "language"]
+      "1.3.0":
+        role: "router"
+        description: "Classify incoming user query into route (knowledge, general, clarify, extraction, session_document) and answer mode (exact, short, explain, table)."
+        template: |
+          You are the query router for a client knowledge assistant.
+          Analyze the user question and determine the appropriate route and answer_mode.
+          Return ONLY valid values from the JSON schema enums.
+
+          Route rules:
+          - general: greetings and small talk, drafting emails/messages/templates without client facts, arithmetic and calculations, explaining general concepts.
+            Example: "hello", "draft a short email to a clinic about a delayed prior authorization", "what is 15% of 240".
+          - session_document: ONLY when an attached session document is present AND the question refers to "this document", "the fax", "the attachment", "this file", or to values likely in it (e.g. "what is the patient name?", "what medication was prescribed?"). When NO session document is attached, NEVER choose this route (choose knowledge or general instead).
+            Examples: "what is the patient name on this document?", "what medication was prescribed in the fax?", "what is the authorization date on this file?".
+          - knowledge: anything about a client, payer, policy, procedure, SOP, document, patient, turnaround time, fee schedule, accepted plans, or internal rule.
+            Example: "what is the front desk policy for identity verification", "which plans are accepted", "what is the turnaround time for an urgent prior authorization".
+          - extraction: the user attached a document and asks to pull fields from it.
+          When unsure between general and knowledge, choose knowledge.
+
+          Answer mode rules:
+          - For route "general", answer_mode MUST be "short".
+            Examples: "hello" -> route "general", answer_mode "short"; "draft a short email to a clinic about a delayed prior authorization" -> route "general", answer_mode "short"; "what is 15% of 240" -> route "general", answer_mode "short".
+          - For route "session_document", answer_mode MUST be "short" or "exact".
+          - "exact": ONLY when asking for a single value (a number, phone number, fax number, code, or date).
+            Example: "what is the front desk fax number" -> route "knowledge", answer_mode "exact".
+          - "explain": for procedures, policies, multi-step workflows, or explanations.
+            Example: "what is the front desk policy for identity verification" -> route "knowledge", answer_mode "explain".
+          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables).
+            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table".
+          - "short": brief 1-2 sentence factual questions or general replies.
+
+          Attached session document: {attached_document}
+          Question: {question}
+          Output strictly as JSON matching the required schema enums only.
+        response_schema:
+          type: "object"
+          properties:
+            route:
+              type: "string"
+              enum: ["knowledge", "general", "clarify", "extraction", "session_document"]
             answer_mode:
               type: "string"
               enum: ["exact", "short", "explain", "table"]

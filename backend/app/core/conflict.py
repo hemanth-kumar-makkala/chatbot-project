@@ -161,8 +161,11 @@ def format_version_conflict_answer(
     if not clean_newer.endswith((".", "!", "?")):
         clean_newer += "."
 
+    clean_older_val = older_val.strip().rstrip(".,;:!?") or older_val.strip()
+    clean_newer_val = newer_val.strip().rstrip(".,;:!?") or newer_val.strip()
+
     note_line = (
-        f"Note: An older version ({older_doc}) stated {older_val}, "
-        f"while the newer version ({newer_doc}) specifies {newer_val}."
+        f"Note: An older version ({older_doc}) stated {clean_older_val}, "
+        f"while the newer version ({newer_doc}) specifies {clean_newer_val}."
     )
     return f"{clean_newer}\n{note_line}"

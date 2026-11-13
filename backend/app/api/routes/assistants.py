@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.config import ApiSettings
 from app.api.deps import (
@@ -19,7 +20,7 @@ from app.api.deps import (
     get_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.db.models import Assistant, Document, Membership
+from app.db.models import Assistant, Document, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
 from app.ports.storage import StorageBackend
@@ -80,51 +81,50 @@ def _get_storage(settings: ApiSettings) -> StorageBackend:
     return create_storage_backend(settings.profile, settings.storage_dir)
 
 
-@router.get(
-    "/v1/assistants",
-    response_model=list[AssistantSummary],
-    status_code=status.HTTP_200_OK,
-)
-async def list_assistants(
-    session: Annotated[SessionContext, Depends(get_current_session)],
-) -> list[AssistantSummary]:
-    """Retrieve all assistants accessible to the caller's tenant."""
+def _parse_session_tenant_id(session: SessionContext) -> UUID | None:
+    """Parse an explicit tenant UUID carried by a bearer or API-key session."""
+    if not session.tenant_id:
+        return None
+    try:
+        return UUID(session.tenant_id)
+    except (ValueError, TypeError):
+        return None
+
+
+async def _resolve_builtin_tenant_roles(
+    session: SessionContext,
+    auth_provider: AuthProvider,
+) -> list[tuple[UUID, list[UserRole]]]:
+    """Resolve accessible tenants and roles for built-in cookie sessions."""
     async with unscoped_session() as db:
-        tenant_uuid: UUID | None = None
-        if session.tenant_id:
-            try:
-                tenant_uuid = UUID(session.tenant_id)
-            except (ValueError, TypeError):
-                tenant_uuid = None
+        tenant_ids = (await db.execute(select(Tenant.id))).scalars().all()
 
-        if tenant_uuid is None:
-            uid = UUID(session.user_id)
-            stmt_m = select(Membership.tenant_id).where(Membership.user_id == uid).limit(1)
-            res_m = await db.execute(stmt_m)
-            tenant_uuid = res_m.scalar_one_or_none()
+    accessible: list[tuple[UUID, list[UserRole]]] = []
+    for t_id in tenant_ids:
+        roles = await auth_provider.roles(session.user_id, str(t_id))
+        if roles:
+            accessible.append((t_id, roles))
+    return accessible
 
-        if tenant_uuid is None:
-            return []
 
-        doc_count_subq = (
-            select(func.count(Document.id))
-            .where(
-                Document.tenant_id == tenant_uuid,
-                Document.is_retired.is_(False),
-            )
-            .scalar_subquery()
+async def _query_tenant_assistants(db: AsyncSession, tenant_uuid: UUID) -> list[AssistantSummary]:
+    """Query assistants and non-retired document counts for a single tenant."""
+    doc_count_subq = (
+        select(func.count(Document.id))
+        .where(
+            Document.tenant_id == tenant_uuid,
+            Document.is_retired.is_(False),
         )
-
-        stmt = (
-            select(Assistant, doc_count_subq.label("doc_count"))
-            .where(Assistant.tenant_id == tenant_uuid)
-            .order_by(Assistant.created_at.asc())
-        )
-        result = await db.execute(stmt)
-        rows = result.all()
-
+        .scalar_subquery()
+    )
+    stmt = (
+        select(Assistant, doc_count_subq.label("doc_count"))
+        .where(Assistant.tenant_id == tenant_uuid)
+        .order_by(Assistant.created_at.asc())
+    )
+    result = await db.execute(stmt)
     assistants: list[AssistantSummary] = []
-    for row in rows:
+    for row in result.all():
         asst = cast(Assistant, row[0])
         count = cast(int | None, row[1])
         created_str = (
@@ -146,6 +146,36 @@ async def list_assistants(
     return assistants
 
 
+@router.get(
+    "/v1/assistants",
+    response_model=list[AssistantSummary],
+    status_code=status.HTTP_200_OK,
+)
+async def list_assistants(
+    session: Annotated[SessionContext, Depends(get_current_session)],
+    auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+) -> list[AssistantSummary]:
+    """Retrieve all assistants accessible to the authenticated user's tenant memberships."""
+    tenant_uuid = _parse_session_tenant_id(session)
+    if tenant_uuid is not None:
+        async with unscoped_session() as db:
+            return await _query_tenant_assistants(db, tenant_uuid)
+
+    # Built-in cookie sessions carry tenant_id=""; query each member tenant under RLS
+    accessible = await _resolve_builtin_tenant_roles(session, auth_provider)
+    assistants: list[AssistantSummary] = []
+    for t_id, t_roles in accessible:
+        ctx = TenantContext(
+            tenant_id=str(t_id),
+            user_id=session.user_id,
+            role=t_roles[0],
+            session_id=session.session_id,
+        )
+        async with tenant_session(ctx) as db:
+            assistants.extend(await _query_tenant_assistants(db, t_id))
+    return assistants
+
+
 @router.post(
     "/v1/assistants",
     response_model=AssistantSummary,
@@ -158,19 +188,19 @@ async def create_assistant(
     auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> AssistantSummary:
     """Create a new assistant under the client admin's tenant."""
-    tenant_uuid: UUID | None = None
-    if session.tenant_id:
-        try:
-            tenant_uuid = UUID(session.tenant_id)
-        except (ValueError, TypeError):
-            tenant_uuid = None
-
+    tenant_uuid = _parse_session_tenant_id(session)
+    roles: list[UserRole] = []
     if tenant_uuid is None:
-        async with unscoped_session() as db:
-            uid = UUID(session.user_id)
-            stmt_m = select(Membership.tenant_id).where(Membership.user_id == uid).limit(1)
-            res_m = await db.execute(stmt_m)
-            tenant_uuid = res_m.scalar_one_or_none()
+        accessible = await _resolve_builtin_tenant_roles(session, auth_provider)
+        for t_id, t_roles in accessible:
+            if UserRole.CLIENT_ADMIN in t_roles:
+                tenant_uuid = t_id
+                roles = t_roles
+                break
+        if tenant_uuid is None and accessible:
+            tenant_uuid, roles = accessible[0]
+    else:
+        roles = await auth_provider.roles(session.user_id, str(tenant_uuid))
 
     if tenant_uuid is None:
         raise HTTPException(
@@ -178,7 +208,6 @@ async def create_assistant(
             detail="No active tenant found for user",
         )
 
-    roles = await auth_provider.roles(session.user_id, str(tenant_uuid))
     if UserRole.CLIENT_ADMIN not in roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

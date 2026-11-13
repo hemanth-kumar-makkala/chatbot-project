@@ -19,15 +19,23 @@ from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from pydantic import BaseModel
 
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.normalization import normalize_dates
 from app.core.safety_lock import is_vision_model
-from app.ports.types import ModelRole
+from app.ports.types import ChatMessage, ModelRole
 
 if TYPE_CHECKING:
     from app.core.graph import GraphRuntimeContext, GraphState
+
+
+class OcrDosageExtraction(BaseModel):
+    """Schema for model reading dosage directions from OCR text (Stage M)."""
+
+    dosage: str | None = None
+
 
 EXTRACTION_VISION_PROMPT = """You are a clinical intake form reader.
 Read this page image carefully and return ONLY a valid JSON object containing
@@ -68,22 +76,33 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 1. Patient Name
     m_label_pat = re.search(
-        r"Patient\s+Name\s*:\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)",
+        r"(?:Patient[^\S\r\n]+Name|Patient)[^\S\r\n]*:[^\S\r\n]*([A-Z][a-zA-Z]+(?:[^\S\r\n]+[A-Z][a-zA-Z]+)+)",
         ocr_text,
     )
     m_pat = m_label_pat or re.search(
-        r"Patient\s+([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+)",
+        r"Patient[^\S\r\n]+([A-Z][a-zA-Z]+[^\S\r\n]+[A-Z][a-zA-Z]+)",
         ocr_text,
     )
     if not m_pat:
         # Unlabeled leading two-word capitalized name before medication/MRN/date
-        m_pat = re.search(
-            r"^\s*([A-Z][a-z]+\s+[A-Z][a-z]+)\b",
-            ocr_text.strip(),
-        )
+        first_line = ocr_text.strip().split("\n", 1)[0].strip()
+        if not first_line.endswith(":"):
+            m_pat = re.search(
+                r"^\s*([A-Z][a-z]+[^\S\r\n]+[A-Z][a-z]+)\b",
+                first_line,
+            )
     if m_pat:
         cand_name = m_pat.group(1).strip()
-        if cand_name.lower() not in ("synthetic extracted", "clinical intake", "page number"):
+        forbidden_cands = (
+            "synthetic extracted",
+            "clinical intake",
+            "page number",
+            "patient name",
+            "authorized medication",
+            "authorization date",
+            "clinic phone",
+        )
+        if cand_name.lower() not in forbidden_cands:
             fields["patient_name"] = cand_name
             confidences["patient_name"] = 0.96
 
@@ -100,17 +119,17 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 3. Authorized Medication
     m_med_label = re.search(
-        r"(?:Authorized\s+Medication|Medication)\s*:\s*([^\n.,]+)",
+        r"(?:Authorized[^\S\r\n]+Medication|Medication)[^\S\r\n]*:[^\S\r\n]*([^\r\n.,]+)",
         ocr_text,
         re.IGNORECASE,
     )
     m_med_approved = re.search(
-        r"approved\s+for\s+([A-Za-z0-9-]+\s+[0-9oO]+\s*(?:mg|mcg|g|ml))\b",
+        r"approved[^\S\r\n]+for[^\S\r\n]+([A-Za-z0-9-]+[^\S\r\n]+[0-9oO]+[^\S\r\n]*(?:mg|mcg|g|ml))\b",
         ocr_text,
         re.IGNORECASE,
     )
     m_med_generic = re.search(
-        r"\b([A-Z][a-zA-Z0-9-]{2,}\s+[0-9oO]+\s*(?:mg|mcg|g|ml))\b",
+        r"\b([A-Z][a-zA-Z0-9-]{2,}[^\S\r\n]+[0-9oO]+[^\S\r\n]*(?:mg|mcg|g|ml))\b",
         ocr_text,
     )
     m_med = m_med_label or m_med_approved or m_med_generic
@@ -121,12 +140,12 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 4. Authorization Date
     m_auth_date = re.search(
-        r"Authorization\s+Date\s*:\s*([^\n.]+)",
+        r"Authorization[^\S\r\n]+Date[^\S\r\n]*:[^\S\r\n]*([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     ) or re.search(
-        r"on\s+((?:January|February|March|April|May|June|July|August|September|"
-        r"October|November|December)\s+\d{1,2},\s+\d{4}|\d{4}-\d{2}-\d{2})",
+        r"on[^\S\r\n]+((?:January|February|March|April|May|June|July|August|September|"
+        r"October|November|December)[^\S\r\n]+\d{1,2},[^\S\r\n]+\d{4}|\d{4}-\d{2}-\d{2})",
         ocr_text,
         re.IGNORECASE,
     )
@@ -140,27 +159,37 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
             fields["authorization_date"] = sorted(norm_all)[0]
             confidences["authorization_date"] = 0.97
 
-    # 5. Dosage
+    # 5. Dosage (Stage H + M: strictly from line labeled 'Dosage:',
+    # never neighbouring line or scrambled labels)
+    dos_val: str | None = None
     m_dos_label = re.search(
-        r"Dosage\s*:\s*([^\n]+)",
-        ocr_text,
-        re.IGNORECASE,
-    )
-    m_dos_take = re.search(
-        r"Take\s+([^\n.]+)",
+        r"Dosage[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)",
         ocr_text,
         re.IGNORECASE,
     )
     if m_dos_label:
-        fields["dosage"] = m_dos_label.group(1).strip().rstrip(".")
-        confidences["dosage"] = 0.95
-    elif m_dos_take:
-        fields["dosage"] = m_dos_take.group(1).strip().rstrip(".")
+        cand_dos = m_dos_label.group(1).strip().rstrip(".")
+        if cand_dos and not re.search(
+            r"\b(?:Patient|Refill|Chart|Date|Attn|Dr\.)\b", cand_dos, re.IGNORECASE
+        ):
+            dos_val = cand_dos
+
+    if not dos_val:
+        m_dos_take = re.search(
+            r"\bTake\b[^\S\r\n]+(?:\d+|one|two|three|four|five|half|a\b)[^\r\n:]+?(?:daily|day|days|hours|needed|mouth|capsule|tablet|pill)[^\r\n:]*?(?:\s*:|\s*\.|\s*Dosage|\s*Patient|\n|\r|$)",
+            ocr_text,
+            re.IGNORECASE,
+        )
+        if m_dos_take:
+            dos_val = m_dos_take.group(0).strip().rstrip(".:")
+
+    if dos_val:
+        fields["dosage"] = dos_val
         confidences["dosage"] = 0.95
 
     # 6. Refill count
     m_refill = re.search(
-        r"Refill(?:\s+count|s)?\s*:\s*(\d+)",
+        r"Refill(?:[^\S\r\n]+count|s)?[^\S\r\n]*:[^\S\r\n]*(\d+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -170,7 +199,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 7. Clinic Phone / Referring Provider Phone
     m_clinic_phone = re.search(
-        r"Clinic\s+Phone\s*:\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})",
+        r"Clinic[^\S\r\n]+Phone[^\S\r\n]*:[^\S\r\n]*((?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4})",
         ocr_text,
         re.IGNORECASE,
     )
@@ -179,7 +208,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
         confidences["clinic_phone"] = 0.95
 
     m_ref_phone = re.search(
-        r"Referring\s+Provider\s+Phone\s*:\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})",
+        r"Referring[^\S\r\n]+Provider[^\S\r\n]+Phone[^\S\r\n]*:[^\S\r\n]*((?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4})",
         ocr_text,
         re.IGNORECASE,
     )
@@ -189,7 +218,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 8. Ordering Clinician Signature / Prescriber Signature
     m_ord_sig = re.search(
-        r"Ordering\s+Clinician\s+Signature\s*:\s*([^\n]+)",
+        r"Ordering[^\S\r\n]+Clinician[^\S\r\n]+Signature[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -203,7 +232,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
         )
 
     m_presc_sig = re.search(
-        r"Prescriber\s+Signature\s*:\s*([^\n]+)",
+        r"Prescriber[^\S\r\n]+Signature[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -216,7 +245,8 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
             fields["prescriber_signature"] = sig_val
             confidences["prescriber_signature"] = 0.95
     else:
-        m_dr = re.search(r"\b(Dr\.\s+[A-Z][a-z]+\s+[A-Z][a-z]+(?:,\s*MD)?)", ocr_text)
+        dr_pat = r"\b(Dr\.[^\S\r\n]+[A-Z][a-z]+[^\S\r\n]+[A-Z][a-z]+(?:,[^\S\r\n]*MD)?)"
+        m_dr = re.search(dr_pat, ocr_text)
         if m_dr and "Diagnostic order" not in ocr_text:
             fields["ordering_clinician_signature"] = m_dr.group(1).strip()
             confidences["ordering_clinician_signature"] = 0.96
@@ -226,12 +256,12 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 9. Procedure Ordered
     m_proc_label = re.search(
-        r"Procedure\s+Ordered\s*:\s*([^\n.]+)",
+        r"Procedure[^\S\r\n]+Ordered[^\S\r\n]*:[^\S\r\n]*([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
     m_proc_diag = re.search(
-        r"Diagnostic\s+order\s+for\s+([^\n.]+?)(?:\s+scheduled\s+on|\.|\n)",
+        r"Diagnostic[^\S\r\n]+order[^\S\r\n]+for[^\S\r\n]+([^\r\n.]+?)(?:[^\S\r\n]+scheduled[^\S\r\n]+on|\.|\n)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -244,12 +274,12 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 10. Appointment Date
     m_appt_label = re.search(
-        r"Appointment\s+Date\s*:\s*([^\n.]+)",
+        r"Appointment[^\S\r\n]+Date[^\S\r\n]*:[^\S\r\n]*([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
     m_appt_sched = re.search(
-        r"scheduled\s+on\s+([^\n.]+)",
+        r"scheduled[^\S\r\n]+on[^\S\r\n]+([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -262,7 +292,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 11. Facility Location
     m_fac = re.search(
-        r"Facility\s+Location\s*:\s*([^\n.]+)",
+        r"Facility[^\S\r\n]+Location[^\S\r\n]*:[^\S\r\n]*([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -272,12 +302,12 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 12. Clinical Justification
     m_just_label = re.search(
-        r"Clinical\s+Justification\s*:\s*([^\n.]+)",
+        r"Clinical[^\S\r\n]+Justification[^\S\r\n]*:[^\S\r\n]*([^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
     m_just_narr = re.search(
-        r"(Chronic\s+[^\n.]+)",
+        r"(Chronic[^\S\r\n]+[^\r\n.]+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -290,8 +320,8 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 13. Pain Scale Score
     m_pain = re.search(
-        r"Pain\s+(?:scale\s+)?score(?:\s+reported\s+by\s+patient\s+during\s+intake)?"
-        r"\s*:\s*(\d+\s*/\s*\d+)",
+        r"Pain(?:[^\S\r\n]+scale)?[^\S\r\n]+score(?:[^\S\r\n]+reported[^\S\r\n]+by[^\S\r\n]+patient[^\S\r\n]+during[^\S\r\n]+intake)?"
+        r"[^\S\r\n]*:[^\S\r\n]*(\d+[^\S\r\n]*/[^\S\r\n]*\d+)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -301,7 +331,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 14. Prescriber NPI
     m_npi = re.search(
-        r"(?:Prescriber\s+)?NPI\s*:\s*(\d{10})\b",
+        r"(?:Prescriber[^\S\r\n]+)?NPI[^\S\r\n]*:[^\S\r\n]*(\d{10})\b",
         ocr_text,
         re.IGNORECASE,
     )
@@ -311,7 +341,7 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     # 15. Secondary Insurance (explicit missing/blank field support)
     m_sec = re.search(
-        r"Secondary\s+Insurance\s*:\s*([^\n]*)",
+        r"Secondary[^\S\r\n]+Insurance[^\S\r\n]*:[^\S\r\n]*([^\r\n]*)",
         ocr_text,
         re.IGNORECASE,
     )
@@ -384,12 +414,57 @@ async def node_extract_fields(
         ]
 
         use_vision = ctx.ports.model_provider is not None and (
-            ctx.ports.is_mock_profile or is_vision_model(ctx.ports.vision_model)
+            ctx.ports.is_mock_profile
+            or (
+                bool(ctx.ports.vision_model)
+                and is_vision_model(
+                    ctx.ports.vision_model,
+                    capabilities_map=ctx.ports.capabilities_map,
+                )
+            )
         )
 
         for page in pages:
             parsed_page = await ctx.ports.document_parser.extract(page)
             page_ocr, page_conf = extract_fields_from_ocr_text(parsed_page.text)
+
+            # Stage M: Make OCR-side dosage read come from model reading OCR text when available
+            # (same approach planned for user-chosen fields)
+            if (
+                ctx.ports.model_provider is not None
+                and not ctx.ports.is_mock_profile
+                and parsed_page.text
+            ):
+                try:
+                    ocr_model_res = await ctx.ports.model_provider.generate(
+                        role=ModelRole.EXTRACT,
+                        messages=[
+                            ChatMessage(
+                                role="user",
+                                content=(
+                                    "Extract the prescription dosage directions from the "
+                                    "following OCR text. Return only the dosage instruction "
+                                    "string. If not found, return null.\n\n"
+                                    f"OCR Text:\n{parsed_page.text}"
+                                ),
+                            ),
+                            ChatMessage(role="assistant", content="</think>"),
+                        ],
+                        schema=OcrDosageExtraction,
+                        max_tokens=150,
+                    )
+                    if ocr_model_res.structured_output and ocr_model_res.structured_output.get(
+                        "dosage"
+                    ):
+                        dos_str = str(ocr_model_res.structured_output["dosage"]).strip().rstrip(".")
+                        if dos_str and not re.search(
+                            r"\b(?:Patient|Refill|Chart)\b", dos_str, re.IGNORECASE
+                        ):
+                            page_ocr["dosage"] = dos_str
+                            page_conf["dosage"] = 0.95
+                except Exception:
+                    pass
+
             for k, v in page_ocr.items():
                 if k not in ocr_dict or ocr_dict[k] is None:
                     ocr_dict[k] = v

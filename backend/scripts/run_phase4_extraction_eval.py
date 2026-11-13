@@ -39,6 +39,7 @@ from app.adapters.parsing.docling import DoclingDocumentParser
 from app.adapters.pypdfium_splitter import PyPdfiumDocumentSplitter
 from app.core.extraction.dual_read import dual_read_compare
 from app.core.extraction.field_state import ExtractedField
+from app.observability.report_stamping import create_report_stamp
 from app.ports.errors import ConfigurationError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -544,6 +545,14 @@ async def run_phase4_real_models_eval() -> dict[str, Any]:
 
     report_payload = {
         "timestamp": datetime.now(UTC).isoformat(),
+        "telemetry_stamp": create_report_stamp(
+            profile=os.getenv("APP_PROFILE", "desktop-gpu"),
+            models_by_role={
+                "extract": os.getenv("EXTRACTION_MODEL", "qwen3-vl:4b"),
+                "vision": os.getenv("VISION_MODEL", "qwen3-vl:4b"),
+            },
+            repo_root=REPO_ROOT,
+        ),
         "profile": "desktop-gpu",
         "gate_passed": gate_passed,
         "metrics": {

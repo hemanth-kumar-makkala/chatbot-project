@@ -15,10 +15,15 @@ No vendor names or environment reads in app/core (Architecture Boundary Invarian
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from app.ports.model_provider import is_cloud_model, is_vision_model
+from app.ports.model_provider import (
+    ModelCapabilities,
+    is_cloud_model,
+    is_vision_model,
+    resolve_model_capabilities,
+)
 
 GOLDEN_DOCS_PATH = Path(__file__).resolve().parents[3] / "evals" / "golden" / "docs"
 GOLDEN_SYNTHETIC_HASHES_BY_NAME: dict[str, str] = {
@@ -49,10 +54,18 @@ def verify_cloud_model_safety_lock(
     model_name: str,
     active_document_titles: Iterable[str],
     active_document_hashes: Iterable[str] | None = None,
+    *,
+    capabilities_map: Mapping[tuple[str, str], ModelCapabilities],
+    provider: str | None = None,
     is_cloud_override: bool = False,
 ) -> None:
     """Allow cloud models only when every active stored-file hash is golden."""
-    if not is_cloud_model(model_name, is_cloud_override=is_cloud_override):
+    if not is_cloud_model(
+        model_name,
+        capabilities_map=capabilities_map,
+        provider=provider,
+        is_cloud_override=is_cloud_override,
+    ):
         return
 
     titles = list(active_document_titles)
@@ -72,5 +85,6 @@ __all__ = [
     "CloudModelSafetyLockError",
     "is_cloud_model",
     "is_vision_model",
+    "resolve_model_capabilities",
     "verify_cloud_model_safety_lock",
 ]

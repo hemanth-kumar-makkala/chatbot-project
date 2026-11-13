@@ -1,0 +1,24 @@
+# Runtime Profile: desktop-api (Hosted Gemini API active)
+# Hardware: Intel Core i7-12700F, 32 GB RAM; CPU for BGE-M3 & reranker; API for generation
+profile: desktop-api
+catalog_providers:
+  - gemini
+models:
+  router:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  answer:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  vision:  { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  extract: { provider: gemini, model: "gemini-3.5-flash", supports_vision: true, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+  judge:   { provider: gemini, model: "gemini-3.5-flash-lite", supports_vision: false, remote: true, baa_covered: false, temperature: 0.0, reasoning: false }
+embeddings:
+  provider: local
+  model: "BAAI/bge-m3"
+  revision: "5617a9f61b028005a4858fdac845db406aefb181"  # pragma: allowlist secret
+  device: cpu
+  max_seq_length: 8192
+reranker:
+  provider: local
+  model: "BAAI/bge-reranker-v2-m3"
+  revision: "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"  # pragma: allowlist secret
+  device: cpu
+storage:    { backend: local, path: ./data/files }
+queue:      { backend: procrastinate }

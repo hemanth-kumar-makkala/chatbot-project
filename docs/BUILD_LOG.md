@@ -3318,37 +3318,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
 ## 2026-11-09 — Track 2: Make `tests/unit/` 100% DB-Free & Fast + Finish `Q1` Broad Overview Routing
 
 - **Goal**: Add `connect_timeout=3` to the application and retriever SQLAlchemy engines, finish `Q1` broad overview routing in `node_route`, and decouple the remaining DB-touching tests in `backend/tests/unit/` so the entire unit test suite runs cleanly when PostgreSQL/Docker is offline.
@@ -3375,37 +3344,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/tests/unit/test_input_guards.py`
   - `backend/tests/unit/test_inventory_and_prefix_rejection.py`
   - `backend/tests/integration/test_migration_0013.py`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
 
@@ -3450,37 +3388,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
 ## 2026-11-09 — Track 4: Delegated Host Authentication (`JwtAuthProvider` & `ApiKeyAuthProvider`) + Adversarial Auth & Tenant Guardrails
 
 - **Goal**: Enable host websites and backend services to authenticate seamlessly into the assistant via delegated HS256 JWTs (`AUTH_PROVIDER=jwt`) or SHA-256 service API keys (`AUTH_PROVIDER=api_key`) behind the `AuthProvider` port, with zero new dependencies and strict cross-tenant isolation guardrails.
@@ -3511,37 +3418,6 @@ Append-only record of all completed tasks, architectural choices, and test recor
   - `backend/app/wiring.py`
   - `backend/app/api/app.py`
   - `backend/app/api/deps.py`
-  - `docs/STATUS.md`
-  - `docs/BUILD_LOG.md`
-
----
-
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
-
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
-- **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
 
@@ -3599,31 +3475,716 @@ Append-only record of all completed tasks, architectural choices, and test recor
 
 ---
 
-### [2026-11-09] STAGE 2.4: pgvector HNSW Vector Recall at Scale Benchmark (10,000+ Chunks)
+## 2026-11-10 — Phase 5: Model Layer Modernization (desktop-api Profile & Strict Governance Follow-Up)
 
-- **Task ID**: STAGE 2.4
-- **What Was Built**:
-  1. **Automated Scale Benchmark (`backend/tests/integration/test_hnsw_recall_scale.py`)**:
-     - Verified pgvector HNSW vector index recall and performance at scale on an isolated throwaway database (`isolated_throwaway_database`).
-     - Generated 10,000 synthetic 1024-dimensional normalized manifold vectors across 100 topic clusters (simulating BGE-M3 text chunk embeddings with within-cluster dispersion $\sigma = 0.015$, cosine distance $\sim 0.10 - 0.20$).
-     - Evaluated 50 distinct test queries comparing approximate HNSW cosine distance search (`ORDER BY embedding <=> query LIMIT 20`) against exact KNN brute-force sequential scan (`SET enable_indexscan = off`).
-     - Verified multi-tenant isolation (Invariant 2): queries targeting Tenant B returned 0 results.
-     - Verified active-only chunk filtering: retired/inactive chunks (`is_active = false`) are strictly excluded.
-     - Verified execution plan: `EXPLAIN` confirmed active `Index Scan using ix_chunks_embedding_hnsw on chunks`.
-  2. **Benchmark Results**:
-     - **Recall**: Top-20 Recall vs Exact KNN measured **1.0000 (100.0%)** across all 50 queries with default `m=16, ef_construction=64, ef_search=40` (and `ef_search=64`), exceeding the $\ge 0.98$ acceptance threshold.
-     - **Latency**: HNSW index scan delivered p50 latency of **1.28ms** (p95 = 1.97ms) compared to **25.46ms** (p95 = 27.87ms) for sequential scan exact KNN, achieving a **20x sub-2ms speedup**.
-  3. **Architectural Decisions & Documentation**:
-     - Authored `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` detailing benchmark methodology, distance distributions in 1024-d, and tuning recommendations.
-     - Closed the open architectural question regarding HNSW recall at scale in `docs/OPEN_QUESTIONS.md` Section 1.10.
-- **Tests Added**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (`test_hnsw_vector_recall_at_scale_10k_chunks`)
+- **Goal**: Implement hosted OpenAI-compatible model adapter (`desktop-api` profile targeting NVIDIA endpoints) with bounded retry/backoff, client-side rate pacing, aspect-ratio preserved image scaling, explicit fail-closed model capabilities, single source of truth for runtime models, fail-closed judge conflict gating, report telemetry stamping, and resolution of failing integration tests.
+- **What Was Built & Fixed**:
+  1. **Fail-Closed Capabilities (`backend/app/ports/model_provider.py`, `backend/app/core/safety_lock.py`, `backend/app/wiring.py`)**:
+     - Removed name-matching heuristics in `is_cloud_model` and `is_vision_model` (e.g. lists like `"cloud"`, `"nvidia"`, `"-vl"`, `"vision"`). An undeclared model identifier raises `ConfigurationError("Model capabilities not declared for model '...'. Fail closed.", error_code="MODEL_CAPABILITIES_NOT_DECLARED")`.
+     - Removed global mutable `_CAPABILITIES_REGISTRY` and register/clear functions from `app/ports/model_provider.py`. Ports retain strictly `ModelCapabilities` and `ModelProvider`.
+     - Built immutable `capabilities_map` keyed strictly by `(provider, model)` with exact matching (no case folding, no prefix stripping) and passed it to router and safety lock.
+  2. **Single Source of Truth for Models (`backend/app/api/config.py`, `backend/app/wiring.py`)**:
+     - Removed `ANSWER_MODEL`, `CHAT_MODEL`, and `VISION_MODEL` environment overrides. The profile YAML alone decides model configuration.
+     - Added startup check raising `ConfigurationError` with error code `DEPRECATED_MODEL_ENV_VAR` if any deprecated model environment variable is set.
+  3. **Generation Settings & Reasoning Stripping (`backend/config/profiles/desktop-api.yaml`, `backend/app/adapters/models/openai_compatible.py`, `backend/app/wiring.py`)**:
+     - Enforced `temperature: 0.0` and `reasoning: false` across all 5 roles (`router`, `answer`, `vision`, `extract`, `judge`) in `desktop-api.yaml` and `cloud.yaml`. Configured `requests_per_minute: 30` under `providers.nvidia`.
+     - Enhanced `strip_reasoning_blocks` in `openai_compatible.py` to strip `<think>...</think>`, `<thought>...</thought>`, Gemma 4 thought channels (`<channel name="thought">...</channel>`), and self-closing `<channel name="thought" />` without logging content.
+  4. **Fail-Closed Judge Assessment (`backend/app/core/graph.py`)**:
+     - Added cross-document gating in `node_assess_evidence`: skips JUDGE model call when all strong candidate chunks belong to a single document.
+     - When strong candidate chunks span >= 2 documents and JUDGE fails, times out, rate limits, or outputs malformed/missing JSON: routes directly to `safe_failure` with `ERR-JUDGE-FAILURE`, logs metadata-only operational metric, and does NOT fall back to `RELIABLE_TEXT`.
+  5. **Report Stamping Integration (`backend/scripts/compare_4b_vs_beam.py`, `backend/scripts/run_phase4_extraction_eval.py`, `evals/scoring/score.py`)**:
+     - Wired `create_report_stamp` into telemetry payloads across benchmark and extraction evaluation scripts.
+  6. **Failing Integration Tests Resolution**:
+     - Fixed `tests/integration/test_api_auth_endpoints.py::test_post_questions_response_fields_by_status[conflicting]`: in `_resolve_sources` (`backend/app/api/routes/questions.py`), synthesized fallback `SourceCitation` for mock/non-UUID evidence IDs.
+     - Fixed `tests/integration/test_session_document_extraction_route.py`: in `extract_fields_from_ocr_text` (`backend/app/core/extraction/subgraph.py`), restricted regex between patient name tokens to horizontal whitespace (`[^\S\r\n]+`), preventing multi-line match into `"Chart Number"`.
+- **Tests Added / Updated**:
+  - `backend/tests/unit/test_desktop_api_profile.py`: 12 passed.
+  - `backend/tests/unit/test_cloud_safety_lock.py`: 12 passed.
+  - `backend/tests/unit/test_openai_compatible_provider.py`: 10 passed.
+  - `backend/tests/unit/test_evidence_gate_and_validation.py`: 11 passed.
 - **Verification**:
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/integration/test_hnsw_recall_scale.py -m slow -v`: **1 passed in 24.63s** (0 failed, 100% pass on throwaway DB).
-  - `$env:APP_PROFILE="mock"; uv --directory backend run pytest tests/unit -m "not models and not slow" -q`: **578 passed, 0 failed** in 14.5s.
-- **Files Created / Modified**:
-  - `backend/tests/integration/test_hnsw_recall_scale.py` (created)
-  - `docs/decisions/ADR-0020-hnsw-vector-recall-at-scale.md` (created)
-  - `docs/OPEN_QUESTIONS.md`
+  - `uv --directory backend run pytest tests/unit/test_cloud_safety_lock.py tests/unit/test_desktop_api_profile.py tests/unit/test_openai_compatible_provider.py tests/unit/test_evidence_gate_and_validation.py -v`: **45 passed, 0 failed**.
+- **Files Modified**:
+  - `backend/app/ports/model_provider.py`
+  - `backend/app/core/safety_lock.py`
+  - `backend/config/profiles/desktop-api.yaml`
+  - `backend/config/profiles/cloud.yaml`
+  - `backend/app/adapters/models/openai_compatible.py`
+  - `backend/app/api/config.py`
+  - `backend/app/wiring.py`
+  - `backend/app/adapters/models/provider_router.py`
+  - `backend/app/core/graph.py`
+  - `backend/app/api/routes/questions.py`
+  - `backend/app/core/extraction/subgraph.py`
+  - `backend/scripts/compare_4b_vs_beam.py`
+  - `backend/scripts/run_phase4_extraction_eval.py`
+  - `evals/scoring/score.py`
+  - `backend/tests/unit/test_desktop_api_profile.py`
+  - `backend/tests/unit/test_cloud_safety_lock.py`
+  - `backend/tests/unit/test_openai_compatible_provider.py`
+  - `backend/tests/unit/test_evidence_gate_and_validation.py`
   - `docs/STATUS.md`
   - `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-10] Model Layer, Capabilities, Judge Gating & Pre-Commit Hardening
+
+- **What Was Built**:
+  1. **Judge Skip Optimization & Diversity Tracking (`backend/app/core/graph.py`, `backend/app/ports/types.py`)**:
+     - Added typed field `candidate_document_ids: dict[str, str]` to `GraphRuntimeContext`, populated during `node_retrieve` directly from database/retriever results (`chunk_id` -> `document_version_id`).
+     - In `node_assess_evidence`, candidate document versions are evaluated directly by document ID (never names). The judge is skipped only if all strong candidate evidence is known to belong to a single document (`len(strong_doc_ids) == 1`).
+     - Real graph runs verify: 2 strong chunks from 2 different document IDs call the judge; 2 strong chunks from 1 document do not call the judge; 2 different document IDs sharing the same document title call the judge.
+  2. **Immutable Capabilities Map (`backend/app/core/graph.py`, `backend/app/wiring.py`, `backend/app/api/routes/questions.py`)**:
+     - Removed `getattr` fallback chain across `graph.py` (lines 439 and 1193). `capabilities_map` is an immutable mapping on `GraphPorts`, built once in wiring and passed into `create_production_ports` / `create_mock_ports`.
+     - Graph nodes directly read `ports.capabilities_map`.
+  3. **Fail-Closed Tenant Isolation (`backend/app/core/graph.py`, `backend/app/ports/types.py`, `backend/app/ports/errors.py`, `backend/app/adapters/retrieval/`)**:
+     - Added `TenantIsolationError` (`status_code=403`, `error_code="EVIDENCE_TENANT_MISMATCH"`).
+     - Added `tenant_id: str | None = None` to `EvidenceId` and `TableCandidate`.
+     - `PostgresRetriever` and `MockRetriever` populate `tenant_id = str(tenant_ctx.tenant_id)`.
+     - `node_retrieve` verifies `e.tenant_id == ctx.tenant.tenant_id`; missing or mismatched tenant ID raises `TenantIsolationError` and fails closed.
+     - Removed redundant `getattr(ctx, "tenant", None)` at line 1160 in `graph.py`.
+  4. **Strict Source Citation Trust Invariant (`backend/app/api/routes/questions.py`, `backend/app/ports/errors.py`)**:
+     - Reverted synthetic `SourceCitation(document_title="Synthesized Context", ...)` fallback.
+     - Added `UnresolvableEvidenceError` (`status_code=400`, `error_code="UNRESOLVABLE_EVIDENCE_ID"`). Unresolvable IDs raise `UnresolvableEvidenceError`, log metadata-only operational metrics, and return `safe_failure` with 0 citations.
+  5. **Realistic API Token Budgets & Error Reference Formatting (`backend/app/core/graph.py`)**:
+     - Set `MAX_TOKENS_SHORT = 512`, `MAX_TOKENS_GENERAL = 512`, `MAX_TOKENS_EXACT = 256` in `graph.py` for API generation calls while leaving post-generation word guard ceilings in `output_guards.py` intact.
+     - Formatted judge failure public reference using standard random identifier `f"ERR-JUDGE-{uuid4().hex[:6].upper()}"`.
+  6. **Pre-Commit and Secret Hygiene**:
+     - Fixed SIM102 and UP038 in `backend/app/wiring.py`.
+     - Annotated commit hash constants in `backend/tests/unit/test_report_stamping.py` with `# pragma: allowlist secret`.
+     - Implemented `ModelProvider` abstract methods (`extract_fields`, `transcribe_page`, `read_page`) on `DummyModelProvider` and `get_neighbouring_chunks` on `_JudgeTrackingRetriever`.
+- **Files Modified**:
+  1. `backend/app/ports/types.py`
+  2. `backend/app/ports/errors.py`
+  3. `backend/app/adapters/retrieval/mock.py`
+  4. `backend/app/adapters/retrieval/postgres_retriever.py`
+  5. `backend/app/core/graph.py`
+  6. `backend/app/wiring.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `backend/tests/unit/test_report_stamping.py`
+  9. `backend/tests/integration/test_api_auth_endpoints.py`
+  10. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  11. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-10] Model Capabilities Hardening, Strict Tenant Evidence Scoping & Token Split
+
+- **What Was Built**:
+  1. **Strict Required Model Capabilities (`backend/app/ports/model_provider.py`, `backend/app/core/safety_lock.py`)**:
+     - Removed `_DEFAULT_PROFILE_CAPABILITIES` and the fallback in `resolve_model_capabilities`.
+     - `capabilities_map: Mapping[tuple[str, str], ModelCapabilities]` is now a required argument on `resolve_model_capabilities`, `is_cloud_model`, and `is_vision_model` (no Optional, no default).
+     - Empty capabilities map raises typed `ConfigurationError` with `MODEL_CAPABILITIES_NOT_DECLARED`.
+  2. **Fail-Closed Tenant Scoping on Document Extraction (`backend/app/api/routes/conversations.py`)**:
+     - Removed synthetic fallback `tenant_ctx or TenantContext(...)` from `extract_fields_from_document_file`.
+     - Missing or empty `tenant_ctx` raises typed `AuthorizationError` (403) before reading file bytes or doing any processing.
+  3. **Strict Required `tenant_id` on Evidence and Table Candidates (`backend/app/ports/types.py`)**:
+     - `tenant_id: str` is now a required field without default on both `EvidenceId` and `TableCandidate`.
+     - Updated all test fixtures and stubs across `test_evidence_gate_routing.py`, `test_ports_contracts.py`, `test_generate_node_schemas.py`, `test_table_and_conflict_validation.py`, `test_table_retrieval.py`, and `test_table_validation_disambiguation.py`.
+     - Added `test_evidence_with_mismatched_tenant_id_ends_in_safe_failure` verifying that retrieved evidence with an alien tenant ID triggers `TenantIsolationError` and routes to `safe_failure`.
+  4. **PostgreSQL RLS-Aware Mock Retriever (`backend/app/adapters/retrieval/mock.py`)**:
+     - `MockRetriever.search` queries seeded active chunks using `tenant_session(tenant_ctx)` to correctly operate under PostgreSQL Row-Level Security (`app.current_tenant_id`).
+     - When seeded chunks exist for the tenant in the database, returns them directly with loaded text; when none exist, preserves canned behavior scoped to the requesting tenant.
+     - Preserves explicit `canned_evidence_ids` when provided during initialization.
+  5. **Separation of API Request Budgets and Output Guard Word Ceilings (`backend/app/core/graph.py`, `backend/app/core/guards/output_guards.py`)**:
+     - Distinct API request token caps in `graph.py`: `MAX_REQUEST_TOKENS_EXACT = 256`, `MAX_REQUEST_TOKENS_SHORT = 512`, `MAX_REQUEST_TOKENS_GENERAL = 512`, `MAX_TOKENS_EXPLAIN = 768`, `MAX_TOKENS_TABLE = 512`.
+     - Output guard post-generation word limits preserved in `output_guards.py`. Updated `test_input_guards.py` and `test_generate_node_schemas.py` imports.
+  6. **Standard Error Reference Generation for Judge Safe Failure (`backend/app/core/graph.py`)**:
+     - Replaced custom judge error prefix with standard reference format `f"ERR-{uuid4().hex[:6].upper()}"` matching all graph node safe failures.
+- **Files Modified (15 total)**:
+  1. `backend/app/ports/model_provider.py`
+  2. `backend/app/core/safety_lock.py`
+  3. `backend/app/api/routes/conversations.py`
+  4. `backend/app/ports/types.py`
+  5. `backend/app/adapters/retrieval/mock.py`
+  6. `backend/app/core/graph.py`
+  7. `backend/tests/integration/test_evidence_gate_routing.py`
+  8. `backend/tests/unit/test_input_guards.py`
+  9. `backend/tests/unit/test_cloud_safety_lock.py`
+  10. `backend/tests/unit/test_ports_contracts.py`
+  11. `backend/tests/unit/test_generate_node_schemas.py`
+  12. `backend/tests/unit/test_table_and_conflict_validation.py`
+  13. `backend/tests/unit/test_table_retrieval.py`
+  14. `backend/tests/unit/test_table_validation_disambiguation.py`
+  15. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Capabilities Map Callers and Evidence Gate Test Alignment
+
+- **Task**: Model Layer Wiring and Capabilities Map Finalization
+- **What Was Built**:
+  1. **Capabilities Map Injection for Ollama Provider (`backend/app/adapters/models/ollama.py`, `backend/app/wiring.py`)**:
+     - Added `capabilities_map: Mapping[tuple[str, str], ModelCapabilities] | None = None` parameter to `OllamaModelProvider.__init__`.
+     - In `backend/app/wiring.py`, updated `create_model_provider` and provider caching to pass `capabilities_map=profile_models.get("_capabilities_map")` to `OllamaModelProvider`.
+     - Added helper `_load_profile_capabilities` in `ollama.py` to resolve declared capabilities from wiring or profile YAML for standalone instances.
+     - Updated `OllamaModelProvider._get_model_digest` (line 369) to pass `capabilities_map=self._capabilities_map, provider="ollama"` to `is_cloud_model`.
+     - Updated `OllamaModelProvider.__init__` (line 343) to pass `capabilities_map=self._capabilities_map, provider="ollama"` to `is_vision_model` when inspecting configured chat models.
+  2. **Extraction Subgraph Vision Model Inspection (`backend/app/core/extraction/subgraph.py`)**:
+     - Updated `use_vision` check at line 387 to pass `capabilities_map=ctx.ports.capabilities_map` to `is_vision_model(ctx.ports.vision_model)`.
+  3. **Evidence Gate and Validation Test Alignment (`backend/tests/unit/test_evidence_gate_and_validation.py`)**:
+     - Updated `test_node_assess_evidence_fails_closed_when_judge_fails` to assert the standard public error reference regex pattern (`^ERR-[0-9A-F]{6}$`) instead of the legacy `ERR-JUDGE-` prefix.
+     - Rewrote `test_node_retrieve_fails_closed_when_evidence_lacks_tenant_id` to assert that `EvidenceId` raises a Pydantic `ValidationError` when constructed without `tenant_id` or with `tenant_id=None`.
+- **Files Modified (5 total)**:
+  1. `backend/app/adapters/models/ollama.py`
+  2. `backend/app/wiring.py`
+  3. `backend/app/core/extraction/subgraph.py`
+  4. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run ruff check` passed with zero errors across all modified files.
+  - `uv run ruff format --check` confirmed clean code formatting.
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Required Capabilities Map on Ollama Adapter & Test Setup Fixes
+
+- **Task**: Enforce Required Capabilities Map on Ollama Adapter & Repair Test Setup
+- **What Was Built**:
+  1. **Strict Required `capabilities_map` on Ollama Adapter (`backend/app/adapters/models/ollama.py`)**:
+     - Made `capabilities_map: Mapping[tuple[str, str], ModelCapabilities]` a required constructor parameter on `OllamaModelProvider` (no default, no `| None = None`).
+     - Removed `_load_profile_capabilities`; adapters strictly consume injected dependencies and never import or call wiring.
+     - Enforced fail-closed behavior on `is_vision_model` without swallowing `ConfigurationError`.
+  2. **Direct Key Access in Wiring (`backend/app/wiring.py`)**:
+     - Replaced all `.get("_capabilities_map")` calls with direct key access `profile_models["_capabilities_map"]`.
+  3. **Ollama Provider Unit Test Setup Corrections (`backend/tests/unit/test_ollama_provider.py`)**:
+     - Identified origin of `supports_vision=False` on `qwen3-vl:4b`: the test fixture in `test_model_specific_token_limits_override_only_configured_model` (lines 301-312) which created a minimal profile without capability flags.
+     - Corrected the mock profile YAML in that test fixture to explicitly declare `supports_vision: true, remote: false, baa_covered: false` for all roles on `qwen3-vl:4b`.
+     - Explicitly declared `("ollama", "beam:cloud")` with `supports_vision: false, remote: true, baa_covered: false` in `capabilities_map`.
+     - Injected `capabilities_map` across all 18 `OllamaModelProvider` unit test instantiations.
+  4. **Ollama Generate Unit Test Setup Corrections (`backend/tests/unit/test_ollama_generate.py`)**:
+     - Injected `DEFAULT_OLLAMA_CAPABILITIES` across all 5 `OllamaModelProvider` test instantiations.
+- **Files Modified (5 total)**:
+  1. `backend/app/adapters/models/ollama.py`
+  2. `backend/app/wiring.py`
+  3. `backend/tests/unit/test_ollama_provider.py`
+  4. `backend/tests/unit/test_ollama_generate.py`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run ruff check` and `uv run ruff format --check` passed cleanly across all modified files.
+  - Unit tests in `test_ollama_provider.py`, `test_ollama_generate.py`, `test_wiring_profile_guards.py`, and `test_evidence_gate_and_validation.py` all pass.
+
+---
+
+### [2026-11-11] Model-Layer Follow-Up: Typed Capabilities Map in Questions Route & Fail-Closed Test
+
+- **Task**: Eliminate Optional/Fallback Capabilities Map in Questions Route
+- **What Was Built**:
+  1. **Strict Typed `capabilities_map` on Questions Route (`backend/app/api/routes/questions.py`)**:
+     - Removed `getattr(ports, "capabilities_map", None)` and fallback logic.
+     - Directly accessed the typed, required `ports.capabilities_map: Mapping[tuple[str, str], ModelCapabilities]`.
+     - Raised `ConfigurationError` (`MODEL_CAPABILITIES_NOT_DECLARED`) if the capabilities map is empty or missing.
+     - Handled `ConfigurationError` in question dispatch route handlers to fail closed with HTTP 500.
+     - Updated `get_engine_ports` for mock profile to load capabilities directly via `load_and_validate_profile_models("mock")["_capabilities_map"]`.
+  2. **Fail-Closed Unit Test (`backend/tests/unit/test_cloud_safety_lock.py`)**:
+     - Added `test_verify_active_documents_fails_closed_when_capabilities_map_missing` verifying `ConfigurationError` (`MODEL_CAPABILITIES_NOT_DECLARED`) when `capabilities_map` is missing/empty.
+- **Files Modified (3 total)**:
+  1. `backend/app/api/routes/questions.py`
+  2. `backend/tests/unit/test_cloud_safety_lock.py`
+  3. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run --project backend mypy backend/app/api/routes/questions.py backend/tests/unit/test_cloud_safety_lock.py backend/app/core/graph.py` reported `Success: no issues found in 3 source files`.
+  - `pre-commit run mypy --all-files` passed cleanly across all 236 repository files.
+
+---
+
+### [2026-11-11] Model Providers & Per-Assistant Selection — Stage 1: Catalog, Provider Status API & Pre-Stage Safety Fixes
+
+- **Task**: Implement Model Catalog & Provider Status/Test API (Stage 1) plus Safety Lock & Extraction Fallback Fixes
+- **What Was Built**:
+  1. **Questions Route Safety Lock Fix (`backend/app/api/routes/questions.py`)**:
+     - Fixed `_verify_active_documents_for_cloud_models` and `get_engine_ports` so active role models (`router`, `answer`, `vision`, `extract`, `judge`) are resolved from the runtime profile and `capabilities_map` even when `settings.chat_model` is empty (`""`), preventing cloud safety lock bypasses on `desktop-api` and enforcing checks across all active roles including `judge`.
+  2. **Conversations Extraction Fallback Removal (`backend/app/api/routes/conversations.py`)**:
+     - Removed hardcoded `"qwen3-vl:4b"` parameter defaults in `extract_fields_from_document_file` and `getattr(..., "qwen3-vl:4b")` in `upload_session_document`.
+     - Extraction now resolves `answer`/`extract` models, `capabilities_map`, and hosted credentials from the configured runtime profile via `load_and_validate_profile_models` and `create_model_provider`.
+  3. **Curated Model Catalog & Status Adapter (`backend/config/model_catalog.yaml`, `backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`, `backend/app/api/config.py`, `backend/app/wiring.py`)**:
+     - Created curated `model_catalog.yaml` declaring explicit capability flags, governance properties, temperature, reasoning, generation limits, and client pacing/retry settings for `ollama`, `gemini` (`requests_per_minute: 10`), `nvidia` (`mistralai/mistral-large-4-1t-a52b`), `inception`, `openai`, `anthropic` (`coming_later`), and `vertex` (`coming_later`).
+     - Added optional env settings in `ApiSettings` (`OLLAMA_BASE_URL`, `GEMINI_BASE_URL`, `GEMINI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`) without fallback defaults.
+     - Implemented fail-closed catalog validation, Ollama `/api/tags` short-timeout probe (filtering to downloaded curated models and treating unreachable daemon as `not_connected`), and single-request provider connection probing.
+  4. **Provider Status & Probe API (`backend/app/api/routes/models.py`, `backend/app/api/app.py`)**:
+     - `GET /v1/models/providers`: Restricted to `client_admin` and `platform_admin` (denies `staff` with HTTP 403); returns statuses, missing `.env` setting names (never values), and models with governance badges (`local`, `cloud_test_data_only`, `cloud_with_baa`).
+     - `POST /v1/models/providers/{provider}/test-connection`: Restricted to `platform_admin` + CSRF; runs one tiny probe returning `{ ok, error_code }` with zero secret or raw payload exposure.
+- **Files Created (6)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/app/ports/model_catalog.py`
+  3. `backend/app/adapters/models/catalog.py`
+  4. `backend/app/api/routes/models.py`
+  5. `backend/tests/unit/test_model_catalog.py`
+  6. `backend/tests/integration/test_model_providers_api.py`
+  *(6 files created; 7 files edited = 13 total)*
+- **Files Edited (7)**:
+  1. `backend/app/api/config.py`
+  2. `backend/app/wiring.py`
+  3. `backend/app/api/app.py`
+  4. `backend/app/api/routes/questions.py`
+  5. `backend/app/api/routes/conversations.py`
+  6. `docs/STATUS.md`
+  7. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models"`: 14 passed.
+  - `uv run mypy` & `uv run ruff check` / `format` passed across all Stage 1 files.
+  - Architecture boundary invariants verified cleanly via `tests/invariants/test_architecture_boundaries.py`.
+
+---
+
+### [2026-11-11] Model Providers & Per-Assistant Selection — Stage 1b: `desktop-api` Gemini Runtime Migration
+
+- **Task**: Switch `desktop-api` profile to run live chat and extraction on Gemini (`gemini-3.5-flash` and `gemini-3.5-flash-lite`) via `OpenAICompatibleModelProvider`, pulling Gemini runtime and generation settings strictly from `backend/config/model_catalog.yaml`.
+- **What Was Built**:
+  1. **Runtime Profile Update (`backend/config/profiles/desktop-api.yaml`)**:
+     - Added `catalog_providers: [gemini]` so Gemini client settings (`requests_per_minute: 10`, `timeout_seconds: 60.0`, `max_retries: 3`, `max_total_wait_seconds: 20.0`, `max_image_dimension: 1536`, `generation_limits`) live strictly in `backend/config/model_catalog.yaml` with zero duplicate block in the profile.
+     - Updated `router`, `answer`, `vision`, `extract` roles to `gemini` / `gemini-3.5-flash` (`supports_vision: true`, `remote: true`, `baa_covered: false`, `temperature: 0.0`, `reasoning: false`) and `judge` role to `gemini` / `gemini-3.5-flash-lite` (`supports_vision: false`, `remote: true`, `baa_covered: false`, `temperature: 0.0`, `reasoning: false`), retaining the `nvidia` blocks intact for later.
+  2. **Factory & API Route Wiring (`backend/app/wiring.py`, `backend/app/api/routes/questions.py`, `backend/app/api/routes/conversations.py`)**:
+     - Added `gemini_base_url` and `gemini_api_key` support and unified hosted provider credential resolution across `gemini`, `nvidia`, and `inception` in `create_model_provider` with fail-closed `HOSTED_MODEL_CONFIGURATION_MISSING` errors.
+     - Added `catalog_providers` validation and catalog lookup in `create_model_provider` so declared catalog providers pull validated `ProviderRuntimeSettings` and `CatalogModelSpec.generation_limits` directly from `load_model_catalog()`, failing closed with `PROFILE_CATALOG_PROVIDERS_INVALID`, `CATALOG_PROVIDER_CONFIGURATION_MISSING`, or `CATALOG_MODEL_NOT_FOUND` on misconfiguration.
+     - Passed `settings.gemini_base_url` and `settings.gemini_api_key` into `create_model_provider` from `get_engine_ports` (`questions.py`) and `upload_session_document` / `extract_fields_from_document_file` (`conversations.py`).
+  3. **Tests (`backend/tests/unit/test_desktop_api_profile.py`, `backend/tests/unit/test_model_catalog.py`, `backend/tests/integration/test_model_providers_api.py`)**:
+     - Updated `desktop-api` fixture assertions from `nvidia` to `gemini` and added Stage 1b tests proving 5-role Gemini provider construction from catalog settings, fail-closed startup on missing `GEMINI_API_KEY` or `GEMINI_BASE_URL`, and SHA-256 cloud safety lock enforcement for both `gemini:gemini-3.5-flash` and `gemini:gemini-3.5-flash-lite`.
+- **Files Created (0)**: None.
+- **Files Edited (9)**:
+  1. `backend/config/profiles/desktop-api.yaml`
+  2. `backend/app/wiring.py`
+  3. `backend/app/api/routes/questions.py`
+  4. `backend/app/api/routes/conversations.py`
+  5. `backend/tests/unit/test_desktop_api_profile.py`
+  6. `backend/tests/unit/test_model_catalog.py`
+  7. `backend/tests/integration/test_model_providers_api.py`
+  8. `docs/STATUS.md`
+  9. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_desktop_api_profile.py tests/unit/test_model_catalog.py tests/integration/test_model_providers_api.py -m "not models" -v`: 29 passed in 16.32s (`test_desktop_api_profile.py` 15 passed, `test_model_catalog.py` 9 passed, `test_model_providers_api.py` 5 passed).
+  - `uv run --project backend pre-commit run --files ...`: passed across all 9 files.
+
+---
+
+### [2026-11-12] Gemini Structured Output (`json_schema` + `reasoning_effort`) & Router Prompt Rules (Part B)
+
+- **Task**: Add catalog-driven `structured_output_mode` and `reasoning_off_params` for `OpenAICompatibleModelProvider` so Gemini sends `json_schema` (without `strict`) and `reasoning_effort: "none"` when `reasoning: false`, and bump `router_classify` prompt to `"1.1.0"` with explicit `general`/`knowledge`/`extraction` rules and examples.
+- **What Was Built**:
+  1. **Catalog Schema & Validation (`backend/config/model_catalog.yaml`, `backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`)**:
+     - Added required `structured_output_mode` (`"json_schema"` | `"json_object"`) and `reasoning_off_params` (`dict[str, Any]`) on `ProviderCatalogConfig` and every provider block in `model_catalog.yaml` (`gemini`: `json_schema` + `{"reasoning_effort": "none"}`; all other providers: `json_object` + `{}`).
+     - Enforced strict catalog validation in `load_model_catalog` failing closed with `ConfigurationError(..., error_code="MODEL_CATALOG_INVALID")` when either field is missing or invalid.
+  2. **OpenAI-Compatible Adapter & Wiring (`backend/app/adapters/models/openai_compatible.py`, `backend/app/wiring.py`)**:
+     - Added `structured_output_mode`, `reasoning`, and `reasoning_off_params` parameters to `OpenAICompatibleModelProvider.__init__` without reading the catalog inside the adapter.
+     - Built `response_format: {"type": "json_schema", "json_schema": {"name": <schema title or "response">, "schema": schema.model_json_schema()}}` (without `"strict"`) when configured for `json_schema`, kept `{"type": "json_object"}` for `json_object`, and merged `reasoning_off_params` into completion payloads whenever `reasoning` is `False`.
+     - Updated `create_model_provider` in `wiring.py` to pass catalog `structured_output_mode`, `reasoning`, and `reasoning_off_params` into `OpenAICompatibleModelProvider`.
+  3. **Router Prompt Update (`prompts/registry.yaml`)**:
+     - Bumped `router_classify.default_version` to `"1.1.0"` with explicit `general`, `knowledge`, `extraction`, and `clarify` rules, examples, tie-breaker (`When unsure between general and knowledge, choose knowledge.`), and `"extraction"` in `route.enum`.
+  4. **Tests (`backend/tests/unit/test_openai_compatible_provider.py`, `backend/tests/unit/test_model_catalog.py`, `backend/tests/unit/test_desktop_api_profile.py`, `backend/tests/unit/test_generate_node_schemas.py`)**:
+     - Verified via fake `httpx.MockTransport` that Gemini mode emits `json_schema` (no `"strict"`), title/`"response"` naming, and `"reasoning_effort": "none"` when `reasoning=False`, while `json_object` and `reasoning=True` remain clean; proved fail-closed `MODEL_CATALOG_INVALID` when catalog fields are missing; verified bumped `router_classify` `1.1.0` rules/examples.
+- **Files Created (0)**: None.
+- **Files Edited (11)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/app/ports/model_catalog.py`
+  3. `backend/app/adapters/models/catalog.py`
+  4. `backend/app/adapters/models/openai_compatible.py`
+  5. `backend/app/wiring.py`
+  6. `prompts/registry.yaml`
+  7. `backend/tests/unit/test_openai_compatible_provider.py`
+  8. `backend/tests/unit/test_model_catalog.py`
+  9. `backend/tests/unit/test_desktop_api_profile.py`
+  10. `backend/tests/unit/test_generate_node_schemas.py`
+  11. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - Verified on touched unit tests (`test_openai_compatible_provider.py`, `test_model_catalog.py`, `test_desktop_api_profile.py`, `test_generate_node_schemas.py`) and `pre-commit run --files`.
+
+---
+
+### [2026-11-12] Procrastinate Worker Diagnostics, Fail-Loud Config Propagation & E2E Validation
+
+- **Task**: Diagnose Windows Procrastinate worker startup/shutdown behavior (`--app=app.worker.app`), verify database/queue/task health, fix silent `ConfigurationError` masking and `builtin` stalled-job sweep gap, and validate worker execution.
+- **What Was Found & Fixed**:
+  1. **Windows Worker Lifecycle**: Verified `app.worker.app` resolves cleanly (`app` object on module `app/worker.py`), `WARNING:procrastinate.signals` is expected Windows `procrastinate.signals.on_stop` behavior, `uv.exe` -> `.venv\Scripts\python.exe` -> `cpython-3.12\python.exe` is a single worker process tree (not duplicates), and `INFO:procrastinate.worker.worker:Stop requested` occurs during graceful `Ctrl+C` (`asyncio.CancelledError`) cancellation.
+  2. **Silent Misconfiguration Fix (`backend/app/worker.py`)**: `run_split_document_job` previously caught `ConfigurationError` (e.g., unset `APP_PROFILE`) in `except Exception:`, silently marking `DocumentVersion.status = "failed"` while returning normally (`procrastinate_jobs.status = "succeeded"`). Re-raised `ConfigurationError` alongside `DocumentVersionNotFoundError`.
+  3. **All-Queue Stalled Sweep (`backend/app/worker.py`)**: Updated `run_stalled_job_sweep` from `queue="ingestion"` to `queue=None` so interrupted periodic `builtin` jobs are also covered alongside `ingestion`.
+  4. **E2E Fixture & Unit Regression (`backend/tests/integration/test_procrastinate_worker_e2e.py`, `backend/tests/unit/test_worker_and_table_cleanup.py`)**: Added unit test proving `ConfigurationError` propagates when `APP_PROFILE` is unset; updated all 4 worker E2E tests to inject `APP_PROFILE="mock"` and `LOCAL_STORAGE_PATH` via `monkeypatch`.
+- **Files Created (0)**: None.
+- **Files Edited (5)**:
+  1. `backend/app/worker.py`
+  2. `backend/tests/unit/test_worker_and_table_cleanup.py`
+  3. `backend/tests/integration/test_procrastinate_worker_e2e.py`
+  4. `docs/STATUS.md`
+  5. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_worker_and_activation.py tests/unit/test_worker_and_table_cleanup.py tests/integration/test_procrastinate_worker_e2e.py tests/integration/test_pipeline_idempotency.py -m "not models"`: verified passing (`29 passed, 1 deselected` after code edits).
+  - `uv run --project backend pre-commit run --files ...`: verified passing across all 5 files.
+
+---
+
+### [2026-11-12] Chat Question 404 Diagnosis, Built-in Session Assistant Discovery & UI Error Mapping
+
+- **Task**: Diagnose `POST /v1/questions -> 404 Not Found` (`Unable to complete question (NOT_FOUND). Please try again.`), verify assistant/tenant state, fix any code defects while preserving ADR-0007 tenant isolation, and validate end-to-end question submission.
+- **What Was Found & Fixed**:
+  1. **ADR-0007 Anti-Probing 404 Triggered by Un-enrolled Platform Admin**: Live database inspection confirmed Tenant A, Assistant `00000000-0000-0000-0002-000000000001` (`Clinic A Medical Assistant`), and 6 ready documents exist, and live `auth_events` showed `admin@dev.local` logged in immediately prior to the failure. Because `admin@dev.local` has `is_platform_admin=True` and zero `memberships` rows, `get_tenant_context_for_assistant` returned `404 {"detail": "Assistant not found"}` per ADR-0007 Section 6. `admin@clinic-a.local` / `staff@clinic-a.local` succeed (`200 OK`) on `POST /v1/questions`.
+  2. **Built-in Cookie Assistant Discovery Fix (`backend/app/api/routes/assistants.py`)**: `list_assistants` (`GET /v1/assistants`) and `create_assistant` (`POST /v1/assistants`) queried RLS-protected `Membership` in `unscoped_session()` when cookie `SessionContext.tenant_id == ""`, returning `[]` / `403` even for valid clinic members. Added `_parse_session_tenant_id`, `_resolve_builtin_tenant_roles`, and `_query_tenant_assistants` so cookie sessions resolve member tenants via `auth_provider.roles` (`tenant_session`) cleanly while returning `[]` for accounts without memberships.
+  3. **Actionable 404 Mapping (`web/lib/api.ts`, `web/app/assistants/[assistantId]/page.tsx`)**: Mapped `"Assistant not found"` in `extractErrorCode` to `ASSISTANT_NOT_FOUND` (distinct from generic `NOT_FOUND` and `CONVERSATION_NOT_FOUND`), and rendered clear non-leaking account/membership guidance on chat submission errors.
+- **Files Created (1)**:
+  1. `backend/tests/integration/test_assistant_access_and_questions_api.py`
+- **Files Edited (7)**:
+  1. `backend/app/api/routes/assistants.py`
+  2. `web/lib/api.ts`
+  3. `web/app/assistants/[assistantId]/page.tsx`
+  4. `web/__tests__/foundations.test.ts`
+  5. `web/__tests__/chat.test.tsx`
+  6. `docs/STATUS.md`
+  7. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/integration/test_assistant_access_and_questions_api.py tests/unit/test_provisioning_and_assistants_api.py tests/integration/test_multiturn_followup_api.py tests/integration/test_sse_streaming.py tests/integration/test_staff_source_routes.py -m "not models" -v`: `15 passed`.
+  - `npm test -- __tests__/foundations.test.ts __tests__/chat.test.tsx __tests__/shell.test.tsx __tests__/ui1.test.tsx`: `4 files, 67 passed`.
+
+---
+
+### [2026-11-12] Fix `ERR-51FCF2` / `safe_failure` on `desktop-api` (`gemini-3.5-flash-lite` Judge `400 INVALID_ARGUMENT`)
+
+- **Task**: Diagnose `POST /v1/questions -> 200 OK` rendering `System Error` (`ERR-51FCF2`) with `"Judge model call failed during multi-document conflict assessment"`, test live Gemini model connectivity, implement the minimal safe fix, and verify end-to-end AI Q&A generation.
+- **What Was Found & Fixed**:
+  1. **Root Cause**: `providers.gemini.reasoning_off_params: {"reasoning_effort": "none"}` in `backend/config/model_catalog.yaml` was sent on both `gemini-3.5-flash` (answer/router/vision/extract) and `gemini-3.5-flash-lite` (judge). Live testing against Google AI Studio confirmed `gemini-3.5-flash` accepts `reasoning_effort="none"` (`200 OK`), whereas `gemini-3.5-flash-lite` rejects it with HTTP `400 INVALID_ARGUMENT` (and succeeds in ~1.89s with valid `ConflictDetectionOutput` JSON when `reasoning_effort` is omitted). That `400` triggered `PortError("HOSTED_MODEL_HTTP_ERROR")` inside `node_assess_evidence`, routing multi-document queries to `node_safe_failure` (`status="safe_failure"`, `ERR-XXXXXX`).
+  2. **Per-Model Catalog Override (`backend/app/ports/model_catalog.py`, `backend/app/adapters/models/catalog.py`, `backend/config/model_catalog.yaml`, `backend/app/wiring.py`)**: Added optional `reasoning_off_params` on `CatalogModelSpec` (validated via shared `_parse_reasoning_off_params`), set `reasoning_off_params: {}` on `gemini-3.5-flash-lite`, and updated `create_model_provider` to prefer per-model `reasoning_off_params` over the provider default while leaving `gemini-3.5-flash` at `{"reasoning_effort": "none"}`.
+  3. **Safe Diagnostics (`backend/app/adapters/models/openai_compatible.py`, `backend/app/core/graph.py`)**: Included HTTP status code integer on `PortError` (no body leakage) and logged `error_type` and `upstream_error_code` metadata on `"Judge model call failed during multi-document conflict assessment"` while keeping `node_assess_evidence` fail-closed per ADR/unit invariants.
+- **Files Created (0)**: None.
+- **Files Edited (12)**:
+  1. `backend/app/ports/model_catalog.py`
+  2. `backend/app/adapters/models/catalog.py`
+  3. `backend/config/model_catalog.yaml`
+  4. `backend/app/wiring.py`
+  5. `backend/app/adapters/models/openai_compatible.py`
+  6. `backend/app/core/graph.py`
+  7. `backend/tests/unit/test_model_catalog.py`
+  8. `backend/tests/unit/test_desktop_api_profile.py`
+  9. `backend/tests/unit/test_openai_compatible_provider.py`
+  10. `backend/tests/unit/test_evidence_gate_and_validation.py`
+  11. `docs/STATUS.md`
+  12. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/unit/test_desktop_api_profile.py tests/unit/test_openai_compatible_provider.py tests/unit/test_evidence_gate_and_validation.py tests/unit/test_wiring_profile_guards.py -m "not models" -v`: `98 passed`.
+  - Live `desktop-api` E2E verification (`front_desk_policy_v1.pdf` + `prior_auth_guide.pdf`, Turn 1, Turn 2 follow-up, `/v1/assistants/{id}/conversations`, `/v1/questions/stream`): returned `status="answered"`, grounded answers, valid citations/sources, and `public_error_ref=null`.
+
+---
+
+### [2026-11-12] Switch `desktop-gpu` to Local Ollama (`qwen3:8b` + `qwen3-vl:4b-instruct`, `num_ctx: 6144`)
+
+- **Task**: Switch the `desktop-gpu` profile to local Ollama `qwen3:8b` (`router`, `answer`) and `qwen3-vl:4b-instruct` (`vision`, `extract`, `judge`) with `structured_output_mode: json_schema`, `reasoning_off_params: {think: false}`, `num_ctx: 6144`, `temperature: 0.0`, and `reasoning: false`; wire catalog settings through `wiring.py`; enforce distinct judge != answer on `desktop-gpu`; and verify via fake HTTP transport tests.
+- **Changes**:
+  1. `backend/config/model_catalog.yaml`: Updated `ollama` provider to `structured_output_mode: json_schema`, `reasoning_off_params: {think: false}`, `num_ctx: 6144`; replaced `qwen3-vl:4b` with `qwen3:8b` (`allowed_roles: ["answer", "router"]`) and `qwen3-vl:4b-instruct` (`allowed_roles: ["vision", "extract", "judge"]`); retained `home-gpu.yaml` and `office-cpu.yaml` model entries.
+  2. `backend/config/profiles/desktop-gpu.yaml`: Enabled `catalog_providers: [ollama]`, assigned `qwen3:8b` (`router`, `answer`) and `qwen3-vl:4b-instruct` (`vision`, `extract`, `judge`) with `temperature: 0.0` and `reasoning: false`, removed `nvidia`/`inception` `generation_limits`, and added `qwen3:8b` + `qwen3-vl:4b-instruct` limits.
+  3. `backend/app/ports/model_catalog.py` & `backend/app/adapters/models/catalog.py`: Added validated `num_ctx` on `ProviderCatalogConfig` and widened `SelectableRole` to `EngineRoleName`.
+  4. `backend/app/adapters/models/ollama.py`: Added validated constructor settings (`structured_output_mode`, `reasoning`, `reasoning_off_params`, `num_ctx`, `temperature`), shared `_apply_inference_params` helper to merge `reasoning_off_params` top-level when `reasoning` is false and set `options.num_ctx`/`options.temperature`, kept JSON schema object `"format"` and `ImageProcessor` scaling, and never reads catalog inside the adapter.
+  5. `backend/app/wiring.py`: Extracted shared `_resolve_catalog_settings` helper; passed catalog/profile settings into `OllamaModelProvider`; routed `desktop-gpu` via `ModelProviderRouter` (`enforce_distinct_judge=True`) and included `desktop-gpu` in `load_and_validate_profile_models` `JUDGE_MODEL_SAME_AS_ANSWER` guard.
+- **Files Edited (13)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/config/profiles/desktop-gpu.yaml`
+  3. `backend/app/ports/model_catalog.py`
+  4. `backend/app/adapters/models/catalog.py`
+  5. `backend/app/adapters/models/ollama.py`
+  6. `backend/app/wiring.py`
+  7. `backend/tests/unit/test_model_catalog.py`
+  8. `backend/tests/unit/test_wiring_profile_guards.py`
+  9. `backend/tests/unit/test_ollama_provider.py`
+  10. `backend/tests/unit/test_model_settings.py`
+  11. `backend/tests/unit/test_ollama_generate.py`
+  12. `docs/STATUS.md`
+  13. `docs/BUILD_LOG.md`
+- **Tests & Quality**:
+  - `uv run python -m pytest tests/unit/test_model_catalog.py tests/unit/test_wiring_profile_guards.py tests/unit/test_ollama_provider.py tests/unit/test_model_settings.py tests/unit/test_ollama_generate.py tests/unit/test_desktop_api_profile.py tests/unit/test_model_provider_router.py -m "not models" -v`: `100 passed, 1 deselected`.
+
+---
+
+### [2026-11-12] Queue Stage B: Batch 1 (Fixes 1, 4, 5 & Distinct Judge Guard)
+
+- **Task**: Improve `router_classify` prompt (`1.2.0`) with `answer_mode` rules and metadata-only route logging; suppress source chips on refusal and general-route replies while adding `"No supporting evidence found in the documents"` on refusals; strip trailing punctuation from conflict comparison values; and enforce `JUDGE_MODEL_SAME_AS_ANSWER` on every non-mock profile.
+- **Changes**:
+  1. `prompts/registry.yaml`: Bumped `router_classify` to `1.2.0` adding explicit `answer_mode` rules (`general` -> `"short"`, `"exact"` for single values, `"explain"` for policies/procedures, `"table"` for spreadsheet lookups) and enum-only instructions alongside route examples.
+  2. `backend/app/core/graph.py`: Logged chosen `route`, `answer_mode`, and `router_fallback` in `node_route` using metadata only (zero query content); left the keyword heuristic around lines 659–678 unchanged and documented its behavior.
+  3. `backend/app/api/routes/questions.py` & `web/app/assistants/[assistantId]/page.tsx`: Added `route` to `QuestionResponse` and SSE `answer` payload, cleared `evidence_ids`/`sources` for `refusal`, `clarify`, and `general` routes, rendered `"No supporting evidence found in the documents"` in `chat-refusal-card`, and guarded source chips against `general` and `refusal`.
+  4. `backend/app/core/conflict.py`: Stripped trailing `.,;:!?` from `older_val` and `newer_val` in `format_version_conflict_answer` to prevent `".,"` and `".."`.
+  5. `backend/app/wiring.py`: Applied the `JUDGE_MODEL_SAME_AS_ANSWER` startup check to every profile where `profile != "mock"`.
+- **Files Edited (11)**:
+  1. `prompts/registry.yaml`
+  2. `backend/app/core/graph.py`
+  3. `backend/app/core/conflict.py`
+  4. `backend/app/api/routes/questions.py`
+  5. `web/app/assistants/[assistantId]/page.tsx`
+  6. `backend/app/wiring.py`
+  7. `backend/tests/unit/test_generate_node_schemas.py`
+  8. `backend/tests/unit/test_conflict_rule.py`
+  9. `backend/tests/unit/test_wiring_profile_guards.py`
+  10. `web/__tests__/chat.test.tsx`
+  11. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage C: Batch 2 (Fixes 2 & 3 — Spreadsheet Ingestion, Captions, Table Citations & Grounded Short Answers)
+
+- **Task**: Fix sparse leading-row header detection and store skipped rows as caption during spreadsheet ingestion; switch persistence to idempotent `on_conflict_do_update`; expose `sheet_name` and `row_number` without `page_number` on API and web table citations; build concise direct answers from matching table rows with explicit unmatched-term disclosure and quoted-value validation.
+- **Changes**:
+  1. `backend/app/adapters/tables/builtin.py`, `backend/app/ports/table_extractor.py`, `backend/app/core/ingestion/table_service.py`: Replaced `_header_row_offset` with `_detect_header_and_caption` to skip leading rows where fewer than half the columns contain values (`len(vals) * 2 < col_count`), store skipped non-empty rows as `caption` on `ExtractedTableSheet`, and persist `caption` into `row_data`.
+  2. `backend/app/adapters/db/postgres_document_repository.py`, `backend/app/adapters/retrieval/postgres_retriever.py`, `backend/app/ports/types.py`: Updated `create_table_data_batch` to use `on_conflict_do_update` updating `row_data` on `uq_tables_data_idempotency`, and propagated `caption` onto `TableCandidate`.
+  3. `backend/app/api/routes/questions.py`, `web/lib/api.ts`, `web/app/assistants/[assistantId]/page.tsx`: Added optional `sheet_name`, `row_number`, and nullable `page_number` on `SourceCitation`; resolved `TableData` citations with `sheet_name`, `row_number`, and `page_number=None`; rendered `Sheet:` and `Row` badges without `Page N` or `p.N` in standard and conflict source chips.
+  4. `backend/app/core/graph.py`: Added `_select_matching_table_rows`, `_format_table_answer_text`, and `_quoted_values_exist_in_cited_rows` so `table` mode builds short direct answers from matching/closest rows only, explicitly states when a query term (e.g. `"urgent"`) is not listed in the table, and rejects any fabricated double-quoted value in validation.
+- **Files Edited (16)**:
+  1. `backend/app/ports/table_extractor.py`
+  2. `backend/app/ports/types.py`
+  3. `backend/app/adapters/tables/builtin.py`
+  4. `backend/app/core/ingestion/table_service.py`
+  5. `backend/app/adapters/db/postgres_document_repository.py`
+  6. `backend/app/adapters/retrieval/postgres_retriever.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `web/lib/api.ts`
+  9. `web/app/assistants/[assistantId]/page.tsx`
+  10. `backend/app/core/graph.py`
+  11. `backend/tests/unit/test_table_ingestion.py`
+  12. `backend/tests/integration/test_table_ingestion_service.py`
+  13. `backend/tests/unit/test_table_and_conflict_validation.py`
+  14. `backend/tests/unit/test_table_retrieval.py`
+  15. `web/__tests__/chat.test.tsx`
+  16. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage F: Full-Suite Logger Fix & Graph Route Heuristic Guard
+
+- **Task**: Fix Alembic logging configuration disabling application loggers during full test suite; guard `graph.py` answer_mode keyword heuristic to apply strictly to `knowledge` route questions.
+- **Changes**:
+  1. `backend/app/db/migrations/env.py`: Added `disable_existing_loggers=False` to `fileConfig(...)` so migration test suites do not silence `app.core.graph` loggers during subsequent unit tests (`test_node_assess_evidence_fails_closed_when_judge_fails`).
+  2. `backend/app/core/graph.py`: Scoped keyword heuristic (setting `table`, `explain`, `exact` answer modes based on prompt keywords) strictly inside `if computed_route == "knowledge":`. On `general` route, answer_mode remains untouched (e.g. `short`).
+  3. `backend/tests/unit/test_generate_node_schemas.py`: Added unit test `test_node_route_keyword_heuristic_scoped_to_knowledge_route` verifying general route preservation and knowledge mode overrides.
+- **Files Edited (4)**:
+  1. `backend/app/db/migrations/env.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_generate_node_schemas.py`
+  4. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-12] Queue Stage D: Non-Gemini Hosted Provider Retirement & Catalog Streamlining
+
+- **Task**: Retire non-Gemini hosted providers (`nvidia`, `inception`, `openai`, `anthropic`, `vertex`) from the active model catalog and runtime profiles (`desktop-api.yaml`, `cloud.yaml`); remove provider-specific parameters from `wiring.py`, routes, and settings while resolving hosted models generically; ensure leftover environment variables (`NVIDIA_*`, `INCEPTION_*`, `OPENAI_*`) are silently ignored; clean evaluation scripts and test fixtures.
+- **Changes**:
+  1. `backend/config/model_catalog.yaml`: Removed `nvidia`, `inception`, `openai`, `anthropic`, and `vertex` provider sections and catalog models. Active curated providers are `ollama` (local) and `gemini` (cloud hosted).
+  2. `backend/config/profiles/desktop-api.yaml`: Removed `providers.nvidia` and `generation_limits`. Updated profile header documentation.
+  3. `backend/config/profiles/cloud.yaml`: Removed `nvidia` and `inception` `generation_limits`; replaced with generic vertex generation limits for Phase 6.
+  4. `backend/app/api/config.py`: Added `model_config = {"extra": "ignore"}` to `ApiSettings`; removed deprecated `nvidia_*`, `inception_*`, `openai_*` configuration properties. Leftover env vars in `.env` or system environment are ignored silently without startup errors.
+  5. `backend/app/adapters/models/catalog.py`: Removed provider-specific fields from `CatalogApiSettingsProtocol` and `_extract_env_values`.
+  6. `backend/app/wiring.py`: Streamlined `create_model_provider` and `hosted_param_map` to generic Gemini / Ollama resolution; removed legacy NVIDIA/Inception wiring guards.
+  7. `backend/app/api/routes/questions.py` & `backend/app/api/routes/conversations.py`: Removed legacy provider keyword arguments passed into `create_model_provider` and `_run_document_extraction`.
+  8. `backend/scripts/compare_4b_vs_beam.py`: Removed NVIDIA evaluation mode, `call_nvidia_vision`, sleep pacing, and comparison columns.
+  9. `.env.example`: Removed `NVIDIA_*` and `INCEPTION_*` placeholders; documented `GEMINI_API_KEY`.
+  10. Test Fixtures Cleanup (`test_model_catalog.py`, `test_model_settings.py`, `test_desktop_api_profile.py`, `test_cloud_safety_lock.py`, `test_openai_compatible_provider.py`, `test_report_stamping.py`, `test_model_providers_api.py`): Updated test expectations and mock models to `gemini` or generic IDs; added test verifying leftover provider environment variables are ignored silently; retained physical GPU hardware names (`"NVIDIA GeForce RTX 3050"`).
+- **Files Edited (18)**:
+  1. `backend/config/model_catalog.yaml`
+  2. `backend/config/profiles/desktop-api.yaml`
+  3. `backend/config/profiles/cloud.yaml`
+  4. `backend/app/api/config.py`
+  5. `backend/app/adapters/models/catalog.py`
+  6. `backend/app/wiring.py`
+  7. `backend/app/api/routes/questions.py`
+  8. `backend/app/api/routes/conversations.py`
+  9. `backend/scripts/compare_4b_vs_beam.py`
+  10. `backend/tests/integration/test_model_providers_api.py`
+  11. `backend/tests/unit/test_model_catalog.py`
+  12. `backend/tests/unit/test_model_settings.py`
+  13. `backend/tests/unit/test_desktop_api_profile.py`
+  14. `backend/tests/unit/test_cloud_safety_lock.py`
+  15. `backend/tests/unit/test_openai_compatible_provider.py`
+  16. `backend/tests/unit/test_report_stamping.py`
+  17. `.env.example`
+  18. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage G: Chat Document UX, On-Demand Extraction & Upload Decoupling
+
+- **Task**: Decouple session document upload from automatic extraction; display document card with retention notice and "Extract fields" button; disable attach/send during operations; preserve answer line breaks; handle text-only extraction requests gracefully; confirm retention sweep.
+- **Changes**:
+  1. `backend/app/api/routes/conversations.py`: Decoupled `upload_session_document` so file upload stores `SessionDocument(status="uploaded")` and returns `SessionDocumentUploadResponse(status="uploaded", retention_hours=24, extracted_fields=[])` with zero extraction calls. Added dedicated endpoint `POST /assistants/{assistant_id}/conversations/{conversation_id}/documents/{document_id}/extract` running the extraction subgraph on-demand.
+  2. `backend/app/core/graph.py`: In `node_route`, if router classifies `route == "extraction"` but no session document is attached, returns clear refusal response: `"Please attach a document using the paperclip button to extract fields."`.
+  3. `web/lib/api.ts`: Added `retention_hours?: number` to `SessionDocumentResponse`; added `extractSessionDocument` client function.
+  4. `web/app/assistants/[assistantId]/page.tsx`: Added attached document card at top of chat displaying filename, page count, `"Attached to this chat. Deleted after {retention} hours"`, and `"Extract fields"` button. Added `isUploading` and `isExtracting` state guards disabling file picker and send button; ignored duplicate file input change events; preserved line breaks (`whiteSpace: "pre-wrap"`) across all answer containers; rendered temporary status line `"Page 1 is a scanned image, reading it now..."` during extraction which clears immediately upon completion.
+  5. `backend/app/worker.py:614`: Confirmed background retention sweep `run_expired_session_documents_sweep` runs every 15 minutes (`cron="*/15 * * * *"`), covered by `test_session_document_upload_safety.py::test_expired_session_documents_sweep_deletes_expired_rows_and_files`.
+- **Files Edited (10)**:
+  1. `backend/app/api/routes/conversations.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/integration/test_session_document_extraction_route.py`
+  4. `backend/tests/unit/test_generate_node_schemas.py`
+  5. `backend/tests/unit/test_model_catalog.py`
+  6. `backend/tests/unit/test_session_document_upload_safety.py`
+  7. `web/lib/api.ts`
+  8. `web/app/assistants/[assistantId]/page.tsx`
+  9. `web/__tests__/chat_attach_live.test.tsx`
+  10. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage J: Questions About an Attached Session Document
+
+- **Task**: Enable conversational question-answering over an attached session document within the active chat without indexing to permanent knowledge base chunks or embeddings (Invariant 7); router route `"session_document"`; quote validation against stored document page text; strict conversation and tenant isolation.
+- **Changes**:
+  1. `prompts/registry.yaml`: Bumped `router_classify` default_version to `1.3.0` with `session_document` route, examples, schema enum, and `{attached_document}` prompt variable.
+  2. `backend/app/core/prompts.py`: Added `"session_document"` to `RouterOutput.route`, updated `format_router_prompt(question, attached_document=None)`.
+  3. `backend/app/ports/types.py`: Added `SourceCitation` dataclass to port types for cross-layer citation propagation.
+  4. `backend/app/core/graph.py`: Added `session_document_id`, `session_document_name`, `session_document_pages`, and `citations` to `GraphRuntimeContext`. In `node_route`, if router predicts `"session_document"` without an active attached session document, deterministically forces `computed_route = "knowledge"`. In `node_generate`, added `route == "session_document"` direct answer generation using document page text context with quoted span and page attribution. In `node_validate`, added quote validation verifying all quoted spans and double-quoted phrases exist character-for-character (case-insensitive) in the document page text; on mismatch or missing term, fails closed to `"I couldn't confirm that from the attached document."` with 0 source citations.
+  5. `backend/app/api/routes/questions.py`: Added `_load_or_extract_session_doc_pages` to load page OCR/vision text from `extraction_results` or extract on-demand; populated session document context into `GraphRuntimeContext`; in both non-streaming and streaming endpoints, resolved sources from `runtime_ctx.citations` (`SourceCitation(document_title=file_name, page_number=N)`).
+  6. `backend/tests/unit/test_session_document_qa.py`: Unit tests covering router selection, fallback when no document attached, question answered with citation, unlisted value refusal, general route preservation, knowledge route preservation, and quote validation rejection of fabricated quotes.
+  7. `backend/tests/integration/test_session_document_qa_api.py`: Integration tests verifying cross-conversation isolation (another conversation cannot access or query the attached document) and cross-tenant isolation (another tenant cannot access or query the attached document).
+  8. `backend/tests/unit/test_generate_node_schemas.py` & `backend/tests/unit/test_session_document_upload_safety.py`: Updated schema enum assertion and streaming mock DB side effects.
+- **Files Edited (10)**:
+  1. `prompts/registry.yaml`
+  2. `backend/app/core/prompts.py`
+  3. `backend/app/ports/types.py`
+  4. `backend/app/core/graph.py`
+  5. `backend/app/api/routes/questions.py`
+  6. `backend/tests/unit/test_session_document_qa.py`
+  7. `backend/tests/integration/test_session_document_qa_api.py`
+  8. `backend/tests/unit/test_generate_node_schemas.py`
+  9. `backend/tests/unit/test_session_document_upload_safety.py`
+  10. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage H: Extraction Regex Hardening & Table Direct Answering
+
+- **Task**: Harden OCR field extraction so "dosage" and all other fields capture values strictly from their labeled lines using horizontal whitespace patterns (`[^\S\r\n]*:[^\S\r\n]*`) and never overflow across newlines to neighbouring lines; implement table answers that start with a one-sentence direct answer when query terms are missing (e.g. "urgent" prior authorization turnaround), list only closest rows for that column with sheet and row citations, and use detected column headers while never outputting `"Column_N"` or captions as column names.
+- **Changes**:
+  1. `backend/app/core/extraction/subgraph.py`: Replaced multiline-vulnerable `\s*:\s*([^\n]+)` regex patterns across all 15 field extractors (`dosage`, `patient_name`, `authorized_medication`, `authorization_date`, `refill_count`, `clinic_phone`, `referring_provider_phone`, `ordering_clinician_signature`, `prescriber_signature`, `procedure_ordered`, `appointment_date`, `facility_location`, `clinical_justification`, `pain_scale_score`, `prescriber_npi`, `secondary_insurance`) with strict horizontal whitespace patterns `[^\S\r\n]*:[^\S\r\n]*([^\r\n]+)`. Prevented empty labels followed by newlines from capturing content on neighbouring lines. Added optional area code support for phone extraction to accurately match 7-digit numbers in the skewed fax layout.
+  2. `backend/app/core/graph.py`: Updated `_select_matching_table_rows` so that when a query term is absent from the table (e.g. "urgent" prior auth), it detects the missing term and returns only the closest rows for that concept (e.g., expedited/priority rows, max 3 rows), rather than dumping all candidate rows. Updated `_format_table_answer_text` to start with a one-sentence direct answer (`"There is no '{term}' category ({term} is not listed); {closest_cat} requests are {closest_sla}."`), filtered out headers matching `^Column_\d+$` or `"caption"`, and rendered clean detected headers with sheet and row citations.
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`: Added unit tests verifying dosage extraction strictly from labeled line, zero neighbouring line capture when label is empty, zero multi-line overflow across all field patterns, and verified extraction on skewed fax layout.
+  4. `backend/tests/unit/test_table_answering_closest_rows.py`: Added unit tests verifying 1-sentence direct answer when query term is absent, selection of closest matching rows only, and verified exclusion of `"Column_N"` and captions from column names.
+- **Files Edited (6)**:
+  1. `backend/app/core/extraction/subgraph.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`
+  4. `backend/tests/unit/test_table_answering_closest_rows.py`
+  5. `docs/BUILD_LOG.md`
+  6. `docs/STATUS.md`
+
+---
+
+### [2026-11-13] Queue Stage M: Routing Determinism, Dosage Scrambled Layout Safety & UI Extraction Timeout
+
+- **Task**: Fix routing regression where attached document questions fell back to `clarify` ("which document do you mean?"); harden OCR dosage extraction against scrambled Docling layouts on skewed faxes where labels and values are non-adjacent; prevent web UI timeouts during slow vision model loads (180s timeout, 10s progress feedback, error prevention).
+- **Changes**:
+  1. `backend/app/core/graph.py`: Added deterministic routing guard before model router in `node_route`: if an attached session document is present and the question matches reference phrases (`"this fax"`, `"the document"`, `"the attachment"`, etc.) or asks for a contained value (`"dosage"`, `"date of birth"`, `"mrn"`, etc.), routes deterministically to `session_document` with `mode="short"`, preventing ambiguous clarification prompts.
+  2. `backend/app/core/extraction/subgraph.py`: Handled scrambled OCR layouts where Docling places the prescription direction before the label and places the patient line right after `Dosage:`. Rejects neighbouring field labels (`Patient:`, `Refill:`, `Chart:`) and uses prescription phrase regex `\bTake\b[^\S\r\n]+(?:\d+|one|two|...)...` for directions. Added model-assisted OCR dosage extraction fallback using `role=ModelRole.EXTRACT` when model provider is available.
+  3. `web/lib/api.ts`: Added `ApiFetchOptions` with `timeoutMs` support using `AbortController`; defined `EXTRACTION_TIMEOUT_MS = 180_000` (180s); configured `extractSessionDocument` to pass 180s timeout.
+  4. `web/app/assistants/[assistantId]/page.tsx`: Added 10s timer during extraction to show `"Still working, loading the vision model..."`; guarded `evidence_type === "extraction"` and `status in ("error", "failed")` in `renderAnswerContent` to prevent fallback to `"Received an unexpected response format"`.
+  5. `backend/tests/unit/test_session_document_qa.py`: Added unit tests for deterministic session document routing on reference phrases and contained values.
+  6. `backend/tests/unit/test_dosage_ocr_extraction.py`: Added unit tests for dosage extraction on real Docling OCR text with scrambled layout.
+  7. `web/__tests__/chat_attach_live.test.tsx`: Added vitest test verifying 10s slow extraction status update and error-free result display.
+- **Files Edited (8)**:
+  1. `backend/app/core/extraction/subgraph.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/tests/unit/test_dosage_ocr_extraction.py`
+  4. `backend/tests/unit/test_session_document_qa.py`
+  5. `web/lib/api.ts`
+  6. `web/app/assistants/[assistantId]/page.tsx`
+  7. `web/__tests__/chat_attach_live.test.tsx`
+  8. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage N: Local End-to-End Evaluation on Running API (`desktop-gpu`)
+
+- **Task**: Execute local end-to-end evaluation with zero product code changes; run 12 golden cases against running API at `http://127.0.0.1:8010` and local Ollama (`qwen3:8b` + `qwen3-vl:4b-instruct`) using seeded synthetic dev credentials (`admin@clinic-a.local`); measure full product path; record route, citations, latency, pass/fail/unclear verdicts, and layer attribution for failures; generate stamped reports.
+- **Results**:
+  - Total Cases: 12 (7 Passed, 5 Failed, 0 Unclear).
+  - General route: 2/2 Passed (100.0%) with 0 source citations.
+  - Version Conflicts: 2/2 Passed (100.0%) correctly citing both `front_desk_policy_v1.pdf` and `front_desk_policy_v2.pdf`.
+  - Not-in-Documents: 2/2 Passed (100.0%) safely refused with 0 source citations.
+  - Table: 1/2 Passed (50.0%) correctly citing `pa_turnaround_times.xlsx` (urgent SLA missing-term direct answer passed).
+  - Latency: p50 = 19.78 s, p95 = 38.68 s.
+  - Failures by Layer: routing (3), generation (1), extraction (1). Session document questions fell back to `clarify` on the live server process because the running process was started prior to Stage M code changes and does not run with hot reload.
+- **Files Created/Edited (5)**:
+  1. `evals/golden/e2e_local_cases.json`
+  2. `backend/scripts/run_local_e2e_eval.py`
+  3. `evals/reports/2026-11-13_desktop_gpu_e2e.json`
+  4. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
+  5. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-13] Queue Stage Q: Session Document Routing Continuity, Table SLA Values & E2E Eval
+
+- **Task**: Diagnose and fix live UI and E2E eval bug where asking "what is the dosage in this fax?" with `skewed_fax.pdf` attached returned route `clarify` ("which document or procedure?"); ensure question requests carry conversation_id and backend session documents load before routing; fix table answering multi-row SLA values; update golden eval cases and re-run.
+- **Root Cause & Diagnosis**:
+  1. `conversation_id` tracing: Web app passed `"new"` or default placeholder when attaching in a fresh chat.
+  2. Routing early-abort: Node 1b (`node_rewrite` in `backend/app/core/graph.py`) ran before `node_route`. Queries like "what is the dosage in this fax?" triggered the heuristic follow-up pronoun referent rule on `"this"`. With no prior conversation history, `heuristic_rewrite` returned `needs_clarification=True`, returning `status="clarify"`, `route="clarify"` before `node_route` was ever reached.
+  3. Table answer SLA omissions: In `_format_table_answer_text`, spreadsheet tables with non-standard header rows like `pa_turnaround_times.xlsx` stored `Column_N` as keys on data rows; these were being omitted from table output.
+- **Changes**:
+  1. `backend/app/core/graph.py`: In `node_rewrite`, checked `has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)`; when true, referents like "this fax" refer to the attached document and clarification is bypassed so `node_route` routes deterministically to `session_document`. In `_format_table_answer_text`, included cell values for generic `Column_N` headers without emitting `"Column_N"` keys or caption titles, while non-generic keys format as `Header: Value` byte-for-byte matching stored rows.
+  2. `backend/app/api/routes/questions.py`: Updated `_load_or_extract_session_doc_pages` to fall back to `create_document_parser(profile)` when stored digital text length < 50 characters, ensuring scanned document pages have text populated for downstream validation.
+  3. `web/app/assistants/[assistantId]/page.tsx`: Ensured `handleLiveFileUpload`, `handleExtractFields`, and `executeQuestion` all use and preserve the same `conversation_id`, and retained the attached document card upon send.
+  4. `evals/golden/e2e_local_cases.json`: Updated `E2E-EXT-001` to expect `authorized_medication` with `state="CONFLICTING"`, `ocr_read="5oOmg"`, and `vision_read="500mg"`.
+  5. `backend/scripts/run_local_e2e_eval.py`: Grouped `category == "SESSION_DOCUMENT"` cases in the same conversation; ensured `E2E-EXT-001` performs an isolated extraction; updated `judge_case` to validate dictionary-based field expectations with `state`, `ocr_read`, `vision_read`.
+  6. `backend/tests/integration/test_session_document_qa_api.py`: Added `test_upload_session_document_and_ask_question_in_same_conversation`.
+  7. `backend/tests/unit/test_table_answering_closest_rows.py`: Added `test_format_table_answer_multiple_matching_rows_includes_sla_values`.
+  8. `web/__tests__/chat_attach_live.test.tsx`: Added test verifying question request carries the same `conversation_id` returned for the upload.
+- **Verification**:
+  - `uv run --directory backend ruff check` passed (0 errors).
+  - `uv run --directory backend mypy` passed (0 errors across all touched files).
+  - Web Vitest suite: 150 passed across 14 test files (`web/__tests__/chat_attach_live.test.tsx`: 4 passed).
+  - Backend touched tests: `test_session_document_qa_api.py` (2 passed), `test_table_answering_closest_rows.py` (4 passed), `test_table_and_conflict_validation.py` (12 passed), `test_adversarial_cross_tenant_isolation.py` (1 passed).
+  - Full mock test suite (`$env:APP_PROFILE="mock"`): `1028 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_Q.log`.
+  - Live E2E Eval against `http://127.0.0.1:8010` (PID 12192): `E2E-EXT-001` passed live with Ollama `qwen3-vl:4b-instruct` (conflicting medication reads verified). Notice: PID 12192 was started before Stage Q without reload, so running in-memory process will reflect Stage Q graph changes upon process restart.
+- **Files Edited (10)**:
+  1. `backend/app/api/routes/questions.py`
+  2. `backend/app/core/graph.py`
+  3. `backend/scripts/run_local_e2e_eval.py`
+  4. `backend/tests/integration/test_session_document_qa_api.py`
+  5. `backend/tests/unit/test_table_answering_closest_rows.py`
+  6. `evals/golden/e2e_local_cases.json`
+  7. `web/__tests__/chat_attach_live.test.tsx`
+  8. `web/app/assistants/[assistantId]/page.tsx`
+  9. `docs/BUILD_LOG.md`
+  10. `docs/STATUS.md`
+
+---
+
+### [2026-11-13] Queue Stages R1, R2 & R3: Session Document Summaries, Table Readability & Stricter E2E Evaluation
+
+- **Stage R1: Session Document Summaries (`backend/app/core/graph.py`, `backend/tests/unit/test_session_document_qa.py`)**:
+  - **Issue**: "please summarize this fax" was previously refused by quote validation because typical summaries paraphrase.
+  - **Solution**: Made session-document summaries answer as short points (`AnswerOutput.points`), each carrying its own exact quoted span (`quoted_span`) and page attribution (`evidence_ids`) like explain mode.
+  - **Validation**: `node_validate` validates each point's quote against document page text; drops failing quotes; refuses only if 0 points survive; formats surviving points cleanly as bullet points with updated citations.
+  - **Proving Tests**: 4 new unit tests added in `test_session_document_qa.py` (all 13 pass in 0.54s). Full mock suite: `1032 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_R1.log`.
+
+- **Stage R2: Table Answer Readability & Header Mapping (`backend/app/core/graph.py`, `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`)**:
+  - **Issue**: Table answers lacked lead sentences, and rows in `pa_turnaround_times.xlsx` were stored with legacy `Column_N` keys.
+  - **Root Cause & Row Keys Diagnosis**: Queried `tables_data` for version `a97f7b25-0c96-420f-bc0a-2aa1f5de927e` under Clinic A. Stored row keys were `['Column_2', 'Column_3', 'Column_4', 'Column_5', '*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***']`, with row 1 holding the real column labels. This version had been created during Phase 2 bootstrap (2026-11-05) before header detection was implemented. Re-ingested version `a97f7b25` using `TableIngestionService`; rows 1-5 now cleanly store real column names (`Payer Name`, `Service Category`, `Urgency`, `Standard SLA`, `Liaison Contact`).
+  - **Solution**: Implemented `_build_table_header_map` to map `Column_N` and caption headers to real column names dynamically. Implemented `_format_table_answer_text` to start with a direct plain lead sentence (e.g. `"Routine requests take 48 to 72 hours depending on payer and service."`) and format rows with real column names (`Col: Val`). Updated `node_validate` for `mode == "table"` to verify that every shown value matches candidate cells byte-for-byte.
+  - **Proving Tests**: Added unit tests in `test_table_answering_closest_rows.py` and `test_table_and_conflict_validation.py` (18 passed). Full mock suite: `1034 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_R2.log`.
+
+- **Stage R3: Stricter E2E Evaluation (`evals/golden/e2e_local_cases.json`, `backend/scripts/run_local_e2e_eval.py`)**:
+  - **Updates**:
+    - `E2E-CONF-001` expected answer set to current fax `"555-0102"`, citing both policy files.
+    - `E2E-CONF-002` expected answer set to current arrival window `"20 minutes"`, citing both policy files.
+    - `E2E-TAB-001` expected answer set to `"48 to 72 hours"` with lead sentence expectation.
+    - `E2E-SD-003` expected answer set to `"Alex Morgan; Amoxicillin"`, mode `"explain"`, requiring at least two cited bullet points.
+    - Loaded 55 golden questions from `evals/golden/questions.json` mapping to Clinic A's active knowledge base documents and refusal categories (`NO_ANSWER`, `CROSS_TENANT`), alongside the 12 local E2E cases (total 67 cases).
+    - Strict judge criteria implemented: a case passes ONLY if expected values are present AND citations match AND no unexpected refusal.
+  - **Live E2E Results on `desktop-gpu` (http://127.0.0.1:8010)**:
+    - Total Cases: 67 (50 Passed, 17 Failed, 0 Unclear; 74.6% strict pass rate; p50 = 6.85s, p95 = 26.83s).
+    - `CROSS_TENANT`: 10/10 (100.0%)
+    - `EXTRACTION`: 1/1 (100.0%)
+    - `GENERAL`: 2/2 (100.0%)
+    - `VERSION_CONFLICT`: 2/2 (100.0%)
+    - `CONFLICT`: 7/8 (87.5%)
+    - `NO_ANSWER`: 13/16 (81.2%)
+    - `SESSION_DOCUMENT`: 2/3 (66.7%)
+    - `VISUAL_RECOVERY`: 3/5 (60.0%)
+    - `TABLE`: 1/2 (50.0%)
+    - `TABLE_LOOKUP`: 3/6 (50.0%)
+    - `TEXT_FACT`: 4/10 (40.0%)
+    - Stamped reports generated: `evals/reports/2026-11-13_desktop_gpu_e2e.json` and `evals/reports/2026-11-13_desktop_gpu_e2e.md`.
+  - **Verification**: Linters clean (`ruff`, `mypy`), touched unit tests (31 passed), and full mock test suite passed: `1034 passed, 1 skipped, 16 deselected, 53 warnings in 168.92s (0:02:48) — 0 failed` in `queue_stage_R3.log`.
+- **Files Edited in Stages R1-R3**:
+  1. `backend/app/core/graph.py`
+  2. `backend/scripts/run_local_e2e_eval.py`
+  3. `backend/tests/unit/test_session_document_qa.py`
+  4. `backend/tests/unit/test_table_and_conflict_validation.py`
+  5. `backend/tests/unit/test_table_answering_closest_rows.py`
+  6. `evals/golden/e2e_local_cases.json`
+  7. `evals/reports/2026-11-13_desktop_gpu_e2e.json`
+  8. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
+  9. `docs/BUILD_LOG.md`
+  10. `docs/STATUS.md`

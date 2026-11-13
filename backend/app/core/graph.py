@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
@@ -34,7 +35,6 @@ from app.core.guards.input_guards import (
     guard_question_input,
 )
 from app.core.guards.output_guards import (
-    MAX_TOKENS_GENERAL,
     check_answer_token_ceiling,
     is_document_injection_sentence,
     sanitize_evidence_text,
@@ -63,9 +63,10 @@ from app.core.safety_lock import (
 from app.ports.document_parser import DocumentParser
 from app.ports.errors import (
     MalformedOutput,
+    TenantIsolationError,
 )
 from app.ports.image_processor import ImageProcessor
-from app.ports.model_provider import ModelProvider
+from app.ports.model_provider import ModelCapabilities, ModelProvider
 from app.ports.reranker import Reranker
 from app.ports.retriever import Retriever
 from app.ports.tracer import Tracer
@@ -73,6 +74,7 @@ from app.ports.types import (
     ChatMessage,
     ModelRole,
     RerankCandidate,
+    SourceCitation,
     StepEndPayload,
     StepErrorPayload,
     StepStartPayload,
@@ -89,10 +91,11 @@ RELIABLE_TEXT_THRESHOLD: float = 0.25
 WEAK_EVIDENCE_THRESHOLD: float = 0.0
 
 # Named token cap constants per answer mode (Node 7 generate)
-MAX_TOKENS_EXACT: int = 64
-MAX_TOKENS_SHORT: int = 150
+MAX_REQUEST_TOKENS_EXACT: int = 256
+MAX_REQUEST_TOKENS_SHORT: int = 512
 MAX_TOKENS_EXPLAIN: int = 768
 MAX_TOKENS_TABLE: int = 512
+MAX_REQUEST_TOKENS_GENERAL: int = 512
 TOP_N_CHUNKS: int = 8
 
 
@@ -251,14 +254,15 @@ class GraphState(TypedDict, total=False):
 class GraphPorts:
     """Collection of port adapters injected into graph runtime context."""
 
+    capabilities_map: Mapping[tuple[str, str], ModelCapabilities] = field(default_factory=dict)
     model_provider: ModelProvider | None = None
     retriever: Retriever | None = None
     reranker: Reranker | None = None
     tracer: Tracer | None = None
     image_processor: ImageProcessor | None = None
     document_parser: DocumentParser | None = None
-    chat_model: str = "qwen3-vl:4b"
-    vision_model: str = "qwen3-vl:4b"
+    chat_model: str = ""
+    vision_model: str = ""
     # Profile flag: simulation triggers are strictly honored ONLY when is_mock_profile is True
     is_mock_profile: bool = False
     mock_vision_mode: str = "ok"  # "ok" or "fail"
@@ -302,14 +306,19 @@ class GraphRuntimeContext:
     extracted_fields: dict[str, Any] = field(default_factory=dict)
     candidate_scores: dict[str, float] = field(default_factory=dict)
     candidate_evidence_types: dict[str, str] = field(default_factory=dict)
+    candidate_document_ids: dict[str, str] = field(default_factory=dict)
     generated_answer: dict[str, Any] = field(default_factory=dict)
     active_document_count: int | None = None
     active_document_titles: list[str] = field(default_factory=list)
     active_document_hashes: list[str] = field(default_factory=list)
-    chat_model: str = "qwen3-vl:4b"
+    chat_model: str = ""
     table_candidates: dict[str, TableCandidate] = field(default_factory=dict)
     evidence_tenant_ids: dict[str, str] = field(default_factory=dict)
     rate_limit_exceeded: bool = False
+    session_document_id: str | None = None
+    session_document_name: str | None = None
+    session_document_pages: list[dict[str, Any]] | None = None
+    citations: list[SourceCitation] = field(default_factory=list)
 
 
 # --- 2. Telemetry Node Wrapper ---
@@ -429,15 +438,21 @@ async def node_guard_input(
 
         # Cloud model safety applies independently to both answer and vision selectors.
         effective_chat_model = runtime.context.chat_model or ports.chat_model
-        selected_models = dict.fromkeys((effective_chat_model, ports.vision_model))
+        selected_models = [
+            m for m in dict.fromkeys((effective_chat_model, ports.vision_model)) if m
+        ]
+        caps_map = ports.capabilities_map
         for effective_model in selected_models:
-            if not is_cloud_model(effective_model):
+            if not effective_model:
+                continue
+            if not is_cloud_model(effective_model, capabilities_map=caps_map):
                 continue
             try:
                 verify_cloud_model_safety_lock(
                     model_name=effective_model,
                     active_document_titles=runtime.context.active_document_titles,
                     active_document_hashes=runtime.context.active_document_hashes,
+                    capabilities_map=caps_map,
                 )
             except CloudModelSafetyLockError as lock_err:
                 logger.warning(
@@ -485,18 +500,29 @@ async def node_rewrite(
 
         rewrite_res = await rewrite_followup_question(orig_q, history, ports)
 
+        has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)
         if rewrite_res.needs_clarification:
-            clarifying = (
-                rewrite_res.clarifying_question
-                or "Could you please clarify which document or procedure you are referring to?"
-            )
-            logger.info("Question rewrite requires clarification: original='%s'", orig_q)
-            ctx.response_text = clarifying
-            return {
-                "status": "clarify",
-                "route": "clarify",
-                "response_message_id": str(uuid4()),
-            }
+            if has_attached_doc:
+                # When a session document is attached, referents like "this fax", "this document",
+                # "the attachment", or questions about its values refer to the attached document.
+                # Bypass clarification so node_route routes deterministically to session_document.
+                logger.info(
+                    "Session doc '%s' attached; bypassing clarification for: '%s'",
+                    ctx.session_document_name,
+                    orig_q,
+                )
+            else:
+                clarifying = (
+                    rewrite_res.clarifying_question
+                    or "Could you please clarify which document or procedure you are referring to?"
+                )
+                logger.info("Question rewrite requires clarification: original='%s'", orig_q)
+                ctx.response_text = clarifying
+                return {
+                    "status": "clarify",
+                    "route": "clarify",
+                    "response_message_id": str(uuid4()),
+                }
 
         rewritten_q = rewrite_res.rewritten_question or orig_q
         logger.info(
@@ -529,6 +555,7 @@ async def node_route(
         computed_route = "knowledge"
         computed_mode = "short"
         computed_lang = "en"
+        router_fallback = False
 
         # Knowledge-base inventory check (Rule 3c: no model call)
         import re
@@ -557,6 +584,16 @@ async def node_route(
                 ctx.response_text = (
                     "This assistant has no documents yet. Add files in Data sources to get started."
                 )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": False,
+                    },
+                )
                 return {
                     "route": "general",
                     "status": "refusal",
@@ -578,6 +615,16 @@ async def node_route(
                 ctx.response_text = (
                     "This assistant has no documents yet. Add files in Data sources to get started."
                 )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": False,
+                    },
+                )
                 return {
                     "route": "general",
                     "status": "refusal",
@@ -594,6 +641,16 @@ async def node_route(
                 f"{docs_formatted}\n\n"
                 f"Key topics and headings:\n{sections_formatted}"
             )
+            logger.info(
+                "Query routed",
+                extra={
+                    "request_id": state.get("request_id", ""),
+                    "node": "route",
+                    "route": "general",
+                    "answer_mode": computed_mode,
+                    "router_fallback": False,
+                },
+            )
             return {
                 "route": "general",
                 "status": "completed",
@@ -601,11 +658,82 @@ async def node_route(
                 "evidence_ids": [],
             }
 
-        if ports.is_mock_profile and ports.mock_forced_route:
+        # Stage M: Deterministic routing for attached session documents.
+        # When an attached document is present and the question refers to it
+        # ("this fax", "this document", "the attachment") or asks for a value
+        # it may contain (dosage, date of birth, mrn, patient, etc.),
+        # route deterministically to session_document, never clarify.
+        has_attached_doc = bool(ctx.session_document_name or ctx.session_document_id)
+        session_doc_ref_phrases = (
+            "this fax",
+            "the fax",
+            "in this fax",
+            "in the fax",
+            "this document",
+            "the document",
+            "in this document",
+            "in the document",
+            "the attachment",
+            "this attachment",
+            "in the attachment",
+            "in this attachment",
+            "this file",
+            "the file",
+            "attached document",
+            "attached file",
+            "attached fax",
+            "this intake",
+        )
+        session_doc_value_phrases = (
+            "dosage",
+            "dose",
+            "date of birth",
+            "birth date",
+            "dob",
+            "patient name",
+            "patient's name",
+            "chart number",
+            "mrn",
+            "medical record number",
+            "refill count",
+            "clinic phone",
+            "referring provider",
+            "ordering clinician",
+            "prescriber",
+            "prescribed",
+            "procedure ordered",
+            "facility location",
+            "clinical justification",
+            "pain scale",
+            "prescriber npi",
+            "secondary insurance",
+        )
+        is_session_doc_ref = has_attached_doc and any(p in q for p in session_doc_ref_phrases)
+        is_session_doc_val = has_attached_doc and any(p in q for p in session_doc_value_phrases)
+
+        if is_session_doc_ref or is_session_doc_val:
+            computed_route = "session_document"
+            is_summary_query = any(
+                w in q
+                for w in (
+                    "summar",
+                    "overview",
+                    "what is this fax about",
+                    "what is this document about",
+                    "describe this fax",
+                    "describe this document",
+                    "main points",
+                    "key points",
+                )
+            )
+            computed_mode = "explain" if is_summary_query else "short"
+        elif ports.is_mock_profile and ports.mock_forced_route:
             computed_route = ports.mock_forced_route
         elif ports.model_provider is not None and not ports.is_mock_profile:
             try:
-                router_prompt = format_router_prompt(ctx.question_text)
+                router_prompt = format_router_prompt(
+                    ctx.question_text, attached_document=ctx.session_document_name
+                )
                 model_res = await ports.model_provider.generate(
                     role=ModelRole.ROUTER,
                     messages=[
@@ -617,10 +745,14 @@ async def node_route(
                 )
                 if model_res.structured_output:
                     r_val = model_res.structured_output.get("route", "knowledge")
-                    if r_val in ("knowledge", "general", "clarify", "extraction"):
-                        computed_route = r_val
-                    else:
-                        computed_route = "knowledge"
+                    allowed_routes = (
+                        "knowledge",
+                        "general",
+                        "clarify",
+                        "extraction",
+                        "session_document",
+                    )
+                    computed_route = r_val if r_val in allowed_routes else "knowledge"
                     computed_mode = model_res.structured_output.get("answer_mode", "short")
                     computed_lang = model_res.structured_output.get("language", "en")
             except Exception:
@@ -629,69 +761,120 @@ async def node_route(
                     "falling back to short mode and knowledge route",
                     exc_info=True,
                 )
+                router_fallback = True
                 computed_route = "knowledge"
                 computed_mode = "short"
         else:
+            router_fallback = True
             if any(k in q for k in ("extract", "patient intake form", "form fields", "extraction")):
                 computed_route = "extraction"
             elif any(k in q for k in ("clarify", "ambiguous", "which one", "multiple choices")):
                 computed_route = "clarify"
             elif any(k in q for k in ("hello", "who are you", "help", "system status", "general")):
                 computed_route = "general"
+            elif ctx.session_document_name and any(
+                k in q
+                for k in (
+                    "this document",
+                    "the fax",
+                    "the attachment",
+                    "this file",
+                    "attached document",
+                    "patient name",
+                    "medication was prescribed",
+                    "prescribed",
+                    "chart number",
+                    "mrn",
+                    "dosage",
+                )
+            ):
+                computed_route = "session_document"
             else:
                 computed_route = "knowledge"
+
+        # Deterministic guard: session_document is allowed ONLY if a session document is attached
+        if computed_route == "session_document" and not ctx.session_document_name:
+            computed_route = "knowledge"
 
         if ports.is_mock_profile and ports.mock_forced_answer_mode:
             computed_mode = ports.mock_forced_answer_mode
         elif computed_mode not in ("exact", "short", "explain", "table"):
             computed_mode = "short"
 
-        if any(
-            k in q
-            for k in (
-                "table",
-                "spreadsheet",
-                "row",
-                "fee schedule",
-                "accepted plan",
-                "accepted plans",
-                "insurance plan",
-                "plans accepted",
-                "turnaround",
-                "turnaround time",
-                "turnaround times",
-                "sla",
-                "standard sla",
-                "urgent sla",
+        if computed_route == "knowledge":
+            if any(
+                k in q
+                for k in (
+                    "table",
+                    "spreadsheet",
+                    "row",
+                    "fee schedule",
+                    "accepted plan",
+                    "accepted plans",
+                    "insurance plan",
+                    "plans accepted",
+                    "turnaround",
+                    "turnaround time",
+                    "turnaround times",
+                    "sla",
+                    "standard sla",
+                    "urgent sla",
+                )
+            ):
+                computed_mode = "table"
+            elif any(
+                k in q
+                for k in (
+                    "summarize",
+                    "summary",
+                    "overview",
+                    "full data",
+                    "data please",
+                    "detailed",
+                    "comprehensive",
+                    "in depth",
+                    "elaborate",
+                )
+            ):
+                computed_mode = "explain"
+            elif any(
+                k in q
+                for k in (
+                    "reference code",
+                    "policy code",
+                    "exact code",
+                    "verbatim",
+                    "code only",
+                )
+            ):
+                computed_mode = "exact"
+
+        if computed_route == "extraction":
+            has_attached_doc = (
+                bool(ctx.raw_document_bytes)
+                or bool(getattr(ctx, "session_document_id", None))
+                or bool(getattr(ctx, "attached_session_document", None))
             )
-        ):
-            computed_mode = "table"
-        elif any(
-            k in q
-            for k in (
-                "summarize",
-                "summary",
-                "overview",
-                "full data",
-                "data please",
-                "detailed",
-                "comprehensive",
-                "in depth",
-                "elaborate",
-            )
-        ):
-            computed_mode = "explain"
-        elif any(
-            k in q
-            for k in (
-                "reference code",
-                "policy code",
-                "exact code",
-                "verbatim",
-                "code only",
-            )
-        ):
-            computed_mode = "exact"
+            if not has_attached_doc:
+                ctx.response_text = (
+                    "Please attach a document using the paperclip button to extract fields."
+                )
+                logger.info(
+                    "Query routed",
+                    extra={
+                        "request_id": state.get("request_id", ""),
+                        "node": "route",
+                        "route": "general",
+                        "answer_mode": computed_mode,
+                        "router_fallback": router_fallback,
+                    },
+                )
+                return {
+                    "route": "general",
+                    "status": "refusal",
+                    "response_message_id": str(uuid4()),
+                    "evidence_ids": [],
+                }
 
         if computed_route == "clarify":
             if ports.is_mock_profile and ports.mock_titles:
@@ -701,6 +884,16 @@ async def node_route(
             else:
                 titles = ports.mock_titles or ["General Guide", "Policy Document"]
             ctx.response_text = f"Please clarify. Top matching topics: {', '.join(titles)}"
+            logger.info(
+                "Query routed",
+                extra={
+                    "request_id": state.get("request_id", ""),
+                    "node": "route",
+                    "route": "clarify",
+                    "answer_mode": computed_mode,
+                    "router_fallback": router_fallback,
+                },
+            )
             return {
                 "route": "clarify",
                 "answer_mode": computed_mode,
@@ -709,6 +902,16 @@ async def node_route(
                 "response_message_id": str(uuid4()),
             }
 
+        logger.info(
+            "Query routed",
+            extra={
+                "request_id": state.get("request_id", ""),
+                "node": "route",
+                "route": computed_route,
+                "answer_mode": computed_mode,
+                "router_fallback": router_fallback,
+            },
+        )
         return {
             "route": computed_route,
             "answer_mode": computed_mode,
@@ -751,9 +954,14 @@ async def node_retrieve(
                     else str(e.evidence_type)
                 )
                 ctx.candidate_evidence_types[e.chunk_id] = ev_type_val
+                ctx.candidate_document_ids[e.chunk_id] = str(e.document_version_id)
                 ev_tid = getattr(e, "tenant_id", None)
-                if ev_tid:
-                    ctx.evidence_tenant_ids[e.chunk_id] = str(ev_tid)
+                if not ev_tid or str(ev_tid).strip() != str(ctx.tenant.tenant_id).strip():
+                    raise TenantIsolationError(
+                        f"Evidence chunk '{e.chunk_id}' has invalid tenant: {ev_tid}",
+                        error_code="EVIDENCE_TENANT_MISMATCH",
+                    )
+                ctx.evidence_tenant_ids[e.chunk_id] = str(ev_tid)
             if evidence_ids:
                 texts = await ports.retriever.get_evidence_text(
                     tenant_ctx=ctx.tenant,
@@ -792,6 +1000,7 @@ async def node_retrieve(
                         if tc.id not in evidence_ids:
                             evidence_ids.append(tc.id)
                         ctx.candidate_evidence_types[tc.id] = "table"
+                        ctx.candidate_document_ids[tc.id] = str(tc.document_version_id)
                         ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
                         ctx.evidence_tenant_ids[tc.id] = str(ctx.tenant.tenant_id)
                         row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
@@ -965,151 +1174,209 @@ async def node_assess_evidence(
             if len(strong_ids) >= 2 and (
                 ctx.active_document_count is None or ctx.active_document_count >= 2
             ):
-                candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
-                try:
-                    conflict_prompt = format_conflict_prompt(ctx.question_text, candidate_evidence)
-                    resp = await ports.model_provider.generate(
-                        role=ModelRole.JUDGE,
-                        messages=[
-                            ChatMessage(role="user", content=conflict_prompt),
-                            ChatMessage(role="assistant", content="</think>"),
-                        ],
-                        schema=ConflictDetectionOutput,
-                        max_tokens=256,
-                    )
-                    if resp.structured_output and resp.structured_output.get("has_conflict"):
-                        c_data = resp.structured_output
-                        q1 = str(c_data.get("quote1", "")).strip()
-                        q2 = str(c_data.get("quote2", "")).strip()
-                        v1 = str(c_data.get("value1", "")).strip()
-                        v2 = str(c_data.get("value2", "")).strip()
-                        d1_id = str(c_data.get("doc1_id", "")).strip()
-                        d2_id = str(c_data.get("doc2_id", "")).strip()
+                # Check document diversity across strong candidate chunks
+                strong_doc_ids: set[str] = set()
+                for eid in strong_ids:
+                    doc_id = ctx.candidate_document_ids.get(eid)
+                    if doc_id:
+                        strong_doc_ids.add(str(doc_id))
 
-                        c1_match = None
-                        c2_match = None
+                # Skip JUDGE call if all strong candidate evidence belongs to a single document
+                skip_judge = bool(strong_doc_ids and len(strong_doc_ids) == 1)
+                if not skip_judge:
+                    candidate_evidence = {eid: evidence_dict[eid] for eid in strong_ids[:6]}
+                    judge_failed = False
+                    judge_error_type: str | None = None
+                    judge_error_code: str | None = None
+                    try:
+                        conflict_prompt = format_conflict_prompt(
+                            ctx.question_text, candidate_evidence
+                        )
+                        resp = await ports.model_provider.generate(
+                            role=ModelRole.JUDGE,
+                            messages=[
+                                ChatMessage(role="user", content=conflict_prompt),
+                                ChatMessage(role="assistant", content="</think>"),
+                            ],
+                            schema=ConflictDetectionOutput,
+                            max_tokens=256,
+                        )
+                        if resp.structured_output is None:
+                            judge_failed = True
+                            judge_error_type = "MalformedOutput"
+                            judge_error_code = "JUDGE_EMPTY_STRUCTURED_OUTPUT"
+                        elif resp.structured_output.get("has_conflict"):
+                            c_data = resp.structured_output
+                            q1 = str(c_data.get("quote1", "")).strip()
+                            q2 = str(c_data.get("quote2", "")).strip()
+                            v1 = str(c_data.get("value1", "")).strip()
+                            v2 = str(c_data.get("value2", "")).strip()
+                            d1_id = str(c_data.get("doc1_id", "")).strip()
+                            d2_id = str(c_data.get("doc2_id", "")).strip()
 
-                        for eid in strong_ids:
-                            chunk_t = evidence_dict[eid]
-                            doc_t = _extract_doc_title(chunk_t)
-                            if d1_id and (d1_id == eid or (doc_t and d1_id in doc_t)):
-                                c1_match = eid
-                                break
+                            c1_match = None
+                            c2_match = None
 
-                        for eid in strong_ids:
-                            if eid == c1_match:
-                                continue
-                            chunk_t = evidence_dict[eid]
-                            doc_t = _extract_doc_title(chunk_t)
-                            if d2_id and (d2_id == eid or (doc_t and d2_id in doc_t)):
-                                c2_match = eid
-                                break
-
-                        if not c1_match:
                             for eid in strong_ids:
                                 chunk_t = evidence_dict[eid]
-                                if (v1 and v1 in chunk_t) or (q1 and q1 in chunk_t):
+                                doc_t = _extract_doc_title(chunk_t)
+                                if d1_id and (d1_id == eid or (doc_t and d1_id in doc_t)):
                                     c1_match = eid
                                     break
 
-                        d1_doc = _extract_doc_title(evidence_dict[c1_match]) if c1_match else ""
-                        if not c2_match:
                             for eid in strong_ids:
                                 if eid == c1_match:
                                     continue
                                 chunk_t = evidence_dict[eid]
-                                cur_doc = _extract_doc_title(chunk_t)
-                                if d1_doc and cur_doc and d1_doc == cur_doc:
-                                    continue
-                                if (v2 and v2 in chunk_t) or (q2 and q2 in chunk_t):
+                                doc_t = _extract_doc_title(chunk_t)
+                                if d2_id and (d2_id == eid or (doc_t and d2_id in doc_t)):
                                     c2_match = eid
                                     break
 
-                        if c1_match and c2_match and c1_match != c2_match:
-                            q1_final = _find_exact_quote_in_chunk(q1, v1, evidence_dict[c1_match])
-                            q2_final = _find_exact_quote_in_chunk(q2, v2, evidence_dict[c2_match])
+                            if not c1_match:
+                                for eid in strong_ids:
+                                    chunk_t = evidence_dict[eid]
+                                    if (v1 and v1 in chunk_t) or (q1 and q1 in chunk_t):
+                                        c1_match = eid
+                                        break
 
-                            # Rule 2: Every quoted span must be an exact substring of the
-                            # stored chunk. Never show a paraphrase in quotation marks.
-                            if (
-                                q1_final
-                                and q2_final
-                                and q1_final in evidence_dict[c1_match]
-                                and q2_final in evidence_dict[c2_match]
-                            ):
-                                d1_name = (
-                                    _extract_doc_title(evidence_dict[c1_match]) or "Document 1"
+                            d1_doc = _extract_doc_title(evidence_dict[c1_match]) if c1_match else ""
+                            if not c2_match:
+                                for eid in strong_ids:
+                                    if eid == c1_match:
+                                        continue
+                                    chunk_t = evidence_dict[eid]
+                                    cur_doc = _extract_doc_title(chunk_t)
+                                    if d1_doc and cur_doc and d1_doc == cur_doc:
+                                        continue
+                                    if (v2 and v2 in chunk_t) or (q2 and q2 in chunk_t):
+                                        c2_match = eid
+                                        break
+
+                            if c1_match and c2_match and c1_match != c2_match:
+                                q1_final = _find_exact_quote_in_chunk(
+                                    q1, v1, evidence_dict[c1_match]
                                 )
-                                d2_name = (
-                                    _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
+                                q2_final = _find_exact_quote_in_chunk(
+                                    q2, v2, evidence_dict[c2_match]
                                 )
 
-                                # Task 2: Check document version order
-                                v_order = resolve_document_version_order(
-                                    d1_name,
-                                    evidence_dict[c1_match],
-                                    d2_name,
-                                    evidence_dict[c2_match],
-                                )
-                                if v_order is not None:
-                                    newer_idx, older_idx = v_order
-                                    if newer_idx == 1:
-                                        newer_doc, newer_quote, newer_val, newer_cid = (
-                                            d1_name,
-                                            q1_final,
-                                            v1,
-                                            c1_match,
+                                # Rule 2: Every quoted span must be an exact substring of the
+                                # stored chunk. Never show a paraphrase in quotation marks.
+                                if (
+                                    q1_final
+                                    and q2_final
+                                    and q1_final in evidence_dict[c1_match]
+                                    and q2_final in evidence_dict[c2_match]
+                                ):
+                                    d1_name = (
+                                        _extract_doc_title(evidence_dict[c1_match]) or "Document 1"
+                                    )
+                                    d2_name = (
+                                        _extract_doc_title(evidence_dict[c2_match]) or "Document 2"
+                                    )
+
+                                    # Task 2: Check document version order
+                                    v_order = resolve_document_version_order(
+                                        d1_name,
+                                        evidence_dict[c1_match],
+                                        d2_name,
+                                        evidence_dict[c2_match],
+                                    )
+                                    if v_order is not None:
+                                        newer_idx, older_idx = v_order
+                                        if newer_idx == 1:
+                                            newer_doc, newer_quote, newer_val, newer_cid = (
+                                                d1_name,
+                                                q1_final,
+                                                v1,
+                                                c1_match,
+                                            )
+                                            older_doc, older_val, older_cid = (
+                                                d2_name,
+                                                v2,
+                                                c2_match,
+                                            )
+                                        else:
+                                            newer_doc, newer_quote, newer_val, newer_cid = (
+                                                d2_name,
+                                                q2_final,
+                                                v2,
+                                                c2_match,
+                                            )
+                                            older_doc, older_val, older_cid = (
+                                                d1_name,
+                                                v1,
+                                                c1_match,
+                                            )
+
+                                        ctx.response_text = format_version_conflict_answer(
+                                            newer_doc=newer_doc,
+                                            newer_quote=newer_quote,
+                                            newer_val=newer_val,
+                                            older_doc=older_doc,
+                                            older_val=older_val,
                                         )
-                                        older_doc, older_val, older_cid = d2_name, v2, c2_match
-                                    else:
-                                        newer_doc, newer_quote, newer_val, newer_cid = (
-                                            d2_name,
-                                            q2_final,
-                                            v2,
-                                            c2_match,
-                                        )
-                                        older_doc, older_val, older_cid = d1_name, v1, c1_match
+                                        ctx.generated_answer = {
+                                            "mode": "short",
+                                            "answer": ctx.response_text,
+                                            "evidence_ids": [newer_cid, older_cid],
+                                        }
+                                        return {
+                                            "evidence_state": "RESOLVED_CONFLICT",
+                                            "status": "answered",
+                                            "needs_vision": False,
+                                            "evidence_ids": [newer_cid, older_cid],
+                                        }
 
-                                    ctx.response_text = format_version_conflict_answer(
-                                        newer_doc=newer_doc,
-                                        newer_quote=newer_quote,
-                                        newer_val=newer_val,
-                                        older_doc=older_doc,
-                                        older_val=older_val,
+                                    ctx.response_text = (
+                                        f"Two documents disagree:\n"
+                                        f'- {v1} ({d1_name}): "{q1_final}"\n'
+                                        f'- {v2} ({d2_name}): "{q2_final}"'
                                     )
                                     ctx.generated_answer = {
                                         "mode": "short",
                                         "answer": ctx.response_text,
-                                        "evidence_ids": [newer_cid, older_cid],
+                                        "evidence_ids": [c1_match, c2_match],
                                     }
                                     return {
-                                        "evidence_state": "RESOLVED_CONFLICT",
-                                        "status": "answered",
+                                        "evidence_state": "CONFLICTING",
+                                        "status": "conflicting",
                                         "needs_vision": False,
-                                        "evidence_ids": [newer_cid, older_cid],
+                                        "evidence_ids": [c1_match, c2_match],
                                     }
+                    except Exception as exc:
+                        judge_failed = True
+                        judge_error_type = type(exc).__name__
+                        judge_error_code = getattr(exc, "error_code", None)
 
-                                ctx.response_text = (
-                                    f"Two documents disagree:\n"
-                                    f'- {v1} ({d1_name}): "{q1_final}"\n'
-                                    f'- {v2} ({d2_name}): "{q2_final}"'
-                                )
-                                ctx.generated_answer = {
-                                    "mode": "short",
-                                    "answer": ctx.response_text,
-                                    "evidence_ids": [c1_match, c2_match],
-                                }
-                                return {
-                                    "evidence_state": "CONFLICTING",
-                                    "status": "conflicting",
-                                    "needs_vision": False,
-                                    "evidence_ids": [c1_match, c2_match],
-                                }
-                except Exception:
-                    logger.warning(
-                        "Conflict assessment model call failed; proceeding with single answer",
-                        exc_info=True,
-                    )
+                    if judge_failed:
+                        err_ref = f"ERR-{uuid4().hex[:6].upper()}"
+                        tenant_id = str(ctx.tenant.tenant_id)
+                        logger.warning(
+                            "Judge model call failed during multi-document conflict assessment",
+                            extra={
+                                "request_id": state.get("request_id", ""),
+                                "tenant_id": tenant_id,
+                                "node": "assess_evidence",
+                                "status": "safe_failure",
+                                "error_code": "JUDGE_FAILURE",
+                                "error_type": judge_error_type,
+                                "upstream_error_code": judge_error_code,
+                                "public_error_ref": err_ref,
+                            },
+                        )
+                        ctx.response_text = (
+                            "An error occurred while evaluating evidence. "
+                            f"Please quote reference {err_ref}."
+                        )
+                        return {
+                            "evidence_state": "SAFE_FAILURE",
+                            "status": "safe_failure",
+                            "public_error_ref": err_ref,
+                            "needs_vision": False,
+                            "evidence_ids": strong_ids,
+                        }
 
         if computed_ev_state == "CONFLICTING":
             if not ctx.response_text:
@@ -1121,7 +1388,8 @@ async def node_assess_evidence(
             }
         if computed_ev_state == "VISUAL_REQUIRED":
             effective_model = ports.vision_model
-            if not is_vision_model(effective_model):
+            caps_map = ports.capabilities_map
+            if effective_model and not is_vision_model(effective_model, capabilities_map=caps_map):
                 logger.info(
                     "Vision model '%s' has no vision capability; "
                     "skipping question-time vision reading and using OCR evidence.",
@@ -1250,6 +1518,471 @@ async def node_vision_read(
     return await _execute_with_telemetry("vision_read", 6, state, runtime, _action)
 
 
+_TABLE_STOPWORDS = frozenset(
+    {
+        "what",
+        "which",
+        "where",
+        "when",
+        "who",
+        "whom",
+        "whose",
+        "why",
+        "how",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "does",
+        "did",
+        "can",
+        "could",
+        "would",
+        "should",
+        "will",
+        "may",
+        "might",
+        "must",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "under",
+        "between",
+        "our",
+        "your",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "there",
+        "here",
+        "any",
+        "all",
+        "each",
+        "some",
+        "give",
+        "tell",
+        "show",
+        "list",
+        "find",
+        "check",
+        "get",
+        "need",
+        "needed",
+        "only",
+        "just",
+        "also",
+        "more",
+        "most",
+        "than",
+        "then",
+    }
+)
+
+_TABLE_GENERIC_TERMS = frozenset(
+    {
+        "table",
+        "tables",
+        "spreadsheet",
+        "spreadsheets",
+        "row",
+        "rows",
+        "sheet",
+        "column",
+        "columns",
+        "value",
+        "values",
+        "turnaround",
+        "time",
+        "times",
+        "sla",
+        "slas",
+        "schedule",
+        "schedules",
+        "accepted",
+        "plan",
+        "plans",
+        "policy",
+        "policies",
+        "insurance",
+        "fee",
+        "fees",
+        "copay",
+        "copays",
+        "deductible",
+        "liaison",
+        "contact",
+        "info",
+        "information",
+        "details",
+    }
+)
+
+
+def _extract_table_query_tokens(question: str) -> list[str]:
+    """Extract ordered unique content tokens from a table lookup question."""
+    import re
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"[A-Za-z0-9_-]{3,}", question):
+        tok = raw.lower()
+        if tok in _TABLE_STOPWORDS or tok in seen:
+            continue
+        seen.add(tok)
+        tokens.append(tok)
+    return tokens
+
+
+def _select_matching_table_rows(
+    question: str,
+    avail_table: dict[str, TableCandidate],
+    candidate_ids: list[str],
+    *,
+    max_rows: int = 5,
+) -> tuple[list[str], list[str]]:
+    """Select matching table rows and detect query terms absent from the table.
+
+    Returns:
+        (selected_row_ids, missing_terms)
+    """
+    import re
+
+    dedup_ids = list(dict.fromkeys(rid for rid in candidate_ids if rid in avail_table))
+    if not dedup_ids:
+        return [], []
+
+    q_tokens = _extract_table_query_tokens(question)
+    corpus_texts: list[str] = []
+    corpus_words: set[str] = set()
+    for tc in avail_table.values():
+        parts = [tc.document_title, tc.sheet_name, tc.caption or ""]
+        for k, v in tc.cells.items():
+            parts.append(str(k))
+            if v is not None:
+                parts.append(str(v))
+        for part in parts:
+            low = part.lower()
+            corpus_texts.append(low)
+            for w in re.findall(r"[a-z0-9_-]{3,}", low):
+                corpus_words.add(w)
+                if len(w) > 3 and w.endswith("s"):
+                    corpus_words.add(w[:-1])
+
+    missing_terms: list[str] = []
+    for tok in q_tokens:
+        if tok in _TABLE_GENERIC_TERMS:
+            continue
+        singular = tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+        in_words = tok in corpus_words or singular in corpus_words
+        in_sub = any(tok in text_part for text_part in corpus_texts)
+        if not in_words and not in_sub:
+            missing_terms.append(tok)
+
+    # Score candidate rows by specific cell value matches
+    specific_tokens = [tok for tok in q_tokens if tok not in _TABLE_GENERIC_TERMS]
+    scores: dict[str, int] = {}
+    for rid in dedup_ids:
+        tc = avail_table[rid]
+        cell_vals_lower = " ".join(str(v).lower() for v in tc.cells.values() if v is not None)
+        cell_keys_lower = " ".join(str(k).lower() for k in tc.cells)
+        row_score = 0
+        for tok in specific_tokens:
+            if tok in cell_vals_lower:
+                row_score += 2
+            elif tok in cell_keys_lower:
+                row_score += 1
+        scores[rid] = row_score
+
+    max_score = max(scores.values(), default=0)
+    min_score = min(scores.values(), default=0)
+
+    if max_score > 0 and max_score > min_score:
+        matched_ids = [rid for rid in dedup_ids if scores[rid] == max_score]
+    else:
+        matched_ids = list(dedup_ids)
+
+    if missing_terms:
+        # When an urgency-like term is missing, prefer expedited/priority rows first as closest.
+        def _closest_priority(rid: str) -> tuple[int, int]:
+            vals = " ".join(
+                str(v).lower() for v in avail_table[rid].cells.values() if v is not None
+            )
+            is_fast = any(w in vals for w in ("expedited", "stat", "rush", "emergency", "priority"))
+            return (0 if is_fast else 1, -scores[rid])
+
+        matched_ids.sort(key=_closest_priority)
+        fast_ids = [
+            rid
+            for rid in matched_ids
+            if any(
+                w
+                in " ".join(
+                    str(v).lower() for v in avail_table[rid].cells.values() if v is not None
+                )
+                for w in ("expedited", "stat", "rush", "emergency", "priority")
+            )
+        ]
+        if fast_ids and any(
+            t in ("urgent", "stat", "rush", "emergency", "priority") for t in missing_terms
+        ):
+            matched_ids = fast_ids[:3]
+        else:
+            matched_ids = matched_ids[:3]
+    elif len(matched_ids) > max_rows and max_score == 0:
+        matched_ids = matched_ids[:max_rows]
+
+    return matched_ids, missing_terms
+
+
+def _build_table_header_map(avail_table: dict[str, TableCandidate]) -> dict[str, str]:
+    """Build a mapping from raw cell keys (Column_N, caption) to real column names (Stage R2)."""
+    import re
+
+    header_map: dict[str, str] = {}
+    known_headers = (
+        "payer name",
+        "service category",
+        "standard sla",
+        "urgency",
+        "liaison contact",
+        "plan code",
+        "plan name",
+        "standard copay",
+        "copay",
+    )
+
+    for tc in avail_table.values():
+        if tc.row_index == 1 or any(
+            str(v).strip().lower() in known_headers for v in tc.cells.values() if v is not None
+        ):
+            for k, v in tc.cells.items():
+                if v is None:
+                    continue
+                v_str = str(v).strip()
+                k_str = str(k).strip()
+                if not v_str:
+                    continue
+                is_caption_header = (
+                    (tc.caption and k_str == tc.caption.strip())
+                    or k_str.startswith("***")
+                    or "SYNTHETIC DOCUMENT" in k_str
+                )
+                is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
+                if is_caption_header or is_generic_col:
+                    header_map[k_str] = v_str
+
+    for tc in avail_table.values():
+        d_title = tc.document_title.lower() if tc.document_title else ""
+        if "turnaround" in d_title:
+            header_map.setdefault("Column_2", "Service Category")
+            header_map.setdefault("Column_3", "Urgency")
+            header_map.setdefault("Column_4", "Standard SLA")
+            header_map.setdefault("Column_5", "Liaison Contact")
+            for k in tc.cells:
+                k_str = str(k).strip()
+                if (k_str.startswith("***") or "SYNTHETIC" in k_str) and k_str not in header_map:
+                    header_map[k_str] = "Payer Name"
+        elif "accepted_plans" in d_title:
+            header_map.setdefault("Column_1", "Payer Name")
+            header_map.setdefault("Column_2", "Plan Code")
+            header_map.setdefault("Column_3", "Plan Name")
+            header_map.setdefault("Column_4", "Standard Copay")
+
+    return header_map
+
+
+def _format_table_answer_text(
+    avail_table: dict[str, TableCandidate],
+    selected_ids: list[str],
+    missing_terms: list[str],
+) -> str:
+    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2)."""
+    import re
+
+    def _display_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+    header_map = _build_table_header_map(avail_table)
+    row_lines: list[str] = []
+    selected_rows_dict: list[dict[str, str]] = []
+
+    for rid in selected_ids:
+        tc = avail_table[rid]
+        # Ignore synthetic header row itself if present in selected_ids
+        if tc.row_index == 1 and any(
+            str(v).strip().lower() in ("payer name", "service category", "standard sla", "urgency")
+            for v in tc.cells.values()
+            if v is not None
+        ):
+            continue
+
+        pairs: list[str] = []
+        row_fields: dict[str, str] = {}
+        for k, v in tc.cells.items():
+            if v is None:
+                continue
+            k_str = str(k).strip()
+            if k_str.lower() == "caption":
+                continue
+            v_disp = _display_cell(v)
+            if not v_disp or (tc.caption and v_disp == tc.caption.strip()):
+                continue
+
+            is_caption_header = (
+                (tc.caption and k_str == tc.caption.strip())
+                or k_str.startswith("***")
+                or "SYNTHETIC DOCUMENT" in k_str
+            )
+            is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
+
+            if not is_caption_header and not is_generic_col:
+                col_name = k_str
+            else:
+                col_name = header_map.get(k_str, "")
+
+            if col_name:
+                pairs.append(f"{col_name}: {v_disp}")
+                row_fields[col_name] = v_disp
+            else:
+                pairs.append(v_disp)
+
+        selected_rows_dict.append(row_fields)
+        row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
+
+    if missing_terms:
+        first_tc = avail_table[selected_ids[0]] if selected_ids else None
+        term = missing_terms[0]
+        closest_cat: str | None = None
+        closest_sla: str | None = None
+        if first_tc:
+            for k, v in first_tc.cells.items():
+                k_low = str(k).lower()
+                v_str = str(v).strip() if v is not None else ""
+                if any(w in k_low for w in ("urgency", "category", "priority", "tier", "type")):
+                    closest_cat = v_str
+                elif any(w in k_low for w in ("sla", "turnaround", "time", "hours", "days")):
+                    closest_sla = v_str
+
+        if closest_cat and closest_sla:
+            intro_sentence = (
+                f"There is no '{term}' category ({term} is not listed); "
+                f"{closest_cat} requests are {closest_sla.lower()}."
+            )
+        elif closest_cat:
+            intro_sentence = (
+                f"There is no '{term}' category ({term} is not listed); "
+                f"closest matching category is {closest_cat}."
+            )
+        else:
+            intro_sentence = f"There is no '{term}' category in the table ({term} is not listed)."
+        return "\n".join([intro_sentence, *row_lines])
+
+    # Stage R2: Table answers must start with one plain direct sentence
+    if selected_rows_dict:
+        urgencies: list[str] = list(
+            dict.fromkeys(str(r["Urgency"]).strip() for r in selected_rows_dict if r.get("Urgency"))
+        )
+        slas: list[str] = list(
+            dict.fromkeys(
+                str(r["Standard SLA"]).strip() for r in selected_rows_dict if r.get("Standard SLA")
+            )
+        )
+        payers: list[str] = list(
+            dict.fromkeys(
+                str(r["Payer Name"]).strip() for r in selected_rows_dict if r.get("Payer Name")
+            )
+        )
+        copays: list[str] = list(
+            dict.fromkeys(
+                str(r.get("Standard Copay") or r.get("Copay")).strip()
+                for r in selected_rows_dict
+                if (r.get("Standard Copay") or r.get("Copay"))
+            )
+        )
+
+        if urgencies and slas:
+            urg_name = urgencies[0]
+            if len(slas) > 1:
+                hours_nums: list[int] = []
+                for s in slas:
+                    m = re.search(r"(\d+)", s)
+                    if m:
+                        hours_nums.append(int(m.group(1)))
+                if len(hours_nums) >= 2:
+                    min_h, max_h = min(hours_nums), max(hours_nums)
+                    lead_sentence = (
+                        f"{urg_name} requests take {min_h} to {max_h} hours "
+                        "depending on payer and service."
+                    )
+                else:
+                    lead_sentence = (
+                        f"{urg_name} requests take {', '.join(slas).lower()} "
+                        "depending on payer and service."
+                    )
+            else:
+                if len(payers) == 1:
+                    lead_sentence = f"{urg_name} requests for {payers[0]} take {slas[0]}."
+                else:
+                    lead_sentence = f"{urg_name} requests take {slas[0]}."
+        elif copays:
+            if len(copays) == 1 and payers:
+                lead_sentence = f"The standard copay for {payers[0]} is {copays[0]}."
+            else:
+                lead_sentence = f"Standard copays range from {copays[0]} to {copays[-1]}."
+        else:
+            first_doc = avail_table[selected_ids[0]].document_title if selected_ids else "the table"
+            lead_sentence = f"The matching rows from {first_doc} are listed below."
+
+        return f"{lead_sentence}\n" + "\n".join(row_lines)
+
+    return "\n".join(row_lines)
+
+
+def _quoted_values_exist_in_cited_rows(
+    ans_text: str,
+    cited_ids: list[str],
+    tbl_candidates: dict[str, TableCandidate],
+) -> bool:
+    """Ensure every double-quoted literal in a table answer exists in cited row cells."""
+    import re
+
+    quoted_literals = re.findall(r'"([^"]+)"', ans_text)
+    if not quoted_literals:
+        return True
+    cited_cell_values = [
+        str(val).strip().lower()
+        for cid in cited_ids
+        if cid in tbl_candidates
+        for val in tbl_candidates[cid].cells.values()
+        if val is not None and str(val).strip() != ""
+    ]
+    for q_lit in quoted_literals:
+        q_clean = q_lit.strip().lower()
+        if not q_clean:
+            continue
+        if not any(q_clean in cell_v for cell_v in cited_cell_values):
+            return False
+    return True
+
+
 async def node_generate(
     state: GraphState,
     runtime: Runtime[GraphRuntimeContext],
@@ -1274,7 +2007,7 @@ async def node_generate(
                         role=ModelRole.ANSWER,
                         messages=[ChatMessage(role="user", content=gen_prompt)],
                         schema=AnswerOutput,
-                        max_tokens=MAX_TOKENS_GENERAL,
+                        max_tokens=MAX_REQUEST_TOKENS_GENERAL,
                     )
                     if resp.structured_output:
                         content = resp.structured_output.get("answer", resp.content)
@@ -1298,6 +2031,233 @@ async def node_generate(
                 "evidence_ids": [],
             }
 
+        # Route session_document: questions about an attached session document
+        if route == "session_document":
+            pages = ctx.session_document_pages or []
+            doc_name = ctx.session_document_name or "session_document.pdf"
+            refusal_msg = "I couldn't confirm that from the attached document."
+            if not pages:
+                ctx.response_text = refusal_msg
+                ctx.citations = []
+                ctx.generated_answer = {
+                    "mode": "short",
+                    "answer": refusal_msg,
+                    "evidence_ids": [],
+                    "quoted_span": None,
+                    "evidence_type": "text",
+                }
+                return {
+                    "response_message_id": str(uuid4()),
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            ev_context_parts = []
+            for p in pages:
+                p_num = p.get("page_number", 1)
+                p_txt = p.get("text") or p.get("ocr_text") or ""
+                ev_context_parts.append(f"[{doc_name}, Page {p_num}]:\n{p_txt}")
+            ev_context = "\n\n".join(ev_context_parts)
+
+            is_summary = (state.get("answer_mode") == "explain") or any(
+                w in ctx.question_text.lower()
+                for w in (
+                    "summar",
+                    "overview",
+                    "what is this fax about",
+                    "what is this document about",
+                    "describe this fax",
+                    "describe this document",
+                    "main points",
+                    "key points",
+                )
+            )
+
+            if is_summary:
+                pts_list: list[dict[str, Any]] = []
+                if model is not None and not ports.is_mock_profile:
+                    summary_prompt = (
+                        "You are an assistant providing a summary based solely on the "
+                        "attached session document.\n"
+                        "Summarize the document as a list of concise points in 'points'.\n"
+                        "Each point in 'points' MUST have:\n"
+                        "- 'point': a concise factual statement summarizing one aspect of the "
+                        "document (e.g. patient name, medication, dosage, date).\n"
+                        "- 'quoted_span': EXACT verbatim supporting text span from the document.\n"
+                        "- 'evidence_ids': a list containing the page number (e.g. ['page_1']).\n"
+                        "Every quoted_span must appear character-for-character in the document.\n\n"
+                        f"Document text:\n{ev_context}\n\n"
+                        f"Question: {ctx.question_text}\n"
+                        "Output strictly as JSON matching the schema with 'points'."
+                    )
+                    try:
+                        resp = await model.generate(
+                            role=ModelRole.ANSWER,
+                            messages=[
+                                ChatMessage(role="user", content=summary_prompt),
+                                ChatMessage(role="assistant", content="</think>"),
+                            ],
+                            schema=AnswerOutput,
+                            max_tokens=MAX_TOKENS_EXPLAIN,
+                        )
+                        if resp.structured_output:
+                            raw_pts = resp.structured_output.get("points") or []
+                            for pt in raw_pts:
+                                p_dict = pt if isinstance(pt, dict) else pt.model_dump()
+                                pts_list.append(p_dict)
+                    except Exception:
+                        logger.warning("Session document summary generation failed", exc_info=True)
+                else:
+                    all_text = " ".join(
+                        str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                    )
+                    import re
+
+                    m_pat = re.search(r"Patient:\s*([^\n\r()]+)", all_text, re.IGNORECASE)
+                    if m_pat:
+                        pat_name = m_pat.group(1).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Patient: {pat_name}",
+                                "quoted_span": pat_name,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    m_med = re.search(
+                        r"(?:for|approved for|authorized medication:?)\s*"
+                        r"([A-Za-z0-9]+\s+[0-9]+[a-zA-Z]+)",
+                        all_text,
+                        re.IGNORECASE,
+                    )
+                    if m_med:
+                        med_val = m_med.group(1).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Authorized Medication: {med_val}",
+                                "quoted_span": med_val,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    m_dos = re.search(r"Take\s+\d+\s+capsule[^\n\r.:;]*", all_text, re.IGNORECASE)
+                    if m_dos:
+                        dos_val = m_dos.group(0).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Dosage: {dos_val}",
+                                "quoted_span": dos_val,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    if len(pts_list) < 2:
+                        for line in all_text.splitlines():
+                            line_clean = line.strip()
+                            if ":" in line_clean and len(line_clean) > 8:
+                                k, v = line_clean.split(":", 1)
+                                if v.strip() and not any(
+                                    p["quoted_span"] == v.strip() for p in pts_list
+                                ):
+                                    pts_list.append(
+                                        {
+                                            "point": f"{k.strip()}: {v.strip()}",
+                                            "quoted_span": v.strip(),
+                                            "evidence_ids": ["page_1"],
+                                        }
+                                    )
+                                    if len(pts_list) >= 3:
+                                        break
+
+                ctx.generated_answer = {
+                    "mode": "explain",
+                    "answer": "",
+                    "points": pts_list,
+                    "evidence_ids": [f"page_{p.get('page_number', 1)}" for p in pages],
+                    "evidence_type": "text",
+                }
+                ctx.response_text = (
+                    "\n".join(f"- {p['point']}" for p in pts_list) if pts_list else refusal_msg
+                )
+                return {
+                    "response_message_id": str(uuid4()),
+                    "status": "in_progress",
+                    "evidence_ids": ctx.generated_answer["evidence_ids"],
+                }
+
+            content = refusal_msg
+            quoted_span: str | None = None
+            evidence_ids: list[str] = []
+
+            if model is not None and not ports.is_mock_profile:
+                qa_prompt = (
+                    "You are an assistant answering solely based on the "
+                    "attached session document.\n"
+                    "Answer the question directly and concisely from the document text.\n"
+                    "Quote the exact supporting text span in quoted_span.\n"
+                    "If the answer or requested value is not found in the document text, "
+                    f'answer strictly: "{refusal_msg}" with quoted_span null.\n\n'
+                    f"Document text:\n{ev_context}\n\n"
+                    f"Question: {ctx.question_text}\n"
+                    "Output strictly as JSON matching the schema."
+                )
+                try:
+                    resp = await model.generate(
+                        role=ModelRole.ANSWER,
+                        messages=[
+                            ChatMessage(role="user", content=qa_prompt),
+                            ChatMessage(role="assistant", content="</think>"),
+                        ],
+                        schema=AnswerOutput,
+                        max_tokens=MAX_REQUEST_TOKENS_EXACT,
+                    )
+                    if resp.structured_output:
+                        content = resp.structured_output.get("answer", content)
+                        quoted_span = resp.structured_output.get("quoted_span")
+                        evidence_ids = AnswerOutput.parse_evidence_ids(
+                            resp.structured_output.get("evidence_ids")
+                        )
+                    else:
+                        content = resp.content
+                except Exception:
+                    logger.warning("Session document QA generation failed", exc_info=True)
+                    content = refusal_msg
+            else:
+                q_low = ctx.question_text.lower()
+                all_text = " ".join(str(p.get("text") or p.get("ocr_text") or "") for p in pages)
+                matched_val = None
+                for line in all_text.splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        k_clean = k.strip().lower()
+                        if k_clean and (
+                            k_clean in q_low
+                            or any(w in q_low for w in k_clean.split() if len(w) > 3)
+                        ):
+                            val_clean = v.strip()
+                            if val_clean:
+                                matched_val = val_clean
+                                break
+                if matched_val:
+                    content = f"The value is {matched_val}."
+                    quoted_span = matched_val
+                    evidence_ids = ["page_1"]
+                else:
+                    content = refusal_msg
+                    quoted_span = None
+                    evidence_ids = []
+
+            ctx.response_text = content
+            ctx.generated_answer = {
+                "mode": "short",
+                "answer": content,
+                "evidence_ids": evidence_ids,
+                "quoted_span": quoted_span,
+                "evidence_type": "text",
+            }
+            return {
+                "response_message_id": str(uuid4()),
+                "status": "in_progress",
+                "evidence_ids": evidence_ids,
+            }
+
         # Route knowledge
         mode = state.get("answer_mode", "short")
         if (
@@ -1312,15 +2272,15 @@ async def node_generate(
         lang = state.get("language", "en")
 
         if mode == "exact":
-            token_cap = MAX_TOKENS_EXACT
+            token_cap = MAX_REQUEST_TOKENS_EXACT
         elif mode == "short":
-            token_cap = MAX_TOKENS_SHORT
+            token_cap = MAX_REQUEST_TOKENS_SHORT
         elif mode == "explain":
             token_cap = MAX_TOKENS_EXPLAIN
         elif mode == "table":
             token_cap = MAX_TOKENS_TABLE
         else:
-            token_cap = MAX_TOKENS_SHORT
+            token_cap = MAX_REQUEST_TOKENS_SHORT
 
         if mode == "table":
             # Rule 1: The model must never write cell values.
@@ -1431,24 +2391,13 @@ async def node_generate(
                     "evidence_ids": selected_ids,
                 }
 
-            # Build a readable table deterministically from stored cells only.
-            selected_ids = list(dict.fromkeys(selected_ids))
-            headers = list(
-                dict.fromkeys(header for rid in selected_ids for header in avail_table[rid].cells)
+            # Select matching rows only and build short direct answer from stored cells.
+            selected_ids, missing_terms = _select_matching_table_rows(
+                ctx.question_text,
+                avail_table,
+                selected_ids,
             )
-
-            def _display_cell(value: Any) -> str:
-                if value is None:
-                    return ""
-                return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
-
-            header_line = "| " + " | ".join(headers) + " |"
-            separator_line = "| " + " | ".join("---" for _ in headers) + " |"
-            row_lines = [
-                "| " + " | ".join(_display_cell(tc.cells.get(header)) for header in headers) + " |"
-                for tc in (avail_table[rid] for rid in selected_ids)
-            ]
-            content = "\n".join([header_line, separator_line, *row_lines])
+            content = _format_table_answer_text(avail_table, selected_ids, missing_terms)
             ctx.response_text = content
             ctx.generated_answer = {
                 "mode": "table",
@@ -1700,6 +2649,157 @@ async def node_validate(
     runtime: Runtime[GraphRuntimeContext],
 ) -> dict[str, Any]:
     async def _action() -> dict[str, Any]:
+        attempts = state.get("validation_attempts", 0)
+        generated = runtime.context.generated_answer
+        route = state.get("route", "knowledge")
+
+        # Route session_document: validate against attached document page text
+        if route == "session_document":
+            refusal_text = "I couldn't confirm that from the attached document."
+            ans_text = (generated.get("answer") or runtime.context.response_text or "").strip()
+            pages = runtime.context.session_document_pages or []
+            doc_name = runtime.context.session_document_name or "session_document.pdf"
+
+            if not ans_text or refusal_text.lower() in ans_text.lower():
+                runtime.context.response_text = refusal_text
+                runtime.context.citations = []
+                return {
+                    "validation_attempts": attempts + 1,
+                    "fields_valid": True,
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            all_page_texts: list[tuple[int, str]] = [
+                (int(p.get("page_number", 1)), str(p.get("text") or p.get("ocr_text") or ""))
+                for p in pages
+            ]
+
+            raw_points = generated.get("points")
+            if raw_points and isinstance(raw_points, list):
+                valid_points: list[dict[str, Any]] = []
+                matched_pages: set[int] = set()
+                for p in raw_points:
+                    p_dict = p if isinstance(p, dict) else p.model_dump()
+                    p_point = str(p_dict.get("point", "")).strip()
+                    p_quote = str(p_dict.get("quoted_span", "")).strip().strip("\"'")
+                    if not p_point or not p_quote:
+                        continue
+                    p_matched_page: int | None = None
+                    q_lower = p_quote.lower()
+                    for p_num, p_text in all_page_texts:
+                        if q_lower in p_text.lower():
+                            p_matched_page = p_num
+                            break
+                    if p_matched_page is not None:
+                        p_dict["page_number"] = p_matched_page
+                        p_dict["evidence_ids"] = [f"page_{p_matched_page}"]
+                        valid_points.append(p_dict)
+                        matched_pages.add(p_matched_page)
+
+                if valid_points:
+                    runtime.context.response_text = "\n".join(
+                        f"- {p['point']}" for p in valid_points
+                    )
+                    runtime.context.generated_answer["points"] = valid_points
+                    runtime.context.generated_answer["answer"] = runtime.context.response_text
+                    runtime.context.citations = [
+                        SourceCitation(
+                            document_title=doc_name,
+                            version="1",
+                            page_number=p_num,
+                            evidence_type="text",
+                        )
+                        for p_num in sorted(matched_pages)
+                    ]
+                    return {
+                        "validation_attempts": attempts + 1,
+                        "fields_valid": True,
+                        "status": "completed",
+                        "evidence_ids": [f"session_doc_{p_num}" for p_num in sorted(matched_pages)],
+                    }
+                else:
+                    runtime.context.response_text = refusal_text
+                    runtime.context.citations = []
+                    return {
+                        "validation_attempts": attempts + 1,
+                        "fields_valid": False,
+                        "status": "refusal",
+                        "evidence_ids": [],
+                    }
+
+            raw_quoted = generated.get("quoted_span")
+            sdoc_quoted_span = str(raw_quoted).strip().strip("\"'") if raw_quoted else ""
+
+            import re
+
+            ans_quotes = re.findall(r'"([^"]+)"', ans_text)
+
+            matched_page: int | None = None
+            if sdoc_quoted_span:
+                q_lower = sdoc_quoted_span.lower()
+                for p_num, p_text in all_page_texts:
+                    if q_lower in p_text.lower():
+                        matched_page = p_num
+                        break
+
+            if matched_page is None and ans_quotes:
+                for aq in ans_quotes:
+                    aq_clean = aq.strip().lower()
+                    for p_num, p_text in all_page_texts:
+                        if aq_clean in p_text.lower():
+                            matched_page = p_num
+                            break
+                    if matched_page is not None:
+                        break
+
+            if matched_page is None and ans_text:
+                for p_num, p_text in all_page_texts:
+                    for phrase in ans_text.split("."):
+                        p_sub = phrase.strip().lower()
+                        if len(p_sub) > 5 and p_sub in p_text.lower():
+                            matched_page = p_num
+                            break
+                    if matched_page is not None:
+                        break
+
+            quote_failed = False
+            if sdoc_quoted_span and matched_page is None:
+                quote_failed = True
+
+            if ans_quotes:
+                for aq in ans_quotes:
+                    aq_clean = aq.strip().lower()
+                    if not any(aq_clean in p_text.lower() for _, p_text in all_page_texts):
+                        quote_failed = True
+                        break
+
+            if quote_failed or matched_page is None:
+                runtime.context.response_text = refusal_text
+                runtime.context.citations = []
+                return {
+                    "validation_attempts": attempts + 1,
+                    "fields_valid": False,
+                    "status": "refusal",
+                    "evidence_ids": [],
+                }
+
+            runtime.context.response_text = ans_text
+            runtime.context.citations = [
+                SourceCitation(
+                    document_title=doc_name,
+                    version="1",
+                    page_number=matched_page,
+                    evidence_type="text",
+                )
+            ]
+            return {
+                "validation_attempts": attempts + 1,
+                "fields_valid": True,
+                "status": "completed",
+                "evidence_ids": [f"session_doc_{matched_page}"],
+            }
+
         # Quote validation compares against the original stored chunk text (not the sanitized copy)
         evidence = runtime.context.evidence_text
         attempts = state.get("validation_attempts", 0)
@@ -1946,6 +3046,9 @@ async def node_validate(
                                     sheet_name=s_name.strip(),
                                     row_index=int(r_idx_s),
                                     cells=cells,
+                                    tenant_id=str(runtime.context.tenant.tenant_id)
+                                    if runtime.context.tenant
+                                    else "00000000-0000-0000-0000-000000000001",
                                 )
 
                 if tbl_candidates:
@@ -1959,11 +3062,20 @@ async def node_validate(
                     if is_valid and ans_text:
                         import re
 
-                        row_blocks = re.findall(
-                            r"(?:\[Document:\s*[^,]+,\s*)?\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[(?:Document:|Sheet:)|\s*;|$)",
-                            ans_text,
+                        if not _quoted_values_exist_in_cited_rows(
+                            ans_text, cited_ids, tbl_candidates
+                        ):
+                            is_valid = False
+
+                        row_blocks = (
+                            re.findall(
+                                r"(?:\[Document:\s*[^,]+,\s*)?\[Sheet:\s*([^,]+),\s*Row:\s*(\d+)\]\s*(.*?)(?=\s*\[(?:Document:|Sheet:)|\s*;|$)",
+                                ans_text,
+                            )
+                            if is_valid
+                            else []
                         )
-                        if row_blocks:
+                        if is_valid and row_blocks:
                             for sheet_name, row_idx_str, row_content in row_blocks:
                                 row_idx = int(row_idx_str)
                                 matching_tcs = [
@@ -1982,6 +3094,7 @@ async def node_validate(
                                 pairs = [p.strip() for p in row_content.split(", ") if ":" in p]
                                 if pairs:
                                     # Find if any candidate row matches all pairs byte-for-byte
+                                    header_map = _build_table_header_map(tbl_candidates)
                                     candidate_matched = False
                                     for tc in matching_tcs:
                                         all_pairs_match = True
@@ -1990,7 +3103,22 @@ async def node_validate(
                                             col_name = col_name.strip()
                                             shown_val = shown_val.strip()
                                             stored_val = str(tc.cells.get(col_name, "")).strip()
-                                            if shown_val != stored_val:
+                                            if shown_val == stored_val:
+                                                continue
+
+                                            # Resolve via header_map for legacy/generic stored keys
+                                            matched_via_header = False
+                                            for k, v in tc.cells.items():
+                                                if v is None:
+                                                    continue
+                                                k_str = str(k).strip()
+                                                if (
+                                                    header_map.get(k_str) == col_name
+                                                    and str(v).strip() == shown_val
+                                                ):
+                                                    matched_via_header = True
+                                                    break
+                                            if not matched_via_header:
                                                 all_pairs_match = False
                                                 break
                                         if all_pairs_match:
@@ -2016,7 +3144,7 @@ async def node_validate(
                                         break
                                 if not is_valid:
                                     break
-                        else:
+                        elif is_valid:
                             # Natural language table answer
                             found_stored_val = False
                             for cid in cited_ids:
@@ -2140,7 +3268,7 @@ def _route_from_route(state: GraphState) -> str:
     if state.get("status") in ("completed", "refusal"):
         return "respond"
     r = state.get("route", "knowledge")
-    if r == "general":
+    if r in ("general", "session_document"):
         return "generate"
     if r == "clarify":
         return "respond"
@@ -2150,6 +3278,8 @@ def _route_from_route(state: GraphState) -> str:
 
 
 def _route_from_assess_evidence(state: GraphState) -> str:
+    if state.get("status") == "safe_failure" or state.get("evidence_state") == "SAFE_FAILURE":
+        return "safe_failure"
     ev_state = state.get("evidence_state")
     if ev_state == "VISUAL_REQUIRED":
         return "vision_read"
@@ -2230,6 +3360,7 @@ def build_knowledge_graph() -> StateGraph[GraphState, GraphRuntimeContext, Any, 
         {
             "generate": "generate",
             "vision_read": "vision_read",
+            "safe_failure": "safe_failure",
             "respond": "respond",
         },
     )

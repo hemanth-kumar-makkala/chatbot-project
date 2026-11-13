@@ -25,6 +25,7 @@ class MockRetriever(Retriever):
         canned_titles: list[str] | None = None,
         canned_evidence_text: dict[str, str] | None = None,
     ) -> None:
+        self._canned_evidence_ids_provided = canned_evidence_ids is not None
         if canned_evidence_ids is not None:
             self._canned_evidence_ids = canned_evidence_ids
         else:
@@ -34,12 +35,14 @@ class MockRetriever(Retriever):
                     page_id="page-syn-001",
                     document_version_id="ver-syn-001",
                     evidence_type=EvidenceType.TEXT,
+                    tenant_id="00000000-0000-0000-0000-000000000001",
                 ),
                 EvidenceId(
                     chunk_id="chunk-syn-002",
                     page_id="page-syn-001",
                     document_version_id="ver-syn-001",
                     evidence_type=EvidenceType.TEXT,
+                    tenant_id="00000000-0000-0000-0000-000000000001",
                 ),
             ]
         self._canned_titles = (
@@ -66,8 +69,83 @@ class MockRetriever(Retriever):
         filters: RetrievalFilters | None = None,
     ) -> list[EvidenceId]:
         """Perform tenant-filtered hybrid search returning synthetic evidence IDs."""
-        _ = (tenant_ctx, query, filters)
-        return list(self._canned_evidence_ids)
+        _ = (query, filters)
+        if self._canned_evidence_ids_provided:
+            return [
+                EvidenceId(
+                    chunk_id=e.chunk_id,
+                    page_id=e.page_id,
+                    document_version_id=e.document_version_id,
+                    evidence_type=e.evidence_type,
+                    tenant_id=getattr(e, "tenant_id", None) or str(tenant_ctx.tenant_id),
+                )
+                for e in self._canned_evidence_ids
+            ]
+
+        try:
+            from uuid import UUID
+
+            from sqlalchemy import select
+
+            from app.db.models import Chunk, Document, DocumentVersion
+            from app.db.session import tenant_session
+
+            t_uuid = UUID(str(tenant_ctx.tenant_id))
+            async with tenant_session(tenant_ctx) as session:
+                stmt = (
+                    select(
+                        Chunk.id,
+                        Chunk.page_id,
+                        Chunk.document_version_id,
+                        Chunk.evidence_type,
+                        Chunk.text,
+                    )
+                    .join(
+                        DocumentVersion,
+                        (DocumentVersion.id == Chunk.document_version_id)
+                        & (DocumentVersion.tenant_id == Chunk.tenant_id),
+                    )
+                    .join(
+                        Document,
+                        (Document.id == DocumentVersion.document_id)
+                        & (Document.tenant_id == DocumentVersion.tenant_id),
+                    )
+                    .where(
+                        Chunk.tenant_id == t_uuid,
+                        Chunk.is_active.is_(True),
+                        Document.is_retired.is_(False),
+                    )
+                    .limit(5)
+                )
+                rows = list((await session.execute(stmt)).all())
+                if rows:
+                    for r in rows:
+                        self._canned_evidence_text[str(r.id)] = r.text
+                    return [
+                        EvidenceId(
+                            chunk_id=str(r.id),
+                            page_id=str(r.page_id),
+                            document_version_id=str(r.document_version_id),
+                            evidence_type=EvidenceType(r.evidence_type)
+                            if hasattr(EvidenceType, str(r.evidence_type))
+                            else EvidenceType.TEXT,
+                            tenant_id=str(tenant_ctx.tenant_id),
+                        )
+                        for r in rows
+                    ]
+        except Exception:
+            pass
+
+        return [
+            EvidenceId(
+                chunk_id=e.chunk_id,
+                page_id=e.page_id,
+                document_version_id=e.document_version_id,
+                evidence_type=e.evidence_type,
+                tenant_id=str(tenant_ctx.tenant_id),
+            )
+            for e in self._canned_evidence_ids
+        ]
 
     async def search_titles(
         self,
@@ -85,11 +163,38 @@ class MockRetriever(Retriever):
         evidence_ids: list[str],
     ) -> dict[str, str]:
         """Return deterministic grounded evidence texts for requested IDs."""
-        _ = tenant_ctx
-        return {
-            eid: self._canned_evidence_text.get(eid, f"Mock synthetic text for {eid}")
-            for eid in evidence_ids
-        }
+        result: dict[str, str] = {}
+        missing: list[str] = []
+        for eid in evidence_ids:
+            if eid in self._canned_evidence_text:
+                result[eid] = self._canned_evidence_text[eid]
+            else:
+                missing.append(eid)
+        if missing:
+            try:
+                from uuid import UUID
+
+                from sqlalchemy import select
+
+                from app.db.models import Chunk
+                from app.db.session import tenant_session
+
+                t_uuid = UUID(str(tenant_ctx.tenant_id))
+                chunk_uuids = [UUID(m) for m in missing]
+                async with tenant_session(tenant_ctx) as session:
+                    stmt = select(Chunk.id, Chunk.text).where(
+                        Chunk.tenant_id == t_uuid,
+                        Chunk.id.in_(chunk_uuids),
+                    )
+                    db_rows = list((await session.execute(stmt)).all())
+                    for r in db_rows:
+                        result[str(r.id)] = r.text
+            except Exception:
+                pass
+            for m in missing:
+                if m not in result:
+                    result[m] = f"Mock synthetic text for {m}"
+        return result
 
     async def search_tables(
         self,
@@ -111,6 +216,7 @@ class MockRetriever(Retriever):
                     "Status": "In-Network",
                     "Copay": "$25",
                 },
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
             TableCandidate(
                 id="mock-table-row-2",
@@ -123,6 +229,7 @@ class MockRetriever(Retriever):
                     "Status": "In-Network",
                     "Copay": "$20",
                 },
+                tenant_id=str(tenant_ctx.tenant_id),
             ),
         ][:limit]
 

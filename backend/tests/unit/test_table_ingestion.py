@@ -279,6 +279,71 @@ async def test_xlsx_header_detection_skips_synthetic_banner_row() -> None:
 
     assert result.sheets[0].headers == ["Payer Name", "Service Category", "Urgency", "Standard SLA"]
     assert result.sheets[0].rows[0]["cells"]["Standard SLA"] == "48 Hours"
+    assert (
+        result.sheets[0].caption
+        == "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    )
+
+
+@pytest.mark.asyncio
+async def test_skips_leading_sparse_rows_under_half_columns_and_stores_caption_pa_fixture() -> None:
+    """Fix 2: Skip sparse leading rows (< half cols), store caption, match pa_turnaround_times."""
+    # Scenario A: Exact pa_turnaround_times.xlsx layout (row 1 title, row 2 headers)
+    pa_xlsx = _create_sample_xlsx(
+        {
+            "Sheet1": [
+                ["*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"],
+                ["Payer Name", "Service Category", "Urgency", "Standard SLA", "Liaison Contact"],
+                ["Apex Health Insurance", "Diagnostic Imaging", "Routine", "48 Hours", "555-0120"],
+                ["Apex Health Insurance", "Inpatient Surgery", "Expedited", "24 Hours", "555-0120"],
+            ]
+        }
+    )
+    res_pa = await BuiltinTableExtractor().extract_tables(
+        pa_xlsx, "pa_turnaround_times.xlsx", XLSX_MIME
+    )
+    pa_sheet = res_pa.sheets[0]
+    assert pa_sheet.headers == [
+        "Payer Name",
+        "Service Category",
+        "Urgency",
+        "Standard SLA",
+        "Liaison Contact",
+    ]
+    assert all(not h.startswith("Column_") for h in pa_sheet.headers)
+    assert (
+        pa_sheet.caption == "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    )
+    assert len(pa_sheet.rows) == 2
+
+    # Scenario B: Multiple sparse leading banner rows (< half of 5 columns filled: 1/5 and 2/5)
+    multi_banner_xlsx = _create_sample_xlsx(
+        {
+            "Turnaround": [
+                ["Prior Authorization Turnaround Times", None, None, None, None],
+                ["Clinic Schedule", "Effective Q4 2026", None, None, None],
+                ["Payer Name", "Service Category", "Urgency", "Standard SLA", "Liaison Contact"],
+                ["Crestview Health", "Specialty Medication", "Expedited", "24 Hours", "555-0122"],
+            ]
+        }
+    )
+    res_multi = await BuiltinTableExtractor().extract_tables(
+        multi_banner_xlsx, "pa_multi.xlsx", XLSX_MIME
+    )
+    multi_sheet = res_multi.sheets[0]
+    assert multi_sheet.headers == [
+        "Payer Name",
+        "Service Category",
+        "Urgency",
+        "Standard SLA",
+        "Liaison Contact",
+    ]
+    assert (
+        multi_sheet.caption
+        == "Prior Authorization Turnaround Times | Clinic Schedule Effective Q4 2026"
+    )
+    assert len(multi_sheet.rows) == 1
+    assert multi_sheet.rows[0]["cells"]["Urgency"] == "Expedited"
 
 
 @pytest.mark.asyncio

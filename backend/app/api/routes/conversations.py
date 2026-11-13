@@ -27,13 +27,14 @@ from app.core.ingestion.validation import validate_file
 from app.db.models import Conversation, ExtractionResult, Message, SessionDocument, Tenant
 from app.db.session import tenant_session, unscoped_session
 from app.ports.auth import AuthProvider
-from app.ports.errors import FileValidationError, MalwareDetectedError
-from app.ports.types import SessionContext, TenantContext, UserRole
+from app.ports.errors import AuthorizationError, FileValidationError, MalwareDetectedError
+from app.ports.types import SessionContext, TenantContext
 from app.wiring import (
     create_document_parser,
     create_image_processor,
     create_malware_scanner,
     create_model_provider,
+    load_and_validate_profile_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -294,7 +295,18 @@ class SessionDocumentUploadResponse(BaseModel):
     conversation_id: str
     file_name: str
     page_count: int
-    status: str
+    status: str = "uploaded"
+    retention_hours: int = 24
+    extracted_fields: list[dict[str, Any]] = []
+    page_image_url: str
+
+
+class SessionDocumentExtractionResponse(BaseModel):
+    session_document_id: str
+    conversation_id: str
+    file_name: str
+    page_count: int
+    status: str = "extracted"
     extracted_fields: list[dict[str, Any]]
     page_image_url: str
 
@@ -304,9 +316,12 @@ async def extract_fields_from_document_file(
     file_name: str,
     page_number: int = 1,
     profile: str = "mock",
-    chat_model: str = "qwen3-vl:4b",
-    vision_model: str = "qwen3-vl:4b",
+    chat_model: str | None = None,
+    vision_model: str | None = None,
     tenant_ctx: TenantContext | None = None,
+    *,
+    gemini_base_url: str | None = None,
+    gemini_api_key: str | None = None,
 ) -> list[ExtractedField]:
     """Run the real extraction subgraph using configured OCR and vision providers.
 
@@ -314,40 +329,50 @@ async def extract_fields_from_document_file(
     never through filename matching.
     Invariant 6: UNREADABLE fields receive state=UNREADABLE, value=None.
     """
+    if tenant_ctx is None or not tenant_ctx.tenant_id:
+        raise AuthorizationError(
+            "Tenant context is required for document extraction",
+            error_code="TENANT_CONTEXT_REQUIRED",
+        )
+
     raw_bytes = file_path.read_bytes()
+
+    profile_models = load_and_validate_profile_models(profile)
+    caps_map = profile_models["_capabilities_map"]
+    answer_cfg = profile_models["answer"]
+    extract_cfg = profile_models["extract"]
+    resolved_chat_model = chat_model or f"{answer_cfg['provider']}:{answer_cfg['model']}"
+    resolved_vision_model = vision_model or f"{extract_cfg['provider']}:{extract_cfg['model']}"
 
     doc_parser = create_document_parser(profile)
     model_provider = create_model_provider(
         profile,
-        chat_model=chat_model,
-        vision_model=vision_model,
+        chat_model=chat_model or None,
+        vision_model=vision_model or None,
+        gemini_base_url=gemini_base_url,
+        gemini_api_key=gemini_api_key,
     )
     image_processor = create_image_processor(profile)
 
     ports = GraphPorts(
+        capabilities_map=caps_map,
         model_provider=model_provider,
         document_parser=doc_parser,
         image_processor=image_processor,
-        chat_model=chat_model,
-        vision_model=vision_model,
+        chat_model=resolved_chat_model,
+        vision_model=resolved_vision_model,
         is_mock_profile=(profile == "mock"),
     )
 
     runtime_ctx = GraphRuntimeContext(
         ports=ports,
-        tenant=tenant_ctx
-        or TenantContext(
-            tenant_id="00000000-0000-0000-0000-000000000001",
-            user_id="user-session-upload",
-            role=UserRole.STAFF,
-            session_id="session-upload",
-        ),
+        tenant=tenant_ctx,
         evidence_text={
             "document_title": file_name,
             "page_number": str(page_number),
         },
         raw_document_bytes=raw_bytes,
-        chat_model=chat_model,
+        chat_model=resolved_chat_model,
     )
 
     state: GraphState = {
@@ -564,30 +589,6 @@ async def upload_session_document(
         db_session.add(session_doc)
         await db_session.flush()
 
-    # Execute extraction subgraph
-    chat_model_name = getattr(settings, "chat_model", "qwen3-vl:4b")
-    vision_model_name = getattr(settings, "vision_model", "qwen3-vl:4b")
-    fields = await extract_fields_from_document_file(
-        file_path=saved_file_path,
-        file_name=filename,
-        page_number=1,
-        profile=profile,
-        chat_model=chat_model_name,
-        vision_model=vision_model_name,
-        tenant_ctx=found_tenant_ctx,
-    )
-
-    # Persist ExtractionResult
-    async with tenant_session(found_tenant_ctx) as db_session:
-        ext_result = ExtractionResult(
-            tenant_id=UUID(found_tenant_ctx.tenant_id),
-            session_document_id=doc_id,
-            schema_name="fax_intake",
-            fields_data={"fields": [f.to_dict() for f in fields]},
-        )
-        db_session.add(ext_result)
-        await db_session.flush()
-
     asst_param = assistant_id or str(conv.assistant_id)
     page_img_url = (
         f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_id}/pages/1/image"
@@ -597,6 +598,157 @@ async def upload_session_document(
         session_document_id=str(doc_id),
         conversation_id=str(conv_uuid),
         file_name=filename,
+        page_count=page_count,
+        status="uploaded",
+        retention_hours=retention_hours,
+        extracted_fields=[],
+        page_image_url=page_img_url,
+    )
+
+
+@router.post(
+    "/assistants/{assistant_id}/conversations/{conversation_id}/documents/{document_id}/extract",
+    response_model=SessionDocumentExtractionResponse,
+)
+@router.post(
+    "/conversations/{conversation_id}/documents/{document_id}/extract",
+    response_model=SessionDocumentExtractionResponse,
+)
+async def extract_session_document_fields(
+    conversation_id: str,
+    document_id: str,
+    session: Annotated[SessionContext, Depends(get_current_session)],
+    auth_provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+    assistant_id: str | None = None,
+    _csrf: Annotated[None, Depends(validate_csrf)] = None,
+) -> SessionDocumentExtractionResponse:
+    """Execute extraction subgraph on an uploaded session document on demand."""
+    try:
+        conv_uuid = UUID(conversation_id)
+        doc_uuid = UUID(document_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND") from None
+
+    # Derive tenant context
+    found_tenant_ctx: TenantContext | None = None
+    if assistant_id:
+        found_tenant_ctx = await get_tenant_context_for_assistant(
+            assistant_id=assistant_id,
+            session=session,
+            auth_provider=auth_provider,
+        )
+    else:
+        async with unscoped_session() as db_session:
+            tenant_ids = (await db_session.execute(select(Tenant.id))).scalars().all()
+
+        for tid in tenant_ids:
+            roles = await auth_provider.roles(user_id=session.user_id, tenant_id=str(tid))
+            if not roles:
+                continue
+            cand_ctx = TenantContext(
+                tenant_id=str(tid),
+                user_id=session.user_id,
+                role=roles[0],
+                session_id=session.session_id,
+            )
+            async with tenant_session(cand_ctx) as t_sess:
+                c_exists = (
+                    await t_sess.execute(
+                        select(Conversation.id).where(Conversation.id == conv_uuid)
+                    )
+                ).scalar_one_or_none()
+                if c_exists:
+                    found_tenant_ctx = cand_ctx
+                    break
+
+    if not found_tenant_ctx:
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+
+    async with tenant_session(found_tenant_ctx) as db_session:
+        sdoc = (
+            await db_session.execute(
+                select(SessionDocument).where(
+                    SessionDocument.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    SessionDocument.conversation_id == conv_uuid,
+                    SessionDocument.id == doc_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+        if not sdoc:
+            raise HTTPException(status_code=404, detail="DOCUMENT_NOT_FOUND")
+
+        # Check if already extracted
+        existing_ext = (
+            await db_session.execute(
+                select(ExtractionResult).where(
+                    ExtractionResult.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    ExtractionResult.session_document_id == doc_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+
+        saved_file_path = Path(sdoc.file_path)
+        file_name = sdoc.file_name
+        page_count = sdoc.page_count
+
+    asst_param = assistant_id or "default"
+    page_img_url = (
+        f"/v1/assistants/{asst_param}/conversations/{conv_uuid}/documents/{doc_uuid}/pages/1/image"
+    )
+
+    if existing_ext is not None:
+        raw_fields = existing_ext.fields_data.get("fields", [])
+        return SessionDocumentExtractionResponse(
+            session_document_id=str(doc_uuid),
+            conversation_id=str(conv_uuid),
+            file_name=file_name,
+            page_count=page_count,
+            status="extracted",
+            extracted_fields=raw_fields,
+            page_image_url=page_img_url,
+        )
+
+    profile = getattr(settings, "profile", "mock")
+    chat_model_name = settings.chat_model or None
+    vision_model_name = settings.vision_model or None
+    fields = await extract_fields_from_document_file(
+        file_path=saved_file_path,
+        file_name=file_name,
+        page_number=1,
+        profile=profile,
+        chat_model=chat_model_name,
+        vision_model=vision_model_name,
+        tenant_ctx=found_tenant_ctx,
+        gemini_base_url=settings.gemini_base_url,
+        gemini_api_key=(
+            settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+        ),
+    )
+
+    async with tenant_session(found_tenant_ctx) as db_session:
+        ext_result = ExtractionResult(
+            tenant_id=UUID(found_tenant_ctx.tenant_id),
+            session_document_id=doc_uuid,
+            schema_name="fax_intake",
+            fields_data={"fields": [f.to_dict() for f in fields]},
+        )
+        db_session.add(ext_result)
+        sdoc_to_update = (
+            await db_session.execute(
+                select(SessionDocument).where(
+                    SessionDocument.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    SessionDocument.id == doc_uuid,
+                )
+            )
+        ).scalar_one()
+        sdoc_to_update.status = "extracted"
+        await db_session.flush()
+
+    return SessionDocumentExtractionResponse(
+        session_document_id=str(doc_uuid),
+        conversation_id=str(conv_uuid),
+        file_name=file_name,
         page_count=page_count,
         status="extracted",
         extracted_fields=[f.to_dict() for f in fields],
