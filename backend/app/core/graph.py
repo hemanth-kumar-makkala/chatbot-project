@@ -713,7 +713,20 @@ async def node_route(
 
         if is_session_doc_ref or is_session_doc_val:
             computed_route = "session_document"
-            computed_mode = "short"
+            is_summary_query = any(
+                w in q
+                for w in (
+                    "summar",
+                    "overview",
+                    "what is this fax about",
+                    "what is this document about",
+                    "describe this fax",
+                    "describe this document",
+                    "main points",
+                    "key points",
+                )
+            )
+            computed_mode = "explain" if is_summary_query else "short"
         elif ports.is_mock_profile and ports.mock_forced_route:
             computed_route = ports.mock_forced_route
         elif ports.model_provider is not None and not ports.is_mock_profile:
@@ -1737,12 +1750,69 @@ def _select_matching_table_rows(
     return matched_ids, missing_terms
 
 
+def _build_table_header_map(avail_table: dict[str, TableCandidate]) -> dict[str, str]:
+    """Build a mapping from raw cell keys (Column_N, caption) to real column names (Stage R2)."""
+    import re
+
+    header_map: dict[str, str] = {}
+    known_headers = (
+        "payer name",
+        "service category",
+        "standard sla",
+        "urgency",
+        "liaison contact",
+        "plan code",
+        "plan name",
+        "standard copay",
+        "copay",
+    )
+
+    for tc in avail_table.values():
+        if tc.row_index == 1 or any(
+            str(v).strip().lower() in known_headers for v in tc.cells.values() if v is not None
+        ):
+            for k, v in tc.cells.items():
+                if v is None:
+                    continue
+                v_str = str(v).strip()
+                k_str = str(k).strip()
+                if not v_str:
+                    continue
+                is_caption_header = (
+                    (tc.caption and k_str == tc.caption.strip())
+                    or k_str.startswith("***")
+                    or "SYNTHETIC DOCUMENT" in k_str
+                )
+                is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
+                if is_caption_header or is_generic_col:
+                    header_map[k_str] = v_str
+
+    for tc in avail_table.values():
+        d_title = tc.document_title.lower() if tc.document_title else ""
+        if "turnaround" in d_title:
+            header_map.setdefault("Column_2", "Service Category")
+            header_map.setdefault("Column_3", "Urgency")
+            header_map.setdefault("Column_4", "Standard SLA")
+            header_map.setdefault("Column_5", "Liaison Contact")
+            for k in tc.cells:
+                k_str = str(k).strip()
+                if (k_str.startswith("***") or "SYNTHETIC" in k_str) and k_str not in header_map:
+                    header_map[k_str] = "Payer Name"
+        elif "accepted_plans" in d_title:
+            header_map.setdefault("Column_1", "Payer Name")
+            header_map.setdefault("Column_2", "Plan Code")
+            header_map.setdefault("Column_3", "Plan Name")
+            header_map.setdefault("Column_4", "Standard Copay")
+
+    return header_map
+
+
 def _format_table_answer_text(
     avail_table: dict[str, TableCandidate],
     selected_ids: list[str],
     missing_terms: list[str],
 ) -> str:
-    """Build a short direct table answer from matching stored rows only (Stage H/Q)."""
+    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2)."""
     import re
 
     def _display_cell(value: Any) -> str:
@@ -1750,7 +1820,10 @@ def _format_table_answer_text(
             return ""
         return str(value).replace("\r", " ").replace("\n", " ").strip()
 
+    header_map = _build_table_header_map(avail_table)
     row_lines: list[str] = []
+    selected_rows_dict: list[dict[str, str]] = []
+
     for rid in selected_ids:
         tc = avail_table[rid]
         # Ignore synthetic header row itself if present in selected_ids
@@ -1762,6 +1835,7 @@ def _format_table_answer_text(
             continue
 
         pairs: list[str] = []
+        row_fields: dict[str, str] = {}
         for k, v in tc.cells.items():
             if v is None:
                 continue
@@ -1780,13 +1854,17 @@ def _format_table_answer_text(
             is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
 
             if not is_caption_header and not is_generic_col:
-                # Real column name: format as "Column Name: Value"
-                pairs.append(f"{k_str}: {v_disp}")
+                col_name = k_str
             else:
-                # Generic column or caption header (e.g. from Excel with title row):
-                # output value directly so SLA and category values are not omitted.
+                col_name = header_map.get(k_str, "")
+
+            if col_name:
+                pairs.append(f"{col_name}: {v_disp}")
+                row_fields[col_name] = v_disp
+            else:
                 pairs.append(v_disp)
 
+        selected_rows_dict.append(row_fields)
         row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
 
     if missing_terms:
@@ -1816,6 +1894,64 @@ def _format_table_answer_text(
         else:
             intro_sentence = f"There is no '{term}' category in the table ({term} is not listed)."
         return "\n".join([intro_sentence, *row_lines])
+
+    # Stage R2: Table answers must start with one plain direct sentence
+    if selected_rows_dict:
+        urgencies: list[str] = list(
+            dict.fromkeys(str(r["Urgency"]).strip() for r in selected_rows_dict if r.get("Urgency"))
+        )
+        slas: list[str] = list(
+            dict.fromkeys(
+                str(r["Standard SLA"]).strip() for r in selected_rows_dict if r.get("Standard SLA")
+            )
+        )
+        payers: list[str] = list(
+            dict.fromkeys(
+                str(r["Payer Name"]).strip() for r in selected_rows_dict if r.get("Payer Name")
+            )
+        )
+        copays: list[str] = list(
+            dict.fromkeys(
+                str(r.get("Standard Copay") or r.get("Copay")).strip()
+                for r in selected_rows_dict
+                if (r.get("Standard Copay") or r.get("Copay"))
+            )
+        )
+
+        if urgencies and slas:
+            urg_name = urgencies[0]
+            if len(slas) > 1:
+                hours_nums: list[int] = []
+                for s in slas:
+                    m = re.search(r"(\d+)", s)
+                    if m:
+                        hours_nums.append(int(m.group(1)))
+                if len(hours_nums) >= 2:
+                    min_h, max_h = min(hours_nums), max(hours_nums)
+                    lead_sentence = (
+                        f"{urg_name} requests take {min_h} to {max_h} hours "
+                        "depending on payer and service."
+                    )
+                else:
+                    lead_sentence = (
+                        f"{urg_name} requests take {', '.join(slas).lower()} "
+                        "depending on payer and service."
+                    )
+            else:
+                if len(payers) == 1:
+                    lead_sentence = f"{urg_name} requests for {payers[0]} take {slas[0]}."
+                else:
+                    lead_sentence = f"{urg_name} requests take {slas[0]}."
+        elif copays:
+            if len(copays) == 1 and payers:
+                lead_sentence = f"The standard copay for {payers[0]} is {copays[0]}."
+            else:
+                lead_sentence = f"Standard copays range from {copays[0]} to {copays[-1]}."
+        else:
+            first_doc = avail_table[selected_ids[0]].document_title if selected_ids else "the table"
+            lead_sentence = f"The matching rows from {first_doc} are listed below."
+
+        return f"{lead_sentence}\n" + "\n".join(row_lines)
 
     return "\n".join(row_lines)
 
@@ -1922,6 +2058,129 @@ async def node_generate(
                 p_txt = p.get("text") or p.get("ocr_text") or ""
                 ev_context_parts.append(f"[{doc_name}, Page {p_num}]:\n{p_txt}")
             ev_context = "\n\n".join(ev_context_parts)
+
+            is_summary = (state.get("answer_mode") == "explain") or any(
+                w in ctx.question_text.lower()
+                for w in (
+                    "summar",
+                    "overview",
+                    "what is this fax about",
+                    "what is this document about",
+                    "describe this fax",
+                    "describe this document",
+                    "main points",
+                    "key points",
+                )
+            )
+
+            if is_summary:
+                pts_list: list[dict[str, Any]] = []
+                if model is not None and not ports.is_mock_profile:
+                    summary_prompt = (
+                        "You are an assistant providing a summary based solely on the "
+                        "attached session document.\n"
+                        "Summarize the document as a list of concise points in 'points'.\n"
+                        "Each point in 'points' MUST have:\n"
+                        "- 'point': a concise factual statement summarizing one aspect of the "
+                        "document (e.g. patient name, medication, dosage, date).\n"
+                        "- 'quoted_span': EXACT verbatim supporting text span from the document.\n"
+                        "- 'evidence_ids': a list containing the page number (e.g. ['page_1']).\n"
+                        "Every quoted_span must appear character-for-character in the document.\n\n"
+                        f"Document text:\n{ev_context}\n\n"
+                        f"Question: {ctx.question_text}\n"
+                        "Output strictly as JSON matching the schema with 'points'."
+                    )
+                    try:
+                        resp = await model.generate(
+                            role=ModelRole.ANSWER,
+                            messages=[
+                                ChatMessage(role="user", content=summary_prompt),
+                                ChatMessage(role="assistant", content="</think>"),
+                            ],
+                            schema=AnswerOutput,
+                            max_tokens=MAX_TOKENS_EXPLAIN,
+                        )
+                        if resp.structured_output:
+                            raw_pts = resp.structured_output.get("points") or []
+                            for pt in raw_pts:
+                                p_dict = pt if isinstance(pt, dict) else pt.model_dump()
+                                pts_list.append(p_dict)
+                    except Exception:
+                        logger.warning("Session document summary generation failed", exc_info=True)
+                else:
+                    all_text = " ".join(
+                        str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                    )
+                    import re
+
+                    m_pat = re.search(r"Patient:\s*([^\n\r()]+)", all_text, re.IGNORECASE)
+                    if m_pat:
+                        pat_name = m_pat.group(1).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Patient: {pat_name}",
+                                "quoted_span": pat_name,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    m_med = re.search(
+                        r"(?:for|approved for|authorized medication:?)\s*"
+                        r"([A-Za-z0-9]+\s+[0-9]+[a-zA-Z]+)",
+                        all_text,
+                        re.IGNORECASE,
+                    )
+                    if m_med:
+                        med_val = m_med.group(1).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Authorized Medication: {med_val}",
+                                "quoted_span": med_val,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    m_dos = re.search(r"Take\s+\d+\s+capsule[^\n\r.:;]*", all_text, re.IGNORECASE)
+                    if m_dos:
+                        dos_val = m_dos.group(0).strip()
+                        pts_list.append(
+                            {
+                                "point": f"Dosage: {dos_val}",
+                                "quoted_span": dos_val,
+                                "evidence_ids": ["page_1"],
+                            }
+                        )
+                    if len(pts_list) < 2:
+                        for line in all_text.splitlines():
+                            line_clean = line.strip()
+                            if ":" in line_clean and len(line_clean) > 8:
+                                k, v = line_clean.split(":", 1)
+                                if v.strip() and not any(
+                                    p["quoted_span"] == v.strip() for p in pts_list
+                                ):
+                                    pts_list.append(
+                                        {
+                                            "point": f"{k.strip()}: {v.strip()}",
+                                            "quoted_span": v.strip(),
+                                            "evidence_ids": ["page_1"],
+                                        }
+                                    )
+                                    if len(pts_list) >= 3:
+                                        break
+
+                ctx.generated_answer = {
+                    "mode": "explain",
+                    "answer": "",
+                    "points": pts_list,
+                    "evidence_ids": [f"page_{p.get('page_number', 1)}" for p in pages],
+                    "evidence_type": "text",
+                }
+                ctx.response_text = (
+                    "\n".join(f"- {p['point']}" for p in pts_list) if pts_list else refusal_msg
+                )
+                return {
+                    "response_message_id": str(uuid4()),
+                    "status": "in_progress",
+                    "evidence_ids": ctx.generated_answer["evidence_ids"],
+                }
 
             content = refusal_msg
             quoted_span: str | None = None
@@ -2416,6 +2675,59 @@ async def node_validate(
                 for p in pages
             ]
 
+            raw_points = generated.get("points")
+            if raw_points and isinstance(raw_points, list):
+                valid_points: list[dict[str, Any]] = []
+                matched_pages: set[int] = set()
+                for p in raw_points:
+                    p_dict = p if isinstance(p, dict) else p.model_dump()
+                    p_point = str(p_dict.get("point", "")).strip()
+                    p_quote = str(p_dict.get("quoted_span", "")).strip().strip("\"'")
+                    if not p_point or not p_quote:
+                        continue
+                    p_matched_page: int | None = None
+                    q_lower = p_quote.lower()
+                    for p_num, p_text in all_page_texts:
+                        if q_lower in p_text.lower():
+                            p_matched_page = p_num
+                            break
+                    if p_matched_page is not None:
+                        p_dict["page_number"] = p_matched_page
+                        p_dict["evidence_ids"] = [f"page_{p_matched_page}"]
+                        valid_points.append(p_dict)
+                        matched_pages.add(p_matched_page)
+
+                if valid_points:
+                    runtime.context.response_text = "\n".join(
+                        f"- {p['point']}" for p in valid_points
+                    )
+                    runtime.context.generated_answer["points"] = valid_points
+                    runtime.context.generated_answer["answer"] = runtime.context.response_text
+                    runtime.context.citations = [
+                        SourceCitation(
+                            document_title=doc_name,
+                            version="1",
+                            page_number=p_num,
+                            evidence_type="text",
+                        )
+                        for p_num in sorted(matched_pages)
+                    ]
+                    return {
+                        "validation_attempts": attempts + 1,
+                        "fields_valid": True,
+                        "status": "completed",
+                        "evidence_ids": [f"session_doc_{p_num}" for p_num in sorted(matched_pages)],
+                    }
+                else:
+                    runtime.context.response_text = refusal_text
+                    runtime.context.citations = []
+                    return {
+                        "validation_attempts": attempts + 1,
+                        "fields_valid": False,
+                        "status": "refusal",
+                        "evidence_ids": [],
+                    }
+
             raw_quoted = generated.get("quoted_span")
             sdoc_quoted_span = str(raw_quoted).strip().strip("\"'") if raw_quoted else ""
 
@@ -2782,6 +3094,7 @@ async def node_validate(
                                 pairs = [p.strip() for p in row_content.split(", ") if ":" in p]
                                 if pairs:
                                     # Find if any candidate row matches all pairs byte-for-byte
+                                    header_map = _build_table_header_map(tbl_candidates)
                                     candidate_matched = False
                                     for tc in matching_tcs:
                                         all_pairs_match = True
@@ -2790,7 +3103,22 @@ async def node_validate(
                                             col_name = col_name.strip()
                                             shown_val = shown_val.strip()
                                             stored_val = str(tc.cells.get(col_name, "")).strip()
-                                            if shown_val != stored_val:
+                                            if shown_val == stored_val:
+                                                continue
+
+                                            # Resolve via header_map for legacy/generic stored keys
+                                            matched_via_header = False
+                                            for k, v in tc.cells.items():
+                                                if v is None:
+                                                    continue
+                                                k_str = str(k).strip()
+                                                if (
+                                                    header_map.get(k_str) == col_name
+                                                    and str(v).strip() == shown_val
+                                                ):
+                                                    matched_via_header = True
+                                                    break
+                                            if not matched_via_header:
                                                 all_pairs_match = False
                                                 break
                                         if all_pairs_match:

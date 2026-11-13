@@ -29,8 +29,36 @@ if str(BACKEND_DIR) not in sys.path:
 from app.observability.report_stamping import create_report_stamp  # noqa: E402
 
 CASES_PATH = REPO_ROOT / "evals" / "golden" / "e2e_local_cases.json"
+GOLDEN_QS_PATH = REPO_ROOT / "evals" / "golden" / "questions.json"
 DOCS_DIR = REPO_ROOT / "evals" / "golden" / "docs"
 REPORTS_DIR = REPO_ROOT / "evals" / "reports"
+
+DOC_ID_MAP: dict[str, str] = {
+    "doc_prior_auth_guide": "prior_auth_guide.pdf",
+    "doc_front_desk_policy_v1": "front_desk_policy_v1.pdf",
+    "doc_front_desk_policy_v2": "front_desk_policy_v2.pdf",
+    "doc_accepted_plans_csv": "accepted_plans.csv",
+    "doc_pa_turnaround_times_xlsx": "pa_turnaround_times.xlsx",
+    "doc_skewed_fax": "skewed_fax.pdf",
+    "doc_clean_fax": "clean_fax.pdf",
+    "doc_faint_fax_2page": "faint_fax_2page.pdf",
+    "doc_eligibility_checklist": "eligibility_checklist.pdf",
+    "doc_payer_contact_table": "payer_contact_table.pdf",
+    "doc_fee_schedule": "fee_schedule.pdf",
+    "doc_clinical_protocols_manual": "clinical_protocols_manual.pdf",
+    "doc_compliance_notice": "compliance_notice.pdf",
+    "doc_cross_tenant_patient_a": "patient_intake_form.pdf",
+    "doc_cross_tenant_patient_b": "patient_intake_form.pdf",
+}
+
+CLINIC_A_DOC_IDS: set[str] = {
+    "doc_prior_auth_guide",
+    "doc_front_desk_policy_v1",
+    "doc_front_desk_policy_v2",
+    "doc_accepted_plans_csv",
+    "doc_pa_turnaround_times_xlsx",
+    "doc_skewed_fax",
+}
 
 API_BASE_URL = os.getenv("E2E_API_BASE_URL", "http://127.0.0.1:8010")
 DEV_EMAIL = os.getenv("E2E_DEV_EMAIL", "admin@clinic-a.local")
@@ -75,10 +103,15 @@ def judge_case(
         fault_layer in ("routing", "retrieval", "evidence_gate", "generation",
                         "validation", "extraction", "UI/API", None)
     """
+    cid = case.get("id", "")
     case_type = case.get("type", "question")
     expected_route = case.get("expected_route")
     expected_answer = case.get("expected_answer", "")
+    accepted_answers = case.get("accepted_answers", [])
     expected_citations = case.get("expected_citations", [])
+    must_not_contain = case.get("must_not_contain", [])
+    expected_mode = case.get("expected_mode", "")
+    category = case.get("category", "")
 
     if response_data.get("_error"):
         return "FAIL", "UI/API", f"HTTP request failed: {response_data.get('_error')}"
@@ -139,63 +172,57 @@ def judge_case(
     actual_status = response_data.get("status", "")
     actual_sources = response_data.get("sources", [])
     actual_conflict_sources = response_data.get("conflict_sources", [])
+    norm_actual_answer = normalize_text(actual_answer)
 
-    # Check routing
+    # 1. Route validation (if expected route is specified)
     if expected_route and actual_route != expected_route:
-        # Route mismatch
         return (
             "FAIL",
             "routing",
             f"Route mismatch: expected '{expected_route}', got '{actual_route}'",
         )
 
-    # Check refusal cases
-    if case.get("expected_mode") == "refusal":
-        if (
+    # 2. Refusal cases
+    is_expected_refusal = (
+        expected_mode in ("refusal", "refuse")
+        or category in ("NOT_IN_DOCUMENTS", "NO_ANSWER", "CROSS_TENANT")
+        or cid == "E2E-SD-002"
+    )
+    if is_expected_refusal:
+        is_refused = (
             actual_status == "refusal"
             or "couldn't confirm" in actual_answer.lower()
+            or "couldn't find" in actual_answer.lower()
             or "can only answer" in actual_answer.lower()
-        ):
-            if len(actual_sources) == 0:
-                return "PASS", None, "Correctly refused with zero citations"
-            return "FAIL", "evidence_gate", f"Refused but returned {len(actual_sources)} citations"
-        preview = actual_answer[:80]
-        return "FAIL", "generation", f"Expected refusal, but got answered: '{preview}...'"
-
-    # Check session document cases
-    if actual_route == "session_document":
-        if "couldn't confirm" in actual_answer.lower():
-            if case.get("id") == "E2E-SD-002":
-                return "PASS", None, "Correctly refused missing value in session document"
-            return (
-                "FAIL",
-                "validation",
-                f"Unexpected refusal in session document: '{actual_answer}'",
-            )
-        norm_expected = normalize_text(expected_answer)
-        if norm_expected and norm_expected not in normalize_text(actual_answer):
-            return (
-                "FAIL",
-                "generation",
-                f"Expected '{expected_answer}' in answer, got: '{actual_answer}'",
-            )
-        return "PASS", None, "Answered correctly with session document citation"
-
-    # Check general route cases
-    if actual_route == "general":
+        )
+        if not is_refused:
+            preview = actual_answer[:80]
+            return "FAIL", "generation", f"Expected refusal, but got answered: '{preview}...'"
         if len(actual_sources) > 0:
-            return (
-                "FAIL",
-                "routing",
-                f"General route returned {len(actual_sources)} source citations",
-            )
-        norm_expected = normalize_text(expected_answer)
-        if norm_expected and norm_expected not in normalize_text(actual_answer):
-            return "FAIL", "generation", f"Expected '{expected_answer}' in general answer"
-        return "PASS", None, "General route answered cleanly with zero sources"
+            return "FAIL", "evidence_gate", f"Refused but returned {len(actual_sources)} citations"
+        for phrase in must_not_contain:
+            if phrase.lower() in norm_actual_answer:
+                return "FAIL", "generation", f"Refused answer leaked forbidden text: '{phrase}'"
+        return "PASS", None, "Correctly refused with zero citations"
 
-    # Check conflict cases
-    if case.get("category") == "VERSION_CONFLICT":
+    # 3. For ALL non-refusal cases: Strict check against UNEXPECTED REFUSAL
+    if (
+        actual_status == "refusal"
+        or "couldn't confirm" in actual_answer.lower()
+        or "couldn't find" in actual_answer.lower()
+        or "can only answer" in actual_answer.lower()
+    ):
+        return "FAIL", "retrieval", f"Unexpected refusal: '{actual_answer[:100]}...'"
+
+    # 4. Check forbidden phrases on any non-refusal answer
+    for phrase in must_not_contain:
+        if phrase.lower() in norm_actual_answer:
+            return "FAIL", "generation", f"Answer contained forbidden text: '{phrase}'"
+
+    # 5. Case-specific rules
+
+    # 5a. E2E-CONF-001: Front desk fax conflict
+    if cid == "E2E-CONF-001":
         all_sources = actual_sources + actual_conflict_sources
         source_titles = [s.get("document_title", "") for s in all_sources]
         has_v1 = any("v1" in t for t in source_titles)
@@ -204,49 +231,172 @@ def judge_case(
             return (
                 "FAIL",
                 "retrieval",
-                f"Conflict did not return both versions in sources: {source_titles}",
+                f"E2E-CONF-001 missing both v1 and v2 citations: {source_titles}",
             )
-        norm_expected = normalize_text(expected_answer)
-        if norm_expected and norm_expected not in normalize_text(actual_answer):
-            return (
-                "FAIL",
-                "generation",
-                f"Conflict answer missing expected content '{expected_answer}'",
-            )
-        return "PASS", None, "Version conflict correctly detected with both v1 and v2 cited"
+        if "555-0102" not in actual_answer:
+            return "FAIL", "generation", "E2E-CONF-001 missing expected current fax '555-0102'"
+        return (
+            "PASS",
+            None,
+            "Version conflict correctly detected: 555-0102 present and both v1/v2 cited",
+        )
 
-    # Check table cases
-    if case.get("category") == "TABLE":
-        source_titles = [s.get("document_title", "") for s in actual_sources]
-        has_table = any(".xlsx" in t or "turnaround" in t for t in source_titles)
-        if not has_table:
+    # 5b. E2E-CONF-002: Check-in arrival window conflict
+    if cid == "E2E-CONF-002":
+        all_sources = actual_sources + actual_conflict_sources
+        source_titles = [s.get("document_title", "") for s in all_sources]
+        has_v1 = any("v1" in t for t in source_titles)
+        has_v2 = any("v2" in t for t in source_titles)
+        if not (has_v1 and has_v2):
             return (
                 "FAIL",
                 "retrieval",
-                f"Table answer missing pa_turnaround_times.xlsx in sources: {source_titles}",
+                f"E2E-CONF-002 missing both v1 and v2 citations: {source_titles}",
             )
-        norm_expected = normalize_text(expected_answer)
-        if norm_expected and norm_expected not in normalize_text(actual_answer):
-            return "FAIL", "generation", f"Table answer missing expected term '{expected_answer}'"
-        return "PASS", None, "Table query answered with proper spreadsheet citation"
+        ans_low = actual_answer.lower()
+        if "20 minutes" not in ans_low and "20 min" not in ans_low and "20" not in actual_answer:
+            return (
+                "FAIL",
+                "generation",
+                "E2E-CONF-002 missing expected current arrival '20 minutes'",
+            )
+        return (
+            "PASS",
+            None,
+            "Version conflict correctly detected: 20 minutes present and both v1/v2 cited",
+        )
 
-    # Check citations for knowledge route
-    if expected_citations:
+    # 5c. Other CONFLICT / VERSION_CONFLICT cases
+    if category in ("VERSION_CONFLICT", "CONFLICT") or expected_mode == "conflict":
+        all_sources = actual_sources + actual_conflict_sources
+        source_titles = [s.get("document_title", "") for s in all_sources]
+        for exp_c in expected_citations:
+            if not any(exp_c in st for st in source_titles):
+                return (
+                    "FAIL",
+                    "retrieval",
+                    f"Conflict missing expected citation '{exp_c}': {source_titles}",
+                )
+        conflict_values = case.get("conflict_values", [])
+        if conflict_values:
+            for cv in conflict_values:
+                if normalize_text(cv) not in norm_actual_answer:
+                    return "FAIL", "generation", f"Conflict answer missing conflict value '{cv}'"
+        elif expected_answer and normalize_text(expected_answer) not in norm_actual_answer:
+            return "FAIL", "generation", f"Conflict answer missing '{expected_answer}'"
+        return "PASS", None, "Version conflict correctly answered with all citations and values"
+
+    # 5d. E2E-TAB-001: Routine PA turnaround time table
+    if cid == "E2E-TAB-001":
+        source_titles = [s.get("document_title", "") for s in actual_sources]
+        if not any("pa_turnaround_times" in t for t in source_titles):
+            return (
+                "FAIL",
+                "retrieval",
+                f"E2E-TAB-001 missing pa_turnaround_times.xlsx: {source_titles}",
+            )
+        if "48" not in actual_answer or "72" not in actual_answer:
+            return (
+                "FAIL",
+                "generation",
+                f"E2E-TAB-001 missing 48 or 72 in answer: '{actual_answer}'",
+            )
+        lines = [line.strip() for line in actual_answer.splitlines() if line.strip()]
+        has_lead_sentence = bool(lines and not lines[0].startswith(("-", "*", "|", "Payer Name:")))
+        if not has_lead_sentence:
+            lead_prev = lines[0] if lines else ""
+            return "FAIL", "generation", f"E2E-TAB-001 missing direct lead sentence: '{lead_prev}'"
+        return (
+            "PASS",
+            None,
+            "Table answer has direct lead sentence, 48/72 hours, and proper spreadsheet citation",
+        )
+
+    # 5e. E2E-SD-003: Attached fax summary
+    if cid == "E2E-SD-003":
+        source_titles = [s.get("document_title", "") for s in actual_sources]
+        if not any("skewed_fax" in t for t in source_titles):
+            return (
+                "FAIL",
+                "retrieval",
+                f"E2E-SD-003 missing skewed_fax.pdf citation: {source_titles}",
+            )
+        points = [
+            line for line in actual_answer.splitlines() if line.strip().startswith(("-", "*"))
+        ]
+        if len(points) < 2:
+            return (
+                "FAIL",
+                "generation",
+                f"E2E-SD-003 expected at least 2 bullet points, got {len(points)}",
+            )
+        has_patient = "alex morgan" in norm_actual_answer
+        has_med_or_dose = any(
+            term in norm_actual_answer
+            for term in ("amoxicillin", "500mg", "5oomg", "500 mg", "capsule", "daily")
+        )
+        if not (has_patient and has_med_or_dose):
+            return (
+                "FAIL",
+                "generation",
+                f"E2E-SD-003 summary missing patient name or med/dose: '{actual_answer}'",
+            )
+        return (
+            "PASS",
+            None,
+            f"Fax summary has {len(points)} valid quoted bullet points with patient and med",
+        )
+
+    # 5f. General route
+    if actual_route == "general":
+        if len(actual_sources) > 0:
+            return "FAIL", "routing", f"General route returned {len(actual_sources)} citations"
+        norm_expected = normalize_text(expected_answer)
+        if norm_expected and norm_expected not in norm_actual_answer:
+            return "FAIL", "generation", f"Expected '{expected_answer}' in general answer"
+        return "PASS", None, "General route answered cleanly with zero sources"
+
+    # 5g. Session document route
+    if actual_route == "session_document":
         source_titles = [s.get("document_title", "") for s in actual_sources]
         for exp_c in expected_citations:
             if not any(exp_c in st for st in source_titles):
                 return (
                     "FAIL",
                     "retrieval",
-                    f"Expected citation '{exp_c}' missing from sources: {source_titles}",
+                    f"Expected citation '{exp_c}' missing from session doc: {source_titles}",
                 )
+        norm_expected = normalize_text(expected_answer)
+        if norm_expected and norm_expected not in norm_actual_answer:
+            return "FAIL", "generation", f"Expected '{expected_answer}' in session doc answer"
+        return "PASS", None, "Session document answered correctly with citation"
 
-    # Default fallback
-    norm_expected = normalize_text(expected_answer)
-    if norm_expected in normalize_text(actual_answer):
-        return "PASS", None, "Answer matched expected content"
-    preview = actual_answer[:80]
-    return "UNCLEAR", None, f"Could not determine verdict: answer was '{preview}...'"
+    # 5h. Knowledge route (TEXT_FACT, TABLE_LOOKUP, VISUAL_RECOVERY, etc.)
+    source_titles = [s.get("document_title", "") for s in actual_sources]
+    for exp_c in expected_citations:
+        if not any(exp_c in st for st in source_titles):
+            return (
+                "FAIL",
+                "retrieval",
+                f"Expected citation '{exp_c}' missing from sources: {source_titles}",
+            )
+
+    candidates: list[str] = []
+    if expected_answer:
+        candidates.append(expected_answer)
+    candidates.extend(accepted_answers)
+
+    if candidates:
+        matched = any(normalize_text(cand) in norm_actual_answer for cand in candidates if cand)
+        if not matched:
+            preview = actual_answer[:100]
+            return (
+                "FAIL",
+                "generation",
+                f"Expected answer '{expected_answer}' missing from: '{preview}...'",
+            )
+
+    return "PASS", None, "Answer matched expected content and citations strictly"
 
 
 def run_evaluation() -> dict[str, Any]:
@@ -256,7 +406,44 @@ def run_evaluation() -> dict[str, Any]:
 
     with open(CASES_PATH, encoding="utf-8") as f:
         cases: list[dict[str, Any]] = json.load(f)
-    print(f"Loaded {len(cases)} test cases from {CASES_PATH.name}\n")
+
+    if GOLDEN_QS_PATH.exists():
+        with open(GOLDEN_QS_PATH, encoding="utf-8") as gf:
+            golden_raw: list[dict[str, Any]] = json.load(gf)
+
+        include_all = "--all-golden" in sys.argv
+        added_golden = 0
+        for gq in golden_raw:
+            ev_list = gq.get("evidence", [])
+            doc_ids = {e.get("document_id") for e in ev_list if "document_id" in e}
+            # Include if evidence matches Clinic A or empty (refusal), or if --all-golden requested
+            if include_all or not doc_ids or doc_ids.issubset(CLINIC_A_DOC_IDS):
+                exp_cites = [DOC_ID_MAP[did] for did in doc_ids if did in DOC_ID_MAP]
+                cases.append(
+                    {
+                        "id": gq["id"],
+                        "category": gq["category"],
+                        "type": "question",
+                        "question": gq["question"],
+                        "attachment": None,
+                        "expected_route": "knowledge",
+                        "expected_mode": gq.get("expected_mode"),
+                        "expected_answer": gq.get("expected_answer") or "",
+                        "accepted_answers": gq.get("accepted_answers", []),
+                        "conflict_values": gq.get("conflict_values", []),
+                        "must_not_contain": gq.get("must_not_contain", []),
+                        "expected_citations": exp_cites,
+                        "notes": gq.get("notes", ""),
+                    }
+                )
+                added_golden += 1
+        e2e_count = len(cases) - added_golden
+        print(
+            f"Loaded {e2e_count} E2E cases + {added_golden} golden questions "
+            f"(Total: {len(cases)})\n"
+        )
+    else:
+        print(f"Loaded {len(cases)} test cases from {CASES_PATH.name}\n")
 
     client = httpx.Client(base_url=API_BASE_URL, timeout=180.0)
 

@@ -30,10 +30,10 @@
     "question": "please summarize this fax",
     "attachment": "skewed_fax.pdf",
     "expected_route": "session_document",
-    "expected_mode": "short",
-    "expected_answer": "Alex Morgan",
+    "expected_mode": "explain",
+    "expected_answer": "Alex Morgan; Amoxicillin",
     "expected_citations": ["skewed_fax.pdf"],
-    "notes": "Summary of attached prescription refill authorization fax."
+    "notes": "Summary of attached prescription refill authorization fax; expects at least two cited points (patient name and medication or dosage)."
   },
   {
     "id": "E2E-GEN-001",
@@ -67,9 +67,9 @@
     "attachment": null,
     "expected_route": "knowledge",
     "expected_mode": "table",
-    "expected_answer": "Hours",
+    "expected_answer": "48 to 72 hours",
     "expected_citations": ["pa_turnaround_times.xlsx"],
-    "notes": "Turnaround time lookup where term 'Routine' is present in spreadsheet."
+    "notes": "Turnaround time lookup with lead sentence; expects 48 and 72 hours."
   },
   {
     "id": "E2E-TAB-002",
@@ -91,9 +91,9 @@
     "attachment": null,
     "expected_route": "knowledge",
     "expected_mode": "short",
-    "expected_answer": "555-0101",
+    "expected_answer": "555-0102",
     "expected_citations": ["front_desk_policy_v1.pdf", "front_desk_policy_v2.pdf"],
-    "notes": "Conflict between Policy v1 (555-0101) and Policy v2 (555-0102)."
+    "notes": "Conflict between Policy v1 (555-0101) and Policy v2 (555-0102); current value is 555-0102."
   },
   {
     "id": "E2E-CONF-002",
@@ -103,9 +103,9 @@
     "attachment": null,
     "expected_route": "knowledge",
     "expected_mode": "short",
-    "expected_answer": "15 minutes",
+    "expected_answer": "20 minutes",
     "expected_citations": ["front_desk_policy_v1.pdf", "front_desk_policy_v2.pdf"],
-    "notes": "Conflict between Policy v1 (15 min) and Policy v2 (20 min)."
+    "notes": "Conflict between Policy v1 (15 min) and Policy v2 (20 min); current value is 20 minutes."
   },
   {
     "id": "E2E-NOA-001",

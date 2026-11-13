@@ -213,6 +213,10 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
     selected_ids = ["row-2", "row-4", "row-6"]
     content = _format_table_answer_text(tcs, selected_ids, [])
 
+    # Lead sentence must start with direct plain sentence
+    first_line = content.split("\n")[0].strip()
+    assert first_line == "Routine requests take 48 to 72 hours depending on payer and service."
+
     # Every matching row must be listed with its SLA value and identifying concepts
     assert "48 Hours" in content
     assert "72 Hours" in content
@@ -221,7 +225,31 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
     assert "Summit Care Plan" in content
     assert "Diagnostic Imaging" in content
 
+    # Matching rows must use real column names, even when stored with legacy keys
+    assert "Payer Name: Apex Health Insurance" in content
+    assert "Service Category: Diagnostic Imaging" in content
+    assert "Urgency: Routine" in content
+    assert "Standard SLA: 48 Hours" in content
+    assert "Liaison Contact: 555-0120" in content
+
     # Must never use Column_N or caption as a column name
     assert "Column_2" not in content
     assert "Column_4" not in content
     assert "SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***:" not in content
+
+
+def test_format_table_answer_with_real_column_headers() -> None:
+    """When candidates already have real column names, format preserves them and adds lead."""
+    tcs = _create_pa_table_candidates()
+    # routine rows are row-2 (48h), row-4 (72h), row-6 (72h)
+    selected_ids = ["row-2", "row-4", "row-6"]
+    content = _format_table_answer_text(tcs, selected_ids, [])
+
+    first_line = content.split("\n")[0].strip()
+    assert first_line == "Routine requests take 48 to 72 hours depending on payer and service."
+
+    assert "Payer Name: Apex Health Insurance" in content
+    assert "Service Category: Diagnostic Imaging" in content
+    assert "Urgency: Routine" in content
+    assert "Standard SLA: 48 Hours" in content
+    assert "Liaison Contact: 555-0120" in content

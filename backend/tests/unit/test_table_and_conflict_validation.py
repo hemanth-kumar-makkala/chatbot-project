@@ -320,6 +320,65 @@ async def test_table_answer_unmatched_term_discloses_explicitly_and_shows_closes
 
 
 @pytest.mark.asyncio
+async def test_table_validation_accepts_lead_sentence_and_real_columns_for_legacy_candidates() -> (
+    None
+):
+    """Stage R2: Table answer with lead sentence and real column names passes validation for legacy rows."""
+    ctx = _make_context()
+    doc_cap = "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    tcs: dict[str, TableCandidate] = {
+        "row-1": TableCandidate(
+            id="row-1",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=1,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Payer Name",
+                "Column_2": "Service Category",
+                "Column_3": "Urgency",
+                "Column_4": "Standard SLA",
+                "Column_5": "Liaison Contact",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-2": TableCandidate(
+            id="row-2",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=2,
+            caption=doc_cap,
+            cells={
+                doc_cap: "Apex Health Insurance",
+                "Column_2": "Diagnostic Imaging",
+                "Column_3": "Routine",
+                "Column_4": "48 Hours",
+                "Column_5": "555-0120",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+    }
+    ctx.table_candidates = tcs
+    ans_text = (
+        "Routine requests take 48 to 72 hours depending on payer and service.\n"
+        "[Sheet: Sheet1, Row: 2] Payer Name: Apex Health Insurance, "
+        "Service Category: Diagnostic Imaging, Urgency: Routine, "
+        "Standard SLA: 48 Hours, Liaison Contact: 555-0120"
+    )
+    ctx.generated_answer = {
+        "mode": "table",
+        "answer": ans_text,
+        "evidence_ids": ["row-2"],
+    }
+    res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": ["row-2"]}, _make_runtime(ctx)
+    )
+    assert res["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_table_validation_rejects_fabricated_quoted_value() -> None:
     """Fix 3: Double-quoted values in table answers must exist in cited rows."""
     ctx = _make_context()

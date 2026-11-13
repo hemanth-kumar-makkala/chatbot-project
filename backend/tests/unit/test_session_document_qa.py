@@ -362,3 +362,211 @@ async def test_deterministic_session_doc_routing_for_contained_value_phrasing() 
     res = await node_route(state, runtime=MagicMock(context=ctx))
 
     assert res["route"] == "session_document"
+
+
+@pytest.mark.asyncio
+async def test_session_doc_summary_answers_with_points_and_validates_each_quote() -> None:
+    """Stage R1: Session document summary answers as short points with quotes and page numbers."""
+    page_text = (
+        "Patient: Alex Morgan (Chart #MRN-4412-A)\n"
+        "Prescription Refill Authorization for Amoxicillin 500mg\n"
+        "Dosage: Take 1 capsule by mouth three times daily for 10 days\n"
+        "Clinic Phone: 555-0145\n"
+    )
+    ctx = _create_mock_context(
+        question="please summarize this fax",
+        session_doc_name="skewed_fax.pdf",
+        session_doc_pages=[{"page_number": 1, "text": page_text}],
+    )
+    mock_provider = MagicMock()
+    points_data = [
+        {
+            "point": "Patient name is Alex Morgan",
+            "quoted_span": "Patient: Alex Morgan",
+            "evidence_ids": ["page_1"],
+        },
+        {
+            "point": "Authorized medication is Amoxicillin 500mg",
+            "quoted_span": "Amoxicillin 500mg",
+            "evidence_ids": ["page_1"],
+        },
+        {
+            "point": "Dosage is Take 1 capsule three times daily",
+            "quoted_span": "Take 1 capsule by mouth three times daily for 10 days",
+            "evidence_ids": ["page_1"],
+        },
+    ]
+    mock_provider.generate = AsyncMock(
+        return_value=_mock_model_response(
+            content='{"mode": "explain", "answer": "", "points": []}',
+            structured_output={
+                "mode": "explain",
+                "answer": "",
+                "points": points_data,
+                "evidence_ids": ["page_1"],
+            },
+        )
+    )
+    ctx.ports.model_provider = mock_provider
+    ctx.ports.is_mock_profile = False
+
+    state: GraphState = {
+        "request_id": str(uuid4()),
+        "route": "session_document",
+        "answer_mode": "explain",
+        "status": "in_progress",
+    }
+    await node_generate(state, runtime=MagicMock(context=ctx))
+    val_res = await node_validate(state, runtime=MagicMock(context=ctx))
+
+    assert val_res["status"] == "completed"
+    assert "Alex Morgan" in ctx.response_text
+    assert "Amoxicillin 500mg" in ctx.response_text
+    assert len(ctx.citations) == 1
+    assert ctx.citations[0].document_title == "skewed_fax.pdf"
+    assert ctx.citations[0].page_number == 1
+
+
+@pytest.mark.asyncio
+async def test_session_doc_summary_drops_points_with_failing_quotes_and_keeps_valid() -> None:
+    """Stage R1: Points with failing quotes are dropped; surviving points are displayed."""
+    page_text = (
+        "Patient: Alex Morgan (Chart #MRN-4412-A)\n"
+        "Prescription Refill Authorization for Amoxicillin 500mg\n"
+    )
+    ctx = _create_mock_context(
+        question="please summarize this fax",
+        session_doc_name="skewed_fax.pdf",
+        session_doc_pages=[{"page_number": 1, "text": page_text}],
+    )
+    mock_provider = MagicMock()
+    points_data = [
+        {
+            "point": "Patient name is Alex Morgan",
+            "quoted_span": "Alex Morgan",
+            "evidence_ids": ["page_1"],
+        },
+        {
+            "point": "Patient date of birth is 1985-05-12",
+            "quoted_span": "DOB: 1985-05-12",  # NOT in page_text! Must be dropped!
+            "evidence_ids": ["page_1"],
+        },
+        {
+            "point": "Prescription is for Amoxicillin 500mg",
+            "quoted_span": "Amoxicillin 500mg",
+            "evidence_ids": ["page_1"],
+        },
+    ]
+    mock_provider.generate = AsyncMock(
+        return_value=_mock_model_response(
+            content='{"mode": "explain", "answer": "", "points": []}',
+            structured_output={
+                "mode": "explain",
+                "answer": "",
+                "points": points_data,
+                "evidence_ids": ["page_1"],
+            },
+        )
+    )
+    ctx.ports.model_provider = mock_provider
+    ctx.ports.is_mock_profile = False
+
+    state: GraphState = {
+        "request_id": str(uuid4()),
+        "route": "session_document",
+        "answer_mode": "explain",
+        "status": "in_progress",
+    }
+    await node_generate(state, runtime=MagicMock(context=ctx))
+    val_res = await node_validate(state, runtime=MagicMock(context=ctx))
+
+    assert val_res["status"] == "completed"
+    assert "Alex Morgan" in ctx.response_text
+    assert "Amoxicillin 500mg" in ctx.response_text
+    assert "1985-05-12" not in ctx.response_text
+    assert len(ctx.citations) == 1
+
+
+@pytest.mark.asyncio
+async def test_session_doc_summary_refuses_when_no_points_survive() -> None:
+    """Stage R1: When all points have hallucinated quotes, refuses with fixed message."""
+    page_text = "Attn: Pharmacy Dispensing Coordinator\nClinic Phone: 555-0145\n"
+    ctx = _create_mock_context(
+        question="please summarize this fax",
+        session_doc_name="skewed_fax.pdf",
+        session_doc_pages=[{"page_number": 1, "text": page_text}],
+    )
+    mock_provider = MagicMock()
+    points_data = [
+        {
+            "point": "Patient name is John Doe",
+            "quoted_span": "Patient: John Doe",  # NOT in text
+            "evidence_ids": ["page_1"],
+        },
+        {
+            "point": "Patient date of birth is 1990-01-01",
+            "quoted_span": "DOB: 1990-01-01",  # NOT in text
+            "evidence_ids": ["page_1"],
+        },
+    ]
+    mock_provider.generate = AsyncMock(
+        return_value=_mock_model_response(
+            content='{"mode": "explain", "answer": "", "points": []}',
+            structured_output={
+                "mode": "explain",
+                "answer": "",
+                "points": points_data,
+                "evidence_ids": ["page_1"],
+            },
+        )
+    )
+    ctx.ports.model_provider = mock_provider
+    ctx.ports.is_mock_profile = False
+
+    state: GraphState = {
+        "request_id": str(uuid4()),
+        "route": "session_document",
+        "answer_mode": "explain",
+        "status": "in_progress",
+    }
+    await node_generate(state, runtime=MagicMock(context=ctx))
+    val_res = await node_validate(state, runtime=MagicMock(context=ctx))
+
+    assert val_res["status"] == "refusal"
+    assert ctx.response_text == "I couldn't confirm that from the attached document."
+    assert len(ctx.citations) == 0
+
+
+@pytest.mark.asyncio
+async def test_session_doc_summary_mock_profile_on_skewed_fax() -> None:
+    """Stage R1: On mock profile, summary of skewed_fax produces at least two cited points."""
+    skewed_fax_ocr = (
+        "* * * SYNTHETIC TEST DOCUMENT *** TRANSMISSION CONFIDENTIAL MEDICAL RECORD FACSIMILE\n\n"
+        "NOTICE PEDIATRIC & ADULT URGENT CARE TRANSMISSION Date: 2026-02-14 "
+        "Attn: Pharmacy Dispensing Coordinator Clinic Phone: 555-0145\n\n"
+        "Prescription Refill Authorization: approved for Amoxicillin 5oOmg Dr. Evelyn Reed. "
+        "Urgent prescription refill request Take 1 capsule by mouth three times daily for 10 days: "
+        "Dosage: Patient: Alex Morgan (Chart #MRN-4412-A) Refill count: 0 (one-time course). by"
+    )
+    ctx = _create_mock_context(
+        question="please summarize this fax",
+        session_doc_name="skewed_fax.pdf",
+        session_doc_pages=[{"page_number": 1, "text": skewed_fax_ocr}],
+    )
+    ctx.ports.is_mock_profile = True
+
+    state: GraphState = {
+        "request_id": str(uuid4()),
+        "route": "session_document",
+        "answer_mode": "explain",
+        "status": "in_progress",
+    }
+    await node_generate(state, runtime=MagicMock(context=ctx))
+    val_res = await node_validate(state, runtime=MagicMock(context=ctx))
+
+    assert val_res["status"] == "completed"
+    assert "Alex Morgan" in ctx.response_text
+    assert "Amoxicillin" in ctx.response_text or "Take 1 capsule" in ctx.response_text
+    assert len(ctx.citations) == 1
+    assert ctx.citations[0].document_title == "skewed_fax.pdf"
+    assert ctx.citations[0].page_number == 1

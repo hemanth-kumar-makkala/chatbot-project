@@ -4137,3 +4137,54 @@ Append-only record of all completed tasks, architectural choices, and test recor
   8. `web/app/assistants/[assistantId]/page.tsx`
   9. `docs/BUILD_LOG.md`
   10. `docs/STATUS.md`
+
+---
+
+### [2026-11-13] Queue Stages R1, R2 & R3: Session Document Summaries, Table Readability & Stricter E2E Evaluation
+
+- **Stage R1: Session Document Summaries (`backend/app/core/graph.py`, `backend/tests/unit/test_session_document_qa.py`)**:
+  - **Issue**: "please summarize this fax" was previously refused by quote validation because typical summaries paraphrase.
+  - **Solution**: Made session-document summaries answer as short points (`AnswerOutput.points`), each carrying its own exact quoted span (`quoted_span`) and page attribution (`evidence_ids`) like explain mode.
+  - **Validation**: `node_validate` validates each point's quote against document page text; drops failing quotes; refuses only if 0 points survive; formats surviving points cleanly as bullet points with updated citations.
+  - **Proving Tests**: 4 new unit tests added in `test_session_document_qa.py` (all 13 pass in 0.54s). Full mock suite: `1032 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_R1.log`.
+
+- **Stage R2: Table Answer Readability & Header Mapping (`backend/app/core/graph.py`, `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`)**:
+  - **Issue**: Table answers lacked lead sentences, and rows in `pa_turnaround_times.xlsx` were stored with legacy `Column_N` keys.
+  - **Root Cause & Row Keys Diagnosis**: Queried `tables_data` for version `a97f7b25-0c96-420f-bc0a-2aa1f5de927e` under Clinic A. Stored row keys were `['Column_2', 'Column_3', 'Column_4', 'Column_5', '*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***']`, with row 1 holding the real column labels. This version had been created during Phase 2 bootstrap (2026-11-05) before header detection was implemented. Re-ingested version `a97f7b25` using `TableIngestionService`; rows 1-5 now cleanly store real column names (`Payer Name`, `Service Category`, `Urgency`, `Standard SLA`, `Liaison Contact`).
+  - **Solution**: Implemented `_build_table_header_map` to map `Column_N` and caption headers to real column names dynamically. Implemented `_format_table_answer_text` to start with a direct plain lead sentence (e.g. `"Routine requests take 48 to 72 hours depending on payer and service."`) and format rows with real column names (`Col: Val`). Updated `node_validate` for `mode == "table"` to verify that every shown value matches candidate cells byte-for-byte.
+  - **Proving Tests**: Added unit tests in `test_table_answering_closest_rows.py` and `test_table_and_conflict_validation.py` (18 passed). Full mock suite: `1034 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_R2.log`.
+
+- **Stage R3: Stricter E2E Evaluation (`evals/golden/e2e_local_cases.json`, `backend/scripts/run_local_e2e_eval.py`)**:
+  - **Updates**:
+    - `E2E-CONF-001` expected answer set to current fax `"555-0102"`, citing both policy files.
+    - `E2E-CONF-002` expected answer set to current arrival window `"20 minutes"`, citing both policy files.
+    - `E2E-TAB-001` expected answer set to `"48 to 72 hours"` with lead sentence expectation.
+    - `E2E-SD-003` expected answer set to `"Alex Morgan; Amoxicillin"`, mode `"explain"`, requiring at least two cited bullet points.
+    - Loaded 55 golden questions from `evals/golden/questions.json` mapping to Clinic A's active knowledge base documents and refusal categories (`NO_ANSWER`, `CROSS_TENANT`), alongside the 12 local E2E cases (total 67 cases).
+    - Strict judge criteria implemented: a case passes ONLY if expected values are present AND citations match AND no unexpected refusal.
+  - **Live E2E Results on `desktop-gpu` (http://127.0.0.1:8010)**:
+    - Total Cases: 67 (50 Passed, 17 Failed, 0 Unclear; 74.6% strict pass rate; p50 = 6.85s, p95 = 26.83s).
+    - `CROSS_TENANT`: 10/10 (100.0%)
+    - `EXTRACTION`: 1/1 (100.0%)
+    - `GENERAL`: 2/2 (100.0%)
+    - `VERSION_CONFLICT`: 2/2 (100.0%)
+    - `CONFLICT`: 7/8 (87.5%)
+    - `NO_ANSWER`: 13/16 (81.2%)
+    - `SESSION_DOCUMENT`: 2/3 (66.7%)
+    - `VISUAL_RECOVERY`: 3/5 (60.0%)
+    - `TABLE`: 1/2 (50.0%)
+    - `TABLE_LOOKUP`: 3/6 (50.0%)
+    - `TEXT_FACT`: 4/10 (40.0%)
+    - Stamped reports generated: `evals/reports/2026-11-13_desktop_gpu_e2e.json` and `evals/reports/2026-11-13_desktop_gpu_e2e.md`.
+  - **Verification**: Linters clean (`ruff`, `mypy`), touched unit tests (31 passed), and full mock test suite passed: `1034 passed, 1 skipped, 16 deselected, 53 warnings in 168.92s (0:02:48) — 0 failed` in `queue_stage_R3.log`.
+- **Files Edited in Stages R1-R3**:
+  1. `backend/app/core/graph.py`
+  2. `backend/scripts/run_local_e2e_eval.py`
+  3. `backend/tests/unit/test_session_document_qa.py`
+  4. `backend/tests/unit/test_table_and_conflict_validation.py`
+  5. `backend/tests/unit/test_table_answering_closest_rows.py`
+  6. `evals/golden/e2e_local_cases.json`
+  7. `evals/reports/2026-11-13_desktop_gpu_e2e.json`
+  8. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
+  9. `docs/BUILD_LOG.md`
+  10. `docs/STATUS.md`
