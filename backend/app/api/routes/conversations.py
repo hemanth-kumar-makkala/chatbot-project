@@ -680,20 +680,17 @@ async def extract_session_document_fields(
 
         # Check if already extracted
         existing_ext = (
-            (
-                await db_session.execute(
-                    select(ExtractionResult)
-                    .where(
-                        ExtractionResult.tenant_id == UUID(found_tenant_ctx.tenant_id),
-                        ExtractionResult.session_document_id == doc_uuid,
-                        ExtractionResult.schema_name == "fax_intake",
-                    )
-                    .order_by(ExtractionResult.created_at.desc())
+            await db_session.execute(
+                select(ExtractionResult)
+                .where(
+                    ExtractionResult.tenant_id == UUID(found_tenant_ctx.tenant_id),
+                    ExtractionResult.session_document_id == doc_uuid,
+                    ExtractionResult.schema_name == "fax_intake",
                 )
+                .order_by(ExtractionResult.created_at.desc())
+                .limit(1)
             )
-            .scalars()
-            .first()
-        )
+        ).scalar_one_or_none()
 
         saved_file_path = Path(sdoc.file_path)
         file_name = sdoc.file_name

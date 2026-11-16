@@ -370,4 +370,58 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       createdConvId
     );
   });
+
+  it("shows a clear failure message and never 'unexpected response format' when extraction response is malformed", async () => {
+    vi.mocked(api.uploadSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-sess-bad",
+        conversation_id: "conv-1",
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "uploaded",
+        retention_hours: 24,
+        extracted_fields: [],
+        page_image_url: "/v1/assistants/ast-1/conversations/conv-1/documents/doc-sess-bad/pages/1/image",
+      },
+    });
+
+    vi.mocked(api.extractSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-sess-bad",
+        conversation_id: "conv-1",
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "extracted",
+        extracted_fields: null as unknown as api.ExtractedField[],
+        page_image_url: "",
+      },
+    });
+
+    await renderChatPage();
+
+    const fileInput = await screen.findByTestId("live-file-input");
+    const fakeFile = new File(["%PDF-1.4 test"], "skewed_fax.pdf", { type: "application/pdf" });
+
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [fakeFile] } });
+    });
+
+    const extractBtn = await screen.findByTestId("extract-fields-button");
+    await act(async () => {
+      fireEvent.click(extractBtn);
+    });
+
+    await waitFor(() => {
+      const errAlert = screen.getByTestId("live-extraction-error");
+      expect(errAlert).toHaveTextContent(
+        "Unable to extract fields from the attached document. Please try again."
+      );
+      expect(errAlert.textContent?.toLowerCase()).not.toContain("unexpected response format");
+    });
+    expect(screen.queryByText(/unexpected response format/i)).not.toBeInTheDocument();
+  });
 });

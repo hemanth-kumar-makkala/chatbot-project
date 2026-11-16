@@ -272,6 +272,16 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         return;
       }
 
+      if (!res.data || !Array.isArray(res.data.extracted_fields)) {
+        setLiveExtractionError(
+          "Unable to extract fields from the attached document. Please try again."
+        );
+        return;
+      }
+
+      if (res.data.conversation_id) {
+        setConversationId(res.data.conversation_id);
+      }
       setAttachedDoc((prev) => (prev ? { ...prev, isExtracted: true } : null));
 
       const extractionResp: QuestionResponse = {

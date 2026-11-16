@@ -227,12 +227,13 @@ async def test_node_assess_evidence_keeps_conflicting_when_order_undetermined():
 @pytest.mark.asyncio
 async def test_refusal_returns_one_clear_message_without_document_names():
     """Stage T5: Refusals return one clear message with no list of document names."""
+
     class RealRetrieverFake:
         async def search_titles(self, *_args: Any, **_kwargs: Any) -> list[str]:
             return ["front_desk_policy_v2.pdf", "prior_auth_guide.pdf"]
 
     ctx = GraphRuntimeContext(
-        ports=GraphPorts(is_mock_profile=False, retriever=RealRetrieverFake()),  # type: ignore[arg-type]
+        ports=GraphPorts(is_mock_profile=False, retriever=RealRetrieverFake()),
         tenant=TenantContext(
             tenant_id="00000000-0000-0000-0000-000000000001",
             user_id="user-1",
@@ -315,4 +316,3 @@ async def test_session_document_summary_includes_conflicting_field_both_readings
         "Medication: Amoxicillin, strength unclear: 500mg (vision) vs 5oOmg (OCR)"
         in ctx.response_text
     )
-

@@ -316,8 +316,7 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
         conversation_id: "conv-1",
         message_id: "msg-3",
         status: "refusal",
-        answer:
-          "I couldn't confirm that from the documents. I do have information on:\n- front_desk_policy_v2.pdf",
+        answer: "I couldn't confirm that from the documents.",
         citations: [],
         sources: [
           {
@@ -339,10 +338,10 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     await waitFor(() => {
       expect(screen.getByText(/I couldn't confirm that from the documents\./i)).toBeInTheDocument();
       expect(screen.getByText(/Refusal/i)).toBeInTheDocument();
+      expect(screen.getByTestId("refusal-no-evidence-note")).toHaveTextContent(
+        "No supporting evidence found in the documents"
+      );
     });
-    expect(screen.queryByText(/No supporting evidence/i)).not.toBeInTheDocument();
-    expect(screen.queryByTestId("refusal-no-evidence-note")).not.toBeInTheDocument();
-    expect(screen.queryByText(/front_desk_policy_v2\.pdf/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("chat-source-chips")).not.toBeInTheDocument();
   });
 

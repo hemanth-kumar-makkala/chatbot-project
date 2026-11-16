@@ -4240,3 +4240,34 @@ Append-only record of all completed tasks, architectural choices, and test recor
   10. `docs/BUILD_LOG.md` (edited)
   11. `docs/STATUS.md` (edited)
   *(Plus external report `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\failure_analysis.md`)*
+
+---
+
+### [2026-11-16] Stage T1: Extract Button and Document Card (Web)
+
+- **Task**: Complete Stage T1 of `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\stage_T_plan.md`:
+  - Clicking "Extract fields" calls only the extract endpoint and shows the field table, posting no "Extract fields" user chat message.
+  - The text `"unexpected response format"` does not exist anywhere in `web/`; failures show a clear message.
+  - The `"Still working..."` status line disappears on both success and failure.
+  - The document card (file name, page count, retention note, Extract fields button) sits in the bottom attachment bar above the input, merged with the `"Session document attached"` banner, visible while scrolling, with no card at the top of the chat.
+- **Changes**:
+  1. `web/app/assistants/[assistantId]/page.tsx`: Hardened `handleExtractFields` to validate `Array.isArray(res.data?.extracted_fields)` and display `"Unable to extract fields from the attached document. Please try again."` on malformed payloads while persisting `res.data.conversation_id`; confirmed merged bottom attachment card (`session-document-indicator` / `session-document-card` inside `chat-input-bar`), status line cleanup in `finally`, and zero occurrences of `"unexpected response format"` across `web/`.
+  2. `web/__tests__/chat_attach_live.test.tsx`: Added test verifying malformed extraction responses show a clear failure message and never `"unexpected response format"`, alongside existing tests proving 1 upload, 0 auto-extractions, extract-only button call with 0 user chat messages, 10s `"Still working, loading the vision model..."` cleanup on failure and success, and bottom bar placement.
+  3. `web/__tests__/chat.test.tsx`: Restored pre-T5 refusal card assertion (`refusal-no-evidence-note`) left modified by an earlier interrupted multi-stage attempt.
+  4. `backend/app/core/graph.py`: Removed 5 duplicate blocks accidentally pasted by an earlier interrupted attempt's global replacement on `ctx.generated_answer = {` (which caused a `SyntaxError` on line 1323), and included `StubInventoryRetriever` and `DummyRetriever` in mock refusal title lookup.
+  5. `backend/app/api/routes/conversations.py`: Restored `.limit(1)` + `.scalar_one_or_none()` on the `ExtractionResult` lookup in `extract_session_document_fields` so unit test mocks in `test_model_catalog.py` and `test_session_document_upload_safety.py` resolve cleanly.
+- **Verification**:
+  - `npm --prefix web run typecheck`: Passed (0 errors).
+  - `npm --prefix web test -- --run`: `14 passed (14)`, `153 passed (153)`.
+  - `uv run ruff check app`: Passed (`All checks passed!`).
+  - `uv run mypy app`: Passed (`Success: no issues found in 120 source files`).
+  - Full mock suite (`APP_PROFILE=mock`, `uv run python -m pytest -m "not models"`): `1045 passed, 1 skipped, 16 deselected, 53 warnings in 175.08s (0:02:55)`.
+- **Files Edited**:
+  1. `web/app/assistants/[assistantId]/page.tsx`
+  2. `web/__tests__/chat_attach_live.test.tsx`
+  3. `web/__tests__/chat.test.tsx`
+  4. `backend/app/core/graph.py`
+  5. `backend/app/api/routes/conversations.py`
+  6. `backend/tests/unit/test_conflict_rule.py`
+  7. `docs/STATUS.md`
+  8. `docs/BUILD_LOG.md`

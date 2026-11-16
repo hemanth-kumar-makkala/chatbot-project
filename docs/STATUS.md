@@ -611,6 +611,10 @@
     - Stored table cell keys (`tc.cells.keys()`) are now authoritative: table answers (`_format_table_answer_text`) and validation (`node_validate` for `mode == "table"`) use stored headers directly without translation or guessing.
     - Added proving tests in `test_table_answering_closest_rows.py` and `test_table_and_conflict_validation.py`.
     - Verified full mock suite: `1038 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_S3.log`.
+- **Completed (Stage T1: Extract Button and Document Card in Web UI)**:
+  - **Extract Fields Action & Malformed Payload Guard (`web/app/assistants/[assistantId]/page.tsx`)**: Clicking "Extract fields" calls only `extractSessionDocument` (`POST .../extract`), renders the side-by-side `ExtractionTable`, and never posts a user chat message or calls `askQuestion`. Added validation so malformed responses missing an `extracted_fields` array show a clear error message (`"Unable to extract fields from the attached document. Please try again."`), and verified `"unexpected response format"` does not exist anywhere in `web/`.
+  - **Transient Status Cleanup & Bottom Attachment Bar (`web/app/assistants/[assistantId]/page.tsx`)**: Verified `"Still working, loading the vision model..."` disappears on both success and failure, and the document card (file name, page count, retention note, Extract fields button) sits inside `chat-input-bar` above the input merged with the `"Session document attached"` banner, visible while scrolling with no card at the top of the chat.
+  - **Proving Tests**: `web/__tests__/chat_attach_live.test.tsx` (5/5 pass), full web Vitest suite (`153 passed` across 14 test files), full mock suite (`1045 passed, 1 skipped, 16 deselected, 53 warnings in 175.08s (0:02:55)`).
 - **Next roadmap phase:** Phase 6 — Cloud staging on GCP; next planned roadmap task is Task 6.1, GCP infrastructure provisioning and BAA compliance check (`docs/phases/PHASE-6.md`).
 - **Test infrastructure note:** `load_dotenv` may load application settings at runtime; tests may use fixtures that load settings and migrate only their isolated throwaway databases. Do not read `.env` manually.
 
