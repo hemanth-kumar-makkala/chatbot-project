@@ -326,7 +326,7 @@ def create_storage_backend(
 
     resolved: str | Path | None = base_dir
     if resolved is None:
-        raw_path = os.environ.get("LOCAL_STORAGE_PATH")
+        raw_path = os.environ.get("LOCAL_STORAGE_PATH") or os.environ.get("W_STORAGE")
         if not raw_path or not raw_path.strip():
             raise ConfigurationError(
                 "LOCAL_STORAGE_PATH environment variable is missing.",

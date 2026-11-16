@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { DataSourceChip } from "@/components/DataSourceChip";
+import { getDocumentTablePreview, type TablePreviewSheet } from "@/lib/api";
 
 // Set worker from installed package (no CDN)
 if (typeof window !== "undefined" && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -27,7 +27,141 @@ interface SourcePanelProps {
   isLiveAssistant?: boolean;
   assistantId?: string;
   versionId?: string;
+  sheetName?: string;
+  highlightedRow?: number | null;
 }
+
+const DEMO_TABLE_SHEETS: Record<string, TablePreviewSheet[]> = {
+  "pa_turnaround_times.xlsx": [
+    {
+      sheet_name: "Sheet1",
+      caption: "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***",
+      headers: ["Payer Name", "Service Category", "Urgency", "Standard SLA", "Liaison Contact"],
+      rows: [
+        {
+          row_number: 1,
+          cells: {
+            "Payer Name": "Apex Health Insurance",
+            "Service Category": "Diagnostic Imaging",
+            Urgency: "Routine",
+            "Standard SLA": "48 Hours",
+            "Liaison Contact": "555-0120",
+          },
+        },
+        {
+          row_number: 2,
+          cells: {
+            "Payer Name": "Apex Health Insurance",
+            "Service Category": "Inpatient Surgery",
+            Urgency: "Expedited",
+            "Standard SLA": "24 Hours",
+            "Liaison Contact": "555-0120",
+          },
+        },
+        {
+          row_number: 3,
+          cells: {
+            "Payer Name": "Beacon Mutual Healthcare",
+            "Service Category": "Outpatient Therapy",
+            Urgency: "Routine",
+            "Standard SLA": "72 Hours",
+            "Liaison Contact": "555-0121",
+          },
+        },
+        {
+          row_number: 4,
+          cells: {
+            "Payer Name": "Crestview Health",
+            "Service Category": "Specialty Medication",
+            Urgency: "Expedited",
+            "Standard SLA": "24 Hours",
+            "Liaison Contact": "555-0122",
+          },
+        },
+        {
+          row_number: 5,
+          cells: {
+            "Payer Name": "Summit Care Plan",
+            "Service Category": "Standard Clinical Review",
+            Urgency: "Routine",
+            "Standard SLA": "72 Hours",
+            "Liaison Contact": "555-0123",
+          },
+        },
+      ],
+    },
+  ],
+  "accepted_plans.csv": [
+    {
+      sheet_name: "Sheet1",
+      headers: [
+        "Payer Name",
+        "Plan Code",
+        "Network Tier",
+        "Standard Copay",
+        "Deductible",
+        "Pre-Auth",
+      ],
+      rows: [
+        {
+          row_number: 1,
+          cells: {
+            "Payer Name": "Apex Health Insurance",
+            "Plan Code": "APX-HMO-01",
+            "Network Tier": "In-Network Tier 1",
+            "Standard Copay": "$20.00",
+            Deductible: "$250.00",
+            "Pre-Auth": "Yes",
+          },
+        },
+        {
+          row_number: 2,
+          cells: {
+            "Payer Name": "Apex Health Insurance",
+            "Plan Code": "APX-PPO-02",
+            "Network Tier": "In-Network Tier 2",
+            "Standard Copay": "$35.00",
+            Deductible: "$750.00",
+            "Pre-Auth": "No",
+          },
+        },
+        {
+          row_number: 3,
+          cells: {
+            "Payer Name": "Beacon Mutual Healthcare",
+            "Plan Code": "BCN-EPO-10",
+            "Network Tier": "In-Network Tier 1",
+            "Standard Copay": "$25.00",
+            Deductible: "$300.00",
+            "Pre-Auth": "Yes",
+          },
+        },
+        {
+          row_number: 4,
+          cells: {
+            "Payer Name": "Crestview Health",
+            "Plan Code": "CRST-GLD-05",
+            "Network Tier": "In-Network Gold Tier",
+            "Standard Copay": "$15.00",
+            Deductible: "$500.00",
+            "Pre-Auth": "No",
+          },
+        },
+        {
+          row_number: 5,
+          cells: {
+            "Payer Name": "Summit Care Plan",
+            "Plan Code": "SMT-SLV-08",
+            "Network Tier": "In-Network Silver Tier",
+            "Standard Copay": "$30.00",
+            Deductible: "$1000.00",
+            "Pre-Auth": "Yes",
+          },
+        },
+      ],
+    },
+  ],
+};
 
 function getDocStem(docTitle: string): string {
   return docTitle
@@ -45,28 +179,94 @@ export function SourcePanel({
   isLiveAssistant = false,
   assistantId,
   versionId,
+  sheetName,
+  highlightedRow,
 }: SourcePanelProps) {
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [scale, setScale] = useState<number>(1.0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [tableSheets, setTableSheets] = useState<TablePreviewSheet[]>([]);
+  const [activeSheetName, setActiveSheetName] = useState<string>(sheetName || "Sheet1");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
   const pdfDocRef = useRef<any>(null);
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+
+  const isTableDoc = /\.(xlsx|csv|tsv)$/i.test(documentTitle) || Boolean(sheetName);
 
   useEffect(() => {
     setCurrentPage(initialPage || 1);
   }, [documentTitle, initialPage]);
 
-  // Load PDF Document when panel opens or documentTitle/version changes
+  // Clear previous document and load either Table Preview or PDF Document when source changes
   useEffect(() => {
     if (!isOpen) return;
 
     let isMounted = true;
-    let pdfUrl: string | null = null;
 
+    // 1. Always clear the previous document state and canvas immediately
+    pdfDocRef.current = null;
+    setTableSheets([]);
+    setError(null);
+    setTotalPages(1);
+    if (canvasRef.current) {
+      try {
+        const ctx = canvasRef.current.getContext("2d");
+        ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        canvasRef.current.width = 0;
+        canvasRef.current.height = 0;
+      } catch {
+        // ignore in non-canvas environments
+      }
+    }
+
+    // 2. Spreadsheet / CSV Table Preview path
+    if (isTableDoc) {
+      async function loadTable() {
+        setLoading(true);
+        setError(null);
+        try {
+          if (isLiveAssistant && assistantId && versionId) {
+            const res = await getDocumentTablePreview(assistantId, versionId);
+            if (!isMounted) return;
+            if (res.ok && res.data.sheets && res.data.sheets.length > 0) {
+              setTableSheets(res.data.sheets);
+              const preferred =
+                res.data.sheets.find((s) => s.sheet_name === sheetName)?.sheet_name ||
+                res.data.sheets[0].sheet_name;
+              setActiveSheetName(preferred);
+              return;
+            }
+          }
+          // Demo / fallback table preview
+          const key = documentTitle.toLowerCase();
+          const demoSheets =
+            DEMO_TABLE_SHEETS[key] || DEMO_TABLE_SHEETS["pa_turnaround_times.xlsx"];
+          if (!isMounted) return;
+          const mapped = demoSheets.map((s) =>
+            sheetName ? { ...s, sheet_name: sheetName } : s
+          );
+          setTableSheets(mapped);
+          setActiveSheetName(mapped[0]?.sheet_name || sheetName || "Sheet1");
+        } catch (err: any) {
+          if (!isMounted) return;
+          setError(err?.message || "Failed to load spreadsheet preview");
+        } finally {
+          if (isMounted) setLoading(false);
+        }
+      }
+
+      loadTable();
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    // 3. PDF Document path
+    let pdfUrl: string | null = null;
     if (isLiveAssistant) {
       if (assistantId && versionId) {
         pdfUrl = `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(versionId)}/file`;
@@ -108,7 +308,18 @@ export function SourcePanel({
         }
       }
     };
-  }, [isOpen, documentTitle, isLiveAssistant, assistantId, versionId]);
+  }, [isOpen, documentTitle, isLiveAssistant, assistantId, versionId, sheetName, isTableDoc]);
+
+  // Scroll highlighted row into view when table preview renders
+  useEffect(() => {
+    if (!isOpen || !isTableDoc || !highlightedRow || tableSheets.length === 0) return;
+    if (
+      highlightedRowRef.current &&
+      typeof highlightedRowRef.current.scrollIntoView === "function"
+    ) {
+      highlightedRowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [isOpen, isTableDoc, highlightedRow, tableSheets, activeSheetName]);
 
   // Render current page when page, scale, or doc changes
   useEffect(() => {
@@ -202,7 +413,7 @@ export function SourcePanel({
       >
         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: "var(--spacing-2)" }}>
           <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Source Document Preview (pdf.js)
+            {isTableDoc ? "Source Table Preview" : "Source Document Preview (pdf.js)"}
           </div>
           <h3
             data-testid="source-panel-doc-title"
@@ -242,7 +453,8 @@ export function SourcePanel({
         </button>
       </div>
 
-      {/* Page Navigation & Zoom Toolbar */}
+      {/* Page Navigation & Zoom Toolbar (PDF only) */}
+      {!isTableDoc && (
       <div
         style={{
           padding: "var(--spacing-3) var(--spacing-4)",
@@ -364,6 +576,7 @@ export function SourcePanel({
           </button>
         </div>
       </div>
+      )}
 
       {/* Panel Body */}
       <div
@@ -394,6 +607,146 @@ export function SourcePanel({
                 {error}
               </div>
             )}
+            {isTableDoc ? (
+              (() => {
+                const activeSheet =
+                  tableSheets.find((s) => s.sheet_name === activeSheetName) || tableSheets[0];
+                if (!activeSheet) {
+                  return (
+                    <div
+                      data-testid="source-panel-table-preview"
+                      style={{
+                        padding: "var(--spacing-4)",
+                        fontSize: "var(--font-size-sm)",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      {loading ? "Loading table preview..." : "No table rows available."}
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    data-testid="source-panel-table-preview"
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-white)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "var(--radius-md)",
+                      boxShadow: "var(--shadow-sm)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderBottom: "1px solid var(--color-border)",
+                        backgroundColor: "var(--color-bg-subtle)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "8px",
+                      }}
+                    >
+                      <span
+                        data-testid="source-table-sheet-name"
+                        style={{
+                          fontSize: "var(--font-size-xs)",
+                          fontWeight: 600,
+                          color: "var(--color-navy)",
+                        }}
+                      >
+                        Sheet: {activeSheet.sheet_name}
+                      </span>
+                      {highlightedRow != null && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            padding: "2px 8px",
+                            borderRadius: "var(--radius-sm)",
+                            backgroundColor: "var(--color-warning-soft)",
+                            color: "var(--color-warning-text)",
+                          }}
+                        >
+                          Cited Row {highlightedRow}
+                        </span>
+                      )}
+                    </div>
+                    {activeSheet.caption && (
+                      <div
+                        style={{
+                          padding: "8px 14px",
+                          fontSize: "11px",
+                          color: "var(--color-text-secondary)",
+                          borderBottom: "1px solid var(--color-border-subtle)",
+                        }}
+                      >
+                        {activeSheet.caption}
+                      </div>
+                    )}
+                    <div style={{ overflowX: "auto" }}>
+                      <table
+                        data-testid="source-preview-table"
+                        style={{
+                          width: "100%",
+                          borderCollapse: "collapse",
+                          fontSize: "var(--font-size-xs)",
+                          textAlign: "left",
+                        }}
+                      >
+                        <thead>
+                          <tr
+                            style={{
+                              backgroundColor: "var(--color-bg-subtle)",
+                              borderBottom: "1px solid var(--color-border)",
+                            }}
+                          >
+                            <th style={{ padding: "8px 10px", fontWeight: 600, width: "48px" }}>
+                              Row
+                            </th>
+                            {activeSheet.headers.map((h) => (
+                              <th key={h} style={{ padding: "8px 10px", fontWeight: 600 }}>
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeSheet.rows.map((r) => {
+                            const isHighlighted = highlightedRow === r.row_number;
+                            return (
+                              <tr
+                                key={r.row_number}
+                                ref={isHighlighted ? highlightedRowRef : null}
+                                data-testid={`source-table-row-${r.row_number}`}
+                                data-highlighted={isHighlighted ? "true" : "false"}
+                                style={{
+                                  borderBottom: "1px solid var(--color-border-subtle)",
+                                  backgroundColor: isHighlighted
+                                    ? "var(--color-warning-soft)"
+                                    : "transparent",
+                                  fontWeight: isHighlighted ? 600 : 400,
+                                }}
+                              >
+                                <td style={{ padding: "8px 10px", color: "var(--color-text-secondary)" }}>
+                                  {r.row_number}
+                                </td>
+                                {activeSheet.headers.map((h) => (
+                                  <td key={h} style={{ padding: "8px 10px" }}>
+                                    {r.cells[h] != null ? String(r.cells[h]) : "—"}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
             <div
               style={{
                 border: "1px solid var(--color-border)",
@@ -414,6 +767,7 @@ export function SourcePanel({
                 }}
               />
             </div>
+            )}
           </div>
       </div>
     </aside>

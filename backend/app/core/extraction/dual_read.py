@@ -36,11 +36,36 @@ class DualReadComparisonResult:
     overall_confidence: float = 1.0
 
 
+_ABSENT_TOKENS = frozenset(
+    {
+        "",
+        "null",
+        "none",
+        "n/a",
+        "na",
+        "nil",
+        "[blank]",
+        "[none]",
+        "[null]",
+        "[n/a]",
+        "not present",
+        "not provided",
+        "not specified",
+        "not applicable",
+        "unknown",
+        "—",
+        "-",
+    }
+)
+
+
 def _clean_str(val: Any) -> str | None:
     if val is None:
         return None
     s = str(val).strip()
-    return s if s else None
+    if not s or s.lower() in _ABSENT_TOKENS:
+        return None
+    return s
 
 
 def _is_unreadable_token(val: str | None) -> bool:

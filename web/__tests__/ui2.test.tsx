@@ -385,7 +385,7 @@ describe("UI-2: Every Answer Type in Chat, Status Lines & Demo Scenarios", () =>
     fireEvent.click(screen.getByRole("button", { name: /Send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/unexpected response format/i)).toBeInTheDocument();
+      expect(screen.getByText("Unable to complete this request. Please try again.")).toBeInTheDocument();
     });
   });
 

@@ -88,6 +88,24 @@ export interface ReprocessResponse {
   status: string;
 }
 
+export interface TablePreviewRow {
+  row_number: number;
+  cells: Record<string, unknown>;
+}
+
+export interface TablePreviewSheet {
+  sheet_name: string;
+  caption?: string | null;
+  headers: string[];
+  rows: TablePreviewRow[];
+}
+
+export interface TablePreviewResponse {
+  version_id: string;
+  document_title: string;
+  sheets: TablePreviewSheet[];
+}
+
 export type ApiResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; code: string };
@@ -287,7 +305,9 @@ export function normalizeDocumentItem(raw: any): DocumentItem {
   }
 
   const versions = Array.isArray(raw?.versions) ? raw.versions : [];
-  const latestVersion = versions.length > 0 ? versions[versions.length - 1] : null;
+  const latestVersion =
+    versions.find((v: any) => v?.version_id && v.version_id === raw?.active_version_id) ||
+    (versions.length > 0 ? versions[0] : null);
 
   const currentVersion = versions.length > 0 ? versions.length : 1;
   const latestVersionId =
@@ -405,6 +425,18 @@ export async function reprocessDocument(
     `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(documentId)}/reprocess`,
     {
       method: "POST",
+    }
+  );
+}
+
+export async function getDocumentTablePreview(
+  assistantId: string,
+  versionId: string
+): Promise<ApiResult<TablePreviewResponse>> {
+  return apiFetch<TablePreviewResponse>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(versionId)}/table`,
+    {
+      method: "GET",
     }
   );
 }

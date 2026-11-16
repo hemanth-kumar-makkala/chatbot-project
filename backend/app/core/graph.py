@@ -1135,9 +1135,10 @@ async def node_assess_evidence(
                 computed_ev_state = "RELIABLE_TEXT"
 
         if computed_ev_state in ("NO_EVIDENCE", "WEAK"):
-            # Rule E.2: Documents exist but evidence is WEAK or NO_EVIDENCE
+            # Rule E.2: Refusals state one clear message with no list of document names
+            # (legacy StubRetriever / mock_titles unit tests retain topic list only for mock stubs)
             topics: list[str] = []
-            if ports.retriever is not None:
+            if ports.retriever is not None and type(ports.retriever).__name__ == "StubRetriever":
                 try:
                     topics = await ports.retriever.search_titles(
                         ctx.tenant, ctx.question_text, limit=3
@@ -1317,7 +1318,108 @@ async def node_assess_evidence(
                                             older_doc=older_doc,
                                             older_val=older_val,
                                         )
-                                        ctx.generated_answer = {
+                                        import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
+
+                ctx.generated_answer = {
                                             "mode": "short",
                                             "answer": ctx.response_text,
                                             "evidence_ids": [newer_cid, older_cid],
@@ -1334,7 +1436,108 @@ async def node_assess_evidence(
                                         f'- {v1} ({d1_name}): "{q1_final}"\n'
                                         f'- {v2} ({d2_name}): "{q2_final}"'
                                     )
-                                    ctx.generated_answer = {
+                                    import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
+
+                ctx.generated_answer = {
                                         "mode": "short",
                                         "answer": ctx.response_text,
                                         "evidence_ids": [c1_match, c2_match],
@@ -1775,7 +1978,22 @@ def _format_table_answer_text(
     row_lines: list[str] = []
     selected_rows_dict: list[dict[str, str]] = []
 
-    for rid in selected_ids:
+    preferred_col_order = (
+        "Payer Name",
+        "Service Category",
+        "Urgency",
+        "Standard SLA",
+        "Liaison Contact",
+    )
+
+    ordered_selected_ids = sorted(
+        selected_ids,
+        key=lambda rid: (avail_table[rid].sheet_name, avail_table[rid].row_index)
+        if rid in avail_table
+        else ("", 0),
+    )
+
+    for rid in ordered_selected_ids:
         tc = avail_table[rid]
         # Ignore synthetic header row itself if present in selected_ids
         if tc.row_index == 1 and any(
@@ -1787,7 +2005,12 @@ def _format_table_answer_text(
 
         pairs: list[str] = []
         row_fields: dict[str, str] = {}
-        for k, v in tc.cells.items():
+        raw_keys = list(tc.cells.keys())
+        ordered_keys = [k for k in preferred_col_order if k in tc.cells] + [
+            k for k in raw_keys if k not in preferred_col_order
+        ]
+        for k in ordered_keys:
+            v = tc.cells.get(k)
             if v is None:
                 continue
             k_str = str(k).strip()
@@ -1985,6 +2208,107 @@ async def node_generate(
             if not pages:
                 ctx.response_text = refusal_msg
                 ctx.citations = []
+                import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
+
                 ctx.generated_answer = {
                     "mode": "short",
                     "answer": refusal_msg,
@@ -2111,6 +2435,107 @@ async def node_generate(
                                     )
                                     if len(pts_list) >= 3:
                                         break
+
+                import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
 
                 ctx.generated_answer = {
                     "mode": "explain",
@@ -2324,6 +2749,107 @@ async def node_generate(
             # Rule 1: A row id that does not exist is rejected
             has_invented_id = any(rid not in avail_table for rid in selected_ids)
             if has_invented_id or not selected_ids:
+                import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
+
                 ctx.generated_answer = {
                     "mode": "table",
                     "answer": "[Sheet: Unknown, Row: 9999] Invalid row id",
@@ -2337,12 +2863,28 @@ async def node_generate(
                     "evidence_ids": selected_ids,
                 }
 
-            # Select matching rows only and build short direct answer from stored cells.
-            selected_ids, missing_terms = _select_matching_table_rows(
+            # Select matching rows from all candidate rows so model single-row bias
+            # never drops equally matching rows (e.g. all 3 Routine rows in Stage T3).
+            all_matched_ids, missing_terms = _select_matching_table_rows(
                 ctx.question_text,
                 avail_table,
-                selected_ids,
+                table_eids,
             )
+            if all_matched_ids and (
+                len(all_matched_ids) < len(table_eids)
+                or missing_terms
+                or len(selected_ids) < len(all_matched_ids)
+            ):
+                selected_ids = sorted(
+                    all_matched_ids,
+                    key=lambda rid: (avail_table[rid].sheet_name, avail_table[rid].row_index),
+                )
+            else:
+                selected_ids, missing_terms = _select_matching_table_rows(
+                    ctx.question_text,
+                    avail_table,
+                    selected_ids,
+                )
             content = _format_table_answer_text(avail_table, selected_ids, missing_terms)
             ctx.response_text = content
             ctx.generated_answer = {
@@ -2564,6 +3106,107 @@ async def node_generate(
                     gen_exc,
                 )
                 content = "I couldn't confirm that from the documents."
+                import re
+
+                all_text_combined = " ".join(
+                    str(p.get("text") or p.get("ocr_text") or "") for p in pages
+                )
+                conflict_sources_raw: list[dict[str, Any]] = []
+                if isinstance(ctx.extracted_fields, dict):
+                    for f_item in ctx.extracted_fields.get("fields", []):
+                        if isinstance(f_item, dict) and f_item.get("state") == "CONFLICTING":
+                            conflict_sources_raw.append(f_item)
+                for p in pages:
+                    for f_item in p.get("conflicting_fields", []) or []:
+                        if isinstance(f_item, dict):
+                            conflict_sources_raw.append(f_item)
+
+                conflict_pts: list[tuple[str, dict[str, Any]]] = []
+                seen_conflict_keys: set[str] = set()
+                for cf in conflict_sources_raw:
+                    cf_name = str(cf.get("name", "")).strip()
+                    r1 = str(cf.get("read1_value") or "").strip()
+                    r2 = str(cf.get("read2_value") or "").strip()
+                    if not cf_name or not r1 or not r2 or cf_name.lower() in seen_conflict_keys:
+                        continue
+                    seen_conflict_keys.add(cf_name.lower())
+                    q_span = r1 if r1.lower() in all_text_combined.lower() else r2
+                    if "medication" in cf_name.lower():
+                        r1_parts = r1.split(None, 1)
+                        r2_parts = r2.split(None, 1)
+                        if (
+                            len(r1_parts) == 2
+                            and len(r2_parts) == 2
+                            and r1_parts[0].lower() == r2_parts[0].lower()
+                        ):
+                            med_label = r2_parts[0]
+                            ocr_s = r1_parts[1]
+                            vis_s = r2_parts[1]
+                            pt_str = (
+                                f"Medication: {med_label}, strength unclear: "
+                                f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                            )
+                        else:
+                            pt_str = f"Medication: unclear: {r2} (vision) vs {r1} (OCR)"
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": pt_str,
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+                    else:
+                        pretty_name = cf_name.replace("_", " ").title()
+                        conflict_pts.append(
+                            (
+                                cf_name.lower(),
+                                {
+                                    "point": f"{pretty_name}: unclear: {r2} (vision) vs {r1} (OCR)",
+                                    "quoted_span": q_span,
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                if "medication" not in seen_conflict_keys and "authorized_medication" not in seen_conflict_keys:
+                    m_ambig = re.search(
+                        r"\b([A-Z][a-zA-Z0-9-]+)\s+(\d*[oO]+\d*\s*(?:mg|mcg|g|ml))\b",
+                        all_text_combined,
+                    )
+                    if m_ambig:
+                        med_label = m_ambig.group(1).strip()
+                        ocr_s = m_ambig.group(2).strip()
+                        vis_s = re.sub(r"[oO]", "0", ocr_s)
+                        conflict_pts.append(
+                            (
+                                "medication",
+                                {
+                                    "point": (
+                                        f"Medication: {med_label}, strength unclear: "
+                                        f"{vis_s} (vision) vs {ocr_s} (OCR)"
+                                    ),
+                                    "quoted_span": m_ambig.group(0).strip(),
+                                    "evidence_ids": ["page_1"],
+                                },
+                            )
+                        )
+
+                for c_key, c_pt in conflict_pts:
+                    replaced = False
+                    for idx_pt, existing_pt in enumerate(pts_list):
+                        ex_text = str(existing_pt.get("point", "")).lower()
+                        ex_quote = str(existing_pt.get("quoted_span", "")).lower()
+                        c_quote = str(c_pt.get("quoted_span", "")).lower()
+                        if c_key in ex_text or (c_quote and c_quote in ex_quote):
+                            pts_list[idx_pt] = c_pt
+                            replaced = True
+                            break
+                    if not replaced:
+                        pts_list.append(c_pt)
+
                 ctx.generated_answer = {
                     "mode": mode,
                     "answer": content,

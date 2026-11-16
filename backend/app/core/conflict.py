@@ -149,6 +149,37 @@ def resolve_document_version_order(
     return None
 
 
+def _extract_concise_older_value(newer_quote: str, older_val: str) -> str:
+    """Extract concise differing value when older_val repeats the full sentence."""
+    clean_older = older_val.strip().rstrip(".,;:!?") or older_val.strip()
+    clean_newer = newer_quote.strip().rstrip(".,;:!?")
+    if len(clean_older.split()) <= 4 or not clean_newer:
+        return clean_older
+    older_words = clean_older.split()
+    newer_words = clean_newer.split()
+    prefix_len = 0
+    while (
+        prefix_len < len(older_words)
+        and prefix_len < len(newer_words)
+        and older_words[prefix_len].lower() == newer_words[prefix_len].lower()
+    ):
+        prefix_len += 1
+    suffix_len = 0
+    while (
+        suffix_len < (len(older_words) - prefix_len)
+        and suffix_len < (len(newer_words) - prefix_len)
+        and older_words[len(older_words) - 1 - suffix_len].lower()
+        == newer_words[len(newer_words) - 1 - suffix_len].lower()
+    ):
+        suffix_len += 1
+    if prefix_len + suffix_len >= 2:
+        end_idx = len(older_words) - suffix_len if suffix_len > 0 else len(older_words)
+        diff_words = older_words[prefix_len:end_idx]
+        if diff_words:
+            return " ".join(diff_words).strip(".,;:!?")
+    return clean_older
+
+
 def format_version_conflict_answer(
     newer_doc: str,
     newer_quote: str,
@@ -156,16 +187,9 @@ def format_version_conflict_answer(
     older_doc: str,
     older_val: str,
 ) -> str:
-    """Format answer answering from newer version with a short line noting the older version."""
-    clean_newer = newer_quote.strip()
-    if not clean_newer.endswith((".", "!", "?")):
-        clean_newer += "."
-
-    clean_older_val = older_val.strip().rstrip(".,;:!?") or older_val.strip()
+    """Format answer stating the current value once and noting the older version."""
     clean_newer_val = newer_val.strip().rstrip(".,;:!?") or newer_val.strip()
+    clean_newer = newer_quote.strip().rstrip(".,;:!?") or clean_newer_val
+    clean_older_val = _extract_concise_older_value(clean_newer, older_val)
 
-    note_line = (
-        f"Note: An older version ({older_doc}) stated {clean_older_val}, "
-        f"while the newer version ({newer_doc}) specifies {clean_newer_val}."
-    )
-    return f"{clean_newer}\n{note_line}"
+    return f"{clean_newer} (updated in {newer_doc}; the older {older_doc} said {clean_older_val})."

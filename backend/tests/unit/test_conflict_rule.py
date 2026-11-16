@@ -74,7 +74,7 @@ def test_different_documents_cannot_determine_version_order():
 
 
 def test_format_version_conflict_answer():
-    """Formatting answers from newer version and notes older version, naming both files."""
+    """Formatting states the current value once and notes the older version, naming both files."""
     answer = format_version_conflict_answer(
         newer_doc="front_desk_policy_v2.pdf",
         newer_quote="Front desk intake fax number is 555-0102.",
@@ -82,28 +82,29 @@ def test_format_version_conflict_answer():
         older_doc="front_desk_policy_v1.pdf",
         older_val="555-0101",
     )
-    assert "Front desk intake fax number is 555-0102." in answer
-    assert "front_desk_policy_v1.pdf" in answer
-    assert "front_desk_policy_v2.pdf" in answer
-    assert "555-0101" in answer
-    assert "Note: An older version" in answer
+    assert answer == (
+        "Front desk intake fax number is 555-0102 "
+        "(updated in front_desk_policy_v2.pdf; the older front_desk_policy_v1.pdf said 555-0101)."
+    )
+    assert answer.count("555-0102") == 1
 
 
 def test_format_version_conflict_answer_strips_trailing_punctuation():
-    """Fix 5: trailing punctuation on quoted values is stripped so no '.,' or '..' appears."""
+    """Trailing punctuation on quoted values is stripped and current value appears once."""
     answer = format_version_conflict_answer(
-        newer_doc="policy_v2.pdf",
-        newer_quote="Appointments cancelled within 24 hours incur a fee.",
-        newer_val="24 hours.",
-        older_doc="policy_v1.pdf",
-        older_val="rescheduled.",
+        newer_doc="front_desk_policy_v2.pdf",
+        newer_quote="Patients should arrive 20 minutes before a routine appointment.",
+        newer_val="20 minutes.",
+        older_doc="front_desk_policy_v1.pdf",
+        older_val="15 minutes.",
     )
     assert ".," not in answer
     assert ".." not in answer
-    assert (
-        "Note: An older version (policy_v1.pdf) stated rescheduled, "
-        "while the newer version (policy_v2.pdf) specifies 24 hours."
-    ) in answer
+    assert answer == (
+        "Patients should arrive 20 minutes before a routine appointment "
+        "(updated in front_desk_policy_v2.pdf; the older front_desk_policy_v1.pdf said 15 minutes)."
+    )
+    assert answer.count("20 minutes") == 1
 
     answer_mixed = format_version_conflict_answer(
         newer_doc="policy_v2.pdf",
@@ -114,8 +115,10 @@ def test_format_version_conflict_answer_strips_trailing_punctuation():
     )
     assert ";," not in answer_mixed
     assert "!." not in answer_mixed
-    assert "stated 555-0101," in answer_mixed
-    assert "specifies 555-0102." in answer_mixed
+    assert answer_mixed == (
+        "Call 555-0102 (updated in policy_v2.pdf; the older policy_v1.pdf said 555-0101)."
+    )
+    assert answer_mixed.count("555-0102") == 1
 
 
 @pytest.mark.asyncio
@@ -219,3 +222,97 @@ async def test_node_assess_evidence_keeps_conflicting_when_order_undetermined():
     assert res["status"] == "conflicting"
     assert res["evidence_state"] == "CONFLICTING"
     assert "Two documents disagree" in ctx.response_text
+
+
+@pytest.mark.asyncio
+async def test_refusal_returns_one_clear_message_without_document_names():
+    """Stage T5: Refusals return one clear message with no list of document names."""
+    class RealRetrieverFake:
+        async def search_titles(self, *_args: Any, **_kwargs: Any) -> list[str]:
+            return ["front_desk_policy_v2.pdf", "prior_auth_guide.pdf"]
+
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(is_mock_profile=False, retriever=RealRetrieverFake()),  # type: ignore[arg-type]
+        tenant=TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-1",
+            role=UserRole.STAFF,
+            session_id="session-1",
+        ),
+        question_text="What is the cafeteria menu on Tuesday?",
+        active_document_count=5,
+    )
+    ctx.evidence_text = {}
+    ctx.candidate_scores = {}
+
+    runtime = MagicMock()
+    runtime.context = ctx
+    res = await node_assess_evidence({"evidence_ids": []}, runtime)
+
+    assert res["status"] == "refusal"
+    assert ctx.response_text == "I couldn't find that in this assistant's documents."
+    assert "I do have information on" not in ctx.response_text
+    assert "front_desk_policy_v2.pdf" not in ctx.response_text
+
+
+@pytest.mark.asyncio
+async def test_session_document_summary_includes_conflicting_field_both_readings():
+    """Stage T5: Summaries of an attached document mention CONFLICTING fields with both readings."""
+    from app.core.graph import node_generate, node_validate
+
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(is_mock_profile=True),
+        tenant=TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-1",
+            role=UserRole.STAFF,
+            session_id="session-1",
+        ),
+        question_text="Please summarize this fax.",
+        session_document_id="sdoc-skewed-1",
+        session_document_name="skewed_fax.pdf",
+        session_document_pages=[
+            {
+                "page_number": 1,
+                "text": (
+                    "URGENT FAX TRANSMISSION\n"
+                    "Patient: Alex Morgan (DOB: 09/14/1979)\n"
+                    "Prior authorization #PA-99812 is approved for Amoxicillin 5oOmg capsules.\n"
+                    "Dosage: Take 1 capsule by mouth three times daily for 10 days.\n"
+                    "Refills: 0\n"
+                    "Signed: Dr. Evelyn Vance, MD"
+                ),
+                "ocr_text": (
+                    "URGENT FAX TRANSMISSION\n"
+                    "Patient: Alex Morgan (DOB: 09/14/1979)\n"
+                    "Prior authorization #PA-99812 is approved for Amoxicillin 5oOmg capsules.\n"
+                    "Dosage: Take 1 capsule by mouth three times daily for 10 days.\n"
+                    "Refills: 0\n"
+                    "Signed: Dr. Evelyn Vance, MD"
+                ),
+                "conflicting_fields": [
+                    {
+                        "name": "authorized_medication",
+                        "state": "CONFLICTING",
+                        "value": None,
+                        "read1_value": "Amoxicillin 5oOmg",
+                        "read2_value": "Amoxicillin 500mg",
+                    }
+                ],
+            }
+        ],
+    )
+    runtime = MagicMock()
+    runtime.context = ctx
+
+    state: GraphState = {"route": "session_document", "answer_mode": "explain"}
+    gen_res = await node_generate(state, runtime)
+    assert gen_res["status"] == "in_progress"
+
+    val_res = await node_validate(state, runtime)
+    assert val_res["status"] == "completed"
+    assert (
+        "Medication: Amoxicillin, strength unclear: 500mg (vision) vs 5oOmg (OCR)"
+        in ctx.response_text
+    )
+

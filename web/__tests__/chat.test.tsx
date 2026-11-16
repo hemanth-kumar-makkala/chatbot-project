@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     getCurrentUser: vi.fn(),
     askQuestion: vi.fn(),
+    getDocumentTablePreview: vi.fn(),
     logout: vi.fn(),
   };
 });
@@ -141,6 +142,134 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     });
   });
 
+  it("clicking spreadsheet source chip clears previous PDF and renders table preview with cited row highlighted and scrolled into view", async () => {
+    vi.mocked(api.getDocumentTablePreview).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        version_id: "ver-xlsx-1",
+        document_title: "pa_turnaround_times.xlsx",
+        sheets: [
+          {
+            sheet_name: "Turnaround",
+            caption: "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***",
+            headers: ["Payer Name", "Service Category", "Urgency", "Standard SLA", "Liaison Contact"],
+            rows: [
+              {
+                row_number: 1,
+                cells: {
+                  "Payer Name": "Apex Health Insurance",
+                  "Service Category": "Diagnostic Imaging",
+                  Urgency: "Routine",
+                  "Standard SLA": "48 Hours",
+                  "Liaison Contact": "555-0120",
+                },
+              },
+              {
+                row_number: 3,
+                cells: {
+                  "Payer Name": "Beacon Mutual Healthcare",
+                  "Service Category": "Outpatient Therapy",
+                  Urgency: "Routine",
+                  "Standard SLA": "72 Hours",
+                  "Liaison Contact": "555-0121",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    vi.mocked(api.askQuestion)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: {
+          request_id: "req-pdf-1",
+          tenant_id: "ten-1",
+          conversation_id: "conv-1",
+          message_id: "msg-pdf-1",
+          status: "answered",
+          answer: "Standard clinic hours are 9am to 5pm.",
+          citations: ["c1"],
+          evidence_type: "text",
+          sources: [
+            {
+              document_title: "prior_auth_guide.pdf",
+              version: "1",
+              version_id: "ver-pdf-1",
+              page_number: 2,
+              evidence_type: "text",
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: {
+          request_id: "req-table-2",
+          tenant_id: "ten-1",
+          conversation_id: "conv-1",
+          message_id: "msg-table-2",
+          status: "answered",
+          answer: "Routine requests take 48 to 72 hours.",
+          answer_mode: "table",
+          citations: ["t1"],
+          evidence_type: "table",
+          sources: [
+            {
+              document_title: "pa_turnaround_times.xlsx",
+              version: "1",
+              version_id: "ver-xlsx-1",
+              page_number: null,
+              sheet_name: "Turnaround",
+              row_number: 3,
+              evidence_type: "table",
+            },
+          ],
+        },
+      });
+
+    await renderChatPage();
+
+    const input = await screen.findByPlaceholderText(/Ask a question/i);
+    // 1. Ask PDF question and open PDF source chip
+    fireEvent.change(input, { target: { value: "hours?" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+    const pdfChip = await screen.findByTestId("source-chip-prior_auth_guide.pdf");
+    fireEvent.click(pdfChip);
+
+    expect(await screen.findByTestId("source-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("source-panel-doc-title")).toHaveTextContent("prior_auth_guide.pdf");
+
+    // 2. Ask spreadsheet question and click spreadsheet source chip
+    fireEvent.change(input, { target: { value: "turnaround time?" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+    const xlsxChip = await screen.findByTestId("source-chip-pa_turnaround_times.xlsx");
+    const scrollIntoViewMock = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+
+    fireEvent.click(xlsxChip);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("source-panel-doc-title")).toHaveTextContent(
+        "pa_turnaround_times.xlsx"
+      );
+      expect(screen.getByTestId("source-panel-table-preview")).toBeInTheDocument();
+      expect(screen.queryByText(/Invalid PDF structure/i)).not.toBeInTheDocument();
+      expect(screen.getByTestId("source-table-sheet-name")).toHaveTextContent("Turnaround");
+      expect(screen.getByText("Beacon Mutual Healthcare")).toBeInTheDocument();
+    });
+
+    const row3 = screen.getByTestId("source-table-row-3");
+    expect(row3).toHaveAttribute("data-highlighted", "true");
+    expect(scrollIntoViewMock).toHaveBeenCalled();
+  });
+
   it("renders visual badge when evidence_type is visual", async () => {
     vi.mocked(api.askQuestion).mockResolvedValue({
       ok: true,
@@ -187,7 +316,8 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
         conversation_id: "conv-1",
         message_id: "msg-3",
         status: "refusal",
-        answer: "I couldn't confirm that from the documents.",
+        answer:
+          "I couldn't confirm that from the documents. I do have information on:\n- front_desk_policy_v2.pdf",
         citations: [],
         sources: [
           {
@@ -207,10 +337,12 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/I couldn't confirm that from the documents/i)).toBeInTheDocument();
-      expect(screen.getByText(/No supporting evidence found in the documents/i)).toBeInTheDocument();
+      expect(screen.getByText(/I couldn't confirm that from the documents\./i)).toBeInTheDocument();
       expect(screen.getByText(/Refusal/i)).toBeInTheDocument();
     });
+    expect(screen.queryByText(/No supporting evidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("refusal-no-evidence-note")).not.toBeInTheDocument();
+    expect(screen.queryByText(/front_desk_policy_v2\.pdf/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("chat-source-chips")).not.toBeInTheDocument();
   });
 
@@ -342,7 +474,7 @@ describe("ChatPage Component (Phase 3 UI First)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Send/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("Received an unexpected response format. Please try again.")).toBeInTheDocument();
+      expect(screen.getByText("Unable to complete this request. Please try again.")).toBeInTheDocument();
     });
   });
 

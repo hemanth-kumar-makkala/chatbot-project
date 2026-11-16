@@ -9,13 +9,21 @@ Verifies:
 
 from __future__ import annotations
 
+from typing import Any, cast
 from uuid import uuid4
 
+import pytest
+from langgraph.runtime import Runtime
+
 from app.core.graph import (
+    GraphPorts,
+    GraphRuntimeContext,
+    GraphState,
     _format_table_answer_text,
     _select_matching_table_rows,
+    node_generate,
 )
-from app.ports.types import TableCandidate
+from app.ports.types import ModelResponse, TableCandidate, TenantContext, UserRole
 
 
 def _create_pa_table_candidates() -> dict[str, TableCandidate]:
@@ -295,3 +303,66 @@ def test_format_table_answer_uses_stored_headers_only_never_infers_from_first_da
     # Never infers "Payer Name" or "Service Category" from row 1 values
     assert "Payer Name:" not in content
     assert "Service Category:" not in content
+
+
+@pytest.mark.asyncio
+async def test_node_generate_table_returns_all_three_routine_rows_when_model_cites_one() -> None:
+    """Stage T3: Asking 'what is the turnaround time for a routine prior authorization?'
+    must return all 3 matching routine rows, start with the plain lead sentence from Stage R2,
+    and show real column names including Payer Name even when the LLM cites only 1 row.
+    """
+
+    class _SingleRowModel:
+        async def generate(self, **kwargs: Any) -> ModelResponse:
+            _ = kwargs
+            return ModelResponse(
+                content='{"answer": "72 hours", "evidence_ids": ["row-6"]}',
+                model_id="mock-model",
+                model_version="1.0",
+                structured_output={
+                    "answer": "72 hours",
+                    "evidence_ids": ["row-6"],
+                    "quoted_span": None,
+                },
+            )
+
+    class _MockRuntime:
+        def __init__(self, context: GraphRuntimeContext) -> None:
+            self.context = context
+
+    tcs = _create_pa_table_candidates()
+    ctx = GraphRuntimeContext(
+        ports=GraphPorts(is_mock_profile=False, model_provider=cast(Any, _SingleRowModel())),
+        tenant=TenantContext(
+            tenant_id="00000000-0000-0000-0000-000000000001",
+            user_id="user-1",
+            role=UserRole.STAFF,
+            session_id="sess-1",
+        ),
+        question_text="what is the turnaround time for a routine prior authorization?",
+        table_candidates=tcs,
+        candidate_evidence_types=dict.fromkeys(tcs, "table"),
+        evidence_text={
+            rid: (
+                f"[Document: {tc.document_title}, Sheet: {tc.sheet_name}, Row: {tc.row_index}] "
+                + ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
+            )
+            for rid, tc in tcs.items()
+        },
+    )
+    state: GraphState = {
+        "route": "knowledge",
+        "answer_mode": "table",
+        "evidence_ids": list(tcs.keys()),
+    }
+
+    res = await node_generate(state, cast(Runtime[GraphRuntimeContext], _MockRuntime(ctx)))
+    assert res["evidence_ids"] == ["row-2", "row-4", "row-6"]
+
+    lines = ctx.response_text.splitlines()
+    assert lines[0] == "Routine requests take 48 to 72 hours depending on payer and service."
+    assert len(lines) == 4
+    assert "Payer Name: Apex Health Insurance" in lines[1]
+    assert "Payer Name: Beacon Mutual Healthcare" in lines[2]
+    assert "Payer Name: Summit Care Plan" in lines[3]
+

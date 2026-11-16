@@ -26,6 +26,7 @@ from app.db.models import (
     Document,
     DocumentVersion,
     Membership,
+    TableData,
     Tenant,
     User,
 )
@@ -221,6 +222,166 @@ async def test_reprocess_document_success(test_app, api_settings: ApiSettings) -
     )
     copied_bytes = await storage.get(key_new)
     assert copied_bytes == file_content
+
+
+@pytest.mark.asyncio
+async def test_reprocess_xlsx_document_ingests_headers_and_caption_cleanly(
+    test_app, api_settings: ApiSettings
+) -> None:
+    """Stage T3: Reprocessing pa_turnaround_times.xlsx through the API ingests the spreadsheet
+    using header & caption detection (row 1 title becomes caption, row 2 becomes headers)
+    and replaces legacy Column_2..Column_5 rows with real column names.
+    """
+    tenant_id = uuid4()
+    async with unscoped_session() as session:
+        session.add(Tenant(id=tenant_id, name="Reprocess XLSX Tenant"))
+        await session.flush()
+
+    admin_user, admin_email, password = await _create_test_user_with_role(
+        tenant_id, "client_admin"
+    )
+
+    asst_id = uuid4()
+    doc_id = uuid4()
+    ver_1_id = uuid4()
+    xlsx_path = (
+        Path(__file__).resolve().parent.parent.parent.parent
+        / "evals"
+        / "golden"
+        / "docs"
+        / "pa_turnaround_times.xlsx"
+    )
+    xlsx_bytes = xlsx_path.read_bytes()
+
+    ctx = TenantContext(
+        tenant_id=str(tenant_id),
+        user_id=str(admin_user.id),
+        role=UserRole.CLIENT_ADMIN,
+        session_id="seed-xlsx",
+    )
+    async with tenant_session(ctx) as session:
+        session.add(
+            Assistant(
+                id=asst_id,
+                tenant_id=tenant_id,
+                name="Reprocess XLSX Asst",
+                prompt_id="default",
+                prompt_version="1.0",
+            )
+        )
+        session.add(
+            Document(
+                id=doc_id,
+                tenant_id=tenant_id,
+                title="pa_turnaround_times.xlsx",
+                active_version_id=ver_1_id,
+            )
+        )
+        session.add(
+            DocumentVersion(
+                id=ver_1_id,
+                tenant_id=tenant_id,
+                document_id=doc_id,
+                sha256="sha-xlsx-test-01",
+                uploaded_by=admin_user.id,
+                status="ready",
+                file_extension="xlsx",
+            )
+        )
+        # Seed legacy Column_2..Column_5 row on ver_1
+        session.add(
+            TableData(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                document_version_id=ver_1_id,
+                sheet_name="Sheet1",
+                page_id=None,
+                table_index=0,
+                row_index=6,
+                row_data={
+                    "cells": {
+                        "Column_2": "Standard Clinical Review",
+                        "Column_3": "Routine",
+                        "Column_4": "72 Hours",
+                        "Column_5": "555-0123",
+                    },
+                    "unreadable": [],
+                },
+            )
+        )
+        await session.flush()
+
+    storage = create_storage_backend(
+        profile=api_settings.profile,
+        base_dir=api_settings.storage_dir,
+    )
+    key_v1 = StorageKey(
+        tenant_id=tenant_id,
+        path=f"documents/{ver_1_id}/original.xlsx",
+    )
+    await storage.put(
+        key_v1,
+        xlsx_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        cookies, csrf = await _login_and_get_session(client, admin_email, password)
+        client.cookies.update(cookies)
+
+        url = f"/v1/assistants/{asst_id}/knowledge/documents/{doc_id}/reprocess"
+        resp = await client.post(url, headers={"X-CSRF-Token": csrf})
+        assert resp.status_code == 202
+        data = resp.json()
+        new_version_id = UUID(data["document_version_id"])
+
+        # Stage T4: Verify table preview endpoint returns sheet name, headers, and rows
+        preview_url = f"/v1/assistants/{asst_id}/knowledge/documents/{new_version_id}/table"
+        preview_resp = await client.get(preview_url)
+        assert preview_resp.status_code == 200
+        preview_data = preview_resp.json()
+        assert preview_data["version_id"] == str(new_version_id)
+        assert len(preview_data["sheets"]) == 1
+        sheet0 = preview_data["sheets"][0]
+        assert sheet0["sheet_name"] == "Sheet1"
+        assert sheet0["headers"] == [
+            "Payer Name",
+            "Service Category",
+            "Urgency",
+            "Standard SLA",
+            "Liaison Contact",
+        ]
+        assert len(sheet0["rows"]) == 5
+        assert sheet0["rows"][0]["row_number"] == 1
+        assert sheet0["rows"][0]["cells"]["Payer Name"] == "Apex Health Insurance"
+
+    async with tenant_session(ctx) as session:
+        doc = (
+            await session.execute(select(Document).where(Document.id == doc_id))
+        ).scalar_one()
+        assert doc.active_version_id == new_version_id
+
+        rows = (
+            await session.execute(
+                select(TableData)
+                .where(TableData.document_version_id == new_version_id)
+                .order_by(TableData.row_index)
+            )
+        ).scalars().all()
+        assert len(rows) == 5
+        expected_keys = {
+            "Payer Name",
+            "Service Category",
+            "Urgency",
+            "Standard SLA",
+            "Liaison Contact",
+        }
+        for r in rows:
+            assert r.row_data.get("caption") == (
+                "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+            )
+            assert set(r.row_data["cells"].keys()) == expected_keys
 
 
 @pytest.mark.asyncio

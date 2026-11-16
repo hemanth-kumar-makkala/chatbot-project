@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from pydantic import BaseModel
 
-from app.core.extraction.dual_read import dual_read_compare
+from app.core.extraction.dual_read import _clean_str, dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
 from app.core.normalization import normalize_dates
 from app.core.safety_lock import is_vision_model
@@ -66,6 +66,53 @@ Rules:
 """
 
 
+_KNOWN_FIELD_LABEL_RE = re.compile(
+    r"(?<!^)(?<![\r\n])[^\S\r\n]+"
+    r"((?:"
+    r"Patient[^\S\r\n]+Name|"
+    r"Chart[^\S\r\n]+Number|Chart[^\S\r\n]*#|"
+    r"Authorized[^\S\r\n]+Medication|"
+    r"Authorization[^\S\r\n]+Date|Appointment[^\S\r\n]+Date|"
+    r"Refill[^\S\r\n]+count|Refills?|"
+    r"Clinic[^\S\r\n]+Phone|Referring[^\S\r\n]+Provider[^\S\r\n]+Phone|"
+    r"Ordering[^\S\r\n]+Clinician[^\S\r\n]+Signature|Prescriber[^\S\r\n]+Signature|"
+    r"Procedure[^\S\r\n]+Ordered|"
+    r"Facility[^\S\r\n]+Location|"
+    r"Clinical[^\S\r\n]+Justification|"
+    r"Pain(?:[^\S\r\n]+scale)?[^\S\r\n]+score|"
+    r"Prescriber[^\S\r\n]+NPI|"
+    r"Secondary[^\S\r\n]+Insurance|"
+    r"Emergency[^\S\r\n]+Override|"
+    r"Dosage|Medication|Date|Patient|NPI|Attn"
+    r")[^\S\r\n]*:)",
+    re.IGNORECASE,
+)
+
+_ANY_TRAILING_LABEL_RE = re.compile(
+    r"[^\S\r\n]+[A-Z][A-Za-z0-9#]*(?:[^\S\r\n]+[A-Za-z0-9#]+){0,3}[^\S\r\n]*:.*$"
+)
+
+
+def _stop_at_next_label(value: str) -> str:
+    """Truncate a captured OCR field value before any inline 'Label:' pattern."""
+    cleaned = _ANY_TRAILING_LABEL_RE.sub("", value).strip()
+    # Also strip trailing partial label words if regex stopped right at ':'
+    cleaned = re.sub(
+        r"[^\S\r\n]+(?:"
+        r"Chart[^\S\r\n]+Number|Authorization[^\S\r\n]+Date|Authorized[^\S\r\n]+Medication|"
+        r"Prescriber[^\S\r\n]+NPI|Prescriber[^\S\r\n]+Signature|"
+        r"Ordering[^\S\r\n]+Clinician[^\S\r\n]+Signature|"
+        r"Clinic[^\S\r\n]+Phone|Referring[^\S\r\n]+Provider[^\S\r\n]+Phone|Patient[^\S\r\n]+Name|"
+        r"Refill[^\S\r\n]+count|Appointment[^\S\r\n]+Date|Facility[^\S\r\n]+Location|"
+        r"Clinical[^\S\r\n]+Justification|Procedure[^\S\r\n]+Ordered|Secondary[^\S\r\n]+Insurance"
+        r")$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
+
 def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[str, float]]:
     """Extract structured field candidates and confidences from OCR text."""
     fields: dict[str, Any] = {}
@@ -73,6 +120,9 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
 
     if not ocr_text or not ocr_text.strip():
         return fields, confidences
+
+    # Segment inline 'Label:' boundaries onto separate lines so no field bleeds into the next
+    ocr_text = _KNOWN_FIELD_LABEL_RE.sub(r"\n\1", ocr_text)
 
     # 1. Patient Name
     m_label_pat = re.search(
@@ -346,14 +396,24 @@ def extract_fields_from_ocr_text(ocr_text: str) -> tuple[dict[str, Any], dict[st
         re.IGNORECASE,
     )
     if m_sec:
-        sec_val = m_sec.group(1).strip()
-        if not sec_val or sec_val.lower() in ("none", "n/a", "null", "[blank]"):
-            fields["secondary_insurance"] = None
-        else:
-            fields["secondary_insurance"] = sec_val
+        sec_val = _stop_at_next_label(m_sec.group(1).strip())
+        fields["secondary_insurance"] = _clean_str(sec_val)
         confidences["secondary_insurance"] = 0.95
 
-    return fields, confidences
+    # Clean all extracted values: stop at next 'Label:' and treat empty/'null'/'none'/'n/a' as None
+    cleaned_fields: dict[str, Any] = {}
+    for k, v in list(fields.items()):
+        if isinstance(v, str) and not v.lower().startswith("[unreadable"):
+            v = _stop_at_next_label(v)
+        c_val = _clean_str(v)
+        if c_val is not None:
+            cleaned_fields[k] = c_val
+        elif k == "secondary_insurance":
+            cleaned_fields[k] = None
+        else:
+            confidences.pop(k, None)
+
+    return cleaned_fields, confidences
 
 
 def parse_vision_json_reading(raw_reading: str) -> dict[str, Any]:
@@ -365,18 +425,18 @@ def parse_vision_json_reading(raw_reading: str) -> dict[str, Any]:
     try:
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
-            return parsed
+            return {k: _clean_str(v) for k, v in parsed.items()}
     except Exception:
         m = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if m:
             try:
                 parsed = json.loads(m.group(0))
                 if isinstance(parsed, dict):
-                    return parsed
+                    return {k: _clean_str(v) for k, v in parsed.items()}
             except Exception:
                 pass
     fallback_fields, _ = extract_fields_from_ocr_text(raw_reading)
-    return fallback_fields
+    return {k: _clean_str(v) for k, v in fallback_fields.items()}
 
 
 async def node_extract_fields(
@@ -453,15 +513,15 @@ async def node_extract_fields(
                         schema=OcrDosageExtraction,
                         max_tokens=150,
                     )
-                    if ocr_model_res.structured_output and ocr_model_res.structured_output.get(
-                        "dosage"
-                    ):
-                        dos_str = str(ocr_model_res.structured_output["dosage"]).strip().rstrip(".")
-                        if dos_str and not re.search(
-                            r"\b(?:Patient|Refill|Chart)\b", dos_str, re.IGNORECASE
-                        ):
-                            page_ocr["dosage"] = dos_str
-                            page_conf["dosage"] = 0.95
+                    if ocr_model_res.structured_output:
+                        clean_dos = _clean_str(ocr_model_res.structured_output.get("dosage"))
+                        if clean_dos:
+                            dos_str = _stop_at_next_label(clean_dos).rstrip(".")
+                            if dos_str and not re.search(
+                                r"\b(?:Patient|Refill|Chart)\b", dos_str, re.IGNORECASE
+                            ):
+                                page_ocr["dosage"] = dos_str
+                                page_conf["dosage"] = 0.95
                 except Exception:
                     pass
 

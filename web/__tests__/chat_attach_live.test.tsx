@@ -130,9 +130,16 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
     expect(api.uploadSessionDocument).toHaveBeenCalledTimes(1);
     expect(api.extractSessionDocument).toHaveBeenCalledTimes(0);
 
-    // 2. Document card is shown at the top of the conversation
+    // 2. Document card is merged into the bottom attachment bar above the input, not in the top chat stream
     await waitFor(() => {
-      expect(screen.getByTestId("session-document-card")).toBeInTheDocument();
+      const inputBar = screen.getByTestId("chat-input-bar");
+      const messagesStream = screen.getByTestId("chat-messages-stream");
+      const docCard = screen.getByTestId("session-document-card");
+      expect(inputBar).toContainElement(docCard);
+      expect(messagesStream).not.toContainElement(docCard);
+      expect(screen.getByTestId("session-document-indicator")).toHaveTextContent(
+        "Session document attached"
+      );
       expect(screen.getByTestId("attached-doc-filename")).toHaveTextContent("skewed_fax.pdf");
       expect(screen.getByTestId("attached-doc-page-count")).toHaveTextContent("1 page");
       expect(screen.getByTestId("attached-doc-retention")).toHaveTextContent(
@@ -141,25 +148,30 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       expect(screen.getByTestId("extract-fields-button")).toBeInTheDocument();
     });
 
-    // 3. Clicking "Extract fields" runs the extraction subgraph exactly once
+    // 3. Clicking "Extract fields" calls only extractSessionDocument, never askQuestion, and never posts a user chat message
     const extractBtn = screen.getByTestId("extract-fields-button");
     await act(async () => {
       fireEvent.click(extractBtn);
     });
 
     expect(api.extractSessionDocument).toHaveBeenCalledTimes(1);
+    expect(api.askQuestion).toHaveBeenCalledTimes(0);
 
     await waitFor(() => {
       expect(screen.getByTestId("extraction-split-view")).toBeInTheDocument();
       expect(screen.getByTestId("extraction-page-image")).toBeInTheDocument();
       expect(screen.getByText("Alex Morgan")).toBeInTheDocument();
       expect(screen.getByText("Amoxicillin 500mg")).toBeInTheDocument();
+      // Only 1 chat message rendered (the assistant extraction result), no user chat message posted
+      const chatMessages = screen.getAllByTestId("chat-message");
+      expect(chatMessages).toHaveLength(1);
       // "reading it now..." disappears after extraction finishes
       expect(screen.queryByTestId("live-extracting-status")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("extraction-status-line")).not.toBeInTheDocument();
     });
   });
 
-  it("extraction request shows 'Still working, loading the vision model...' after 10s and never shows unexpected response format", async () => {
+  it("extraction request shows 'Still working, loading the vision model...' after 10s and removes it on success and on failure", async () => {
     vi.mocked(api.uploadSessionDocument).mockResolvedValue({
       ok: true,
       status: 200,
@@ -212,10 +224,44 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       "Still working, loading the vision model..."
     );
 
-    // Now resolve delayed extraction
+    // Now resolve delayed extraction with failure first to prove line disappears on failure with clear message
     await act(async () => {
       if (resolveExtraction) {
         resolveExtraction({
+          ok: false,
+          status: 500,
+          code: "EXTRACTION_FAILED",
+        });
+      }
+    });
+
+    expect(screen.queryByTestId("live-extracting-status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Still working, loading the vision model/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("live-extraction-error")).toHaveTextContent(
+      /Unable to extract fields \(EXTRACTION_FAILED\)\. Please try again\./i
+    );
+
+    // Retry and resolve with success to prove line also disappears on success
+    let resolveSuccess: ((val: unknown) => void) | undefined;
+    const delayedSuccess = new Promise((resolve) => {
+      resolveSuccess = resolve;
+    });
+    vi.mocked(api.extractSessionDocument).mockReturnValue(delayedSuccess as unknown as ReturnType<typeof api.extractSessionDocument>);
+
+    await act(async () => {
+      fireEvent.click(extractBtn);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(screen.getByTestId("live-extracting-status")).toHaveTextContent(
+      "Still working, loading the vision model..."
+    );
+
+    await act(async () => {
+      if (resolveSuccess) {
+        resolveSuccess({
           ok: true,
           status: 200,
           data: {
@@ -239,7 +285,8 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
       }
     });
 
-    expect(screen.queryByText(/unexpected response format/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("live-extracting-status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Still working, loading the vision model/i)).not.toBeInTheDocument();
     expect(screen.getByText("Alex Morgan")).toBeInTheDocument();
 
     vi.useRealTimers();

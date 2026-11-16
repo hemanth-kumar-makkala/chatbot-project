@@ -23,7 +23,7 @@ from app.api.deps import (
     get_tenant_context_for_assistant,
     validate_csrf,
 )
-from app.db.models import AuditEvent, Document, DocumentVersion, Page
+from app.db.models import AuditEvent, Document, DocumentVersion, Page, TableData
 from app.db.session import tenant_session
 from app.ports.errors import (
     AuthorizationError,
@@ -42,6 +42,7 @@ from app.ports.types import ReviewPageInfo, StorageKey, TenantContext, UploadPay
 from app.wiring import (
     create_document_repository,
     create_storage_backend,
+    create_table_ingestion_service,
     create_upload_service,
 )
 from app.worker import app as worker_app
@@ -109,6 +110,30 @@ class ReprocessDocumentResponse(BaseModel):
     document_id: str
     document_version_id: str
     status: str = "queued"
+
+
+class TablePreviewRow(BaseModel):
+    """Single row in a spreadsheet source preview."""
+
+    row_number: int
+    cells: dict[str, Any]
+
+
+class TablePreviewSheet(BaseModel):
+    """Sheet in a spreadsheet source preview."""
+
+    sheet_name: str
+    caption: str | None = None
+    headers: list[str]
+    rows: list[TablePreviewRow]
+
+
+class TablePreviewResponse(BaseModel):
+    """Structured table preview payload for XLSX and CSV sources."""
+
+    version_id: str
+    document_title: str
+    sheets: list[TablePreviewSheet]
 
 
 @router.post(
@@ -438,6 +463,118 @@ async def get_document_file(
     )
 
 
+@router.get("/documents/{version_id}/table", response_model=TablePreviewResponse)
+async def get_document_table_preview(
+    assistant_id: str,
+    version_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context_for_assistant)],
+) -> TablePreviewResponse:
+    """Return structured sheet, header, and row preview for spreadsheet/CSV sources.
+
+    Allowed for client_admin and staff of the tenant.
+    Tenant-scoped: returns 404 if document version does not belong to tenant.
+    """
+    del assistant_id
+    tid = UUID(tenant.tenant_id)
+    preferred_col_order = (
+        "Payer Name",
+        "Service Category",
+        "Urgency",
+        "Standard SLA",
+        "Liaison Contact",
+    )
+
+    async with tenant_session(tenant) as session:
+        doc_stmt = (
+            select(DocumentVersion, Document)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                DocumentVersion.id == version_id,
+                DocumentVersion.tenant_id == tid,
+                Document.tenant_id == tid,
+            )
+        )
+        res = (await session.execute(doc_stmt)).first()
+        if res is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document version not found",
+            )
+        _doc_ver, doc = res
+
+        t_stmt = (
+            select(TableData)
+            .where(
+                TableData.tenant_id == tid,
+                TableData.document_version_id == version_id,
+            )
+            .order_by(TableData.sheet_name, TableData.table_index, TableData.row_index)
+        )
+        t_rows = (await session.execute(t_stmt)).scalars().all()
+
+        sheets_map: dict[str, dict[str, Any]] = {}
+        for tr in t_rows:
+            sh_name = tr.sheet_name
+            r_data = tr.row_data if isinstance(tr.row_data, dict) else {}
+            cells = r_data.get("cells", {}) if isinstance(r_data.get("cells"), dict) else {}
+            caption = r_data.get("caption") if isinstance(r_data.get("caption"), str) else None
+
+            if sh_name not in sheets_map:
+                sheets_map[sh_name] = {
+                    "caption": caption,
+                    "headers_list": [],
+                    "rows": [],
+                }
+            sh_entry = sheets_map[sh_name]
+            if sh_entry["caption"] is None and caption:
+                sh_entry["caption"] = caption
+
+            for k in cells:
+                k_str = str(k)
+                if k_str.lower() == "caption" or k_str.startswith("***"):
+                    continue
+                if k_str not in sh_entry["headers_list"]:
+                    sh_entry["headers_list"].append(k_str)
+
+            sh_entry["rows"].append(
+                TablePreviewRow(
+                    row_number=tr.row_index,
+                    cells=cells,
+                )
+            )
+
+        sheets_out: list[TablePreviewSheet] = []
+        for sh_name, sh_entry in sheets_map.items():
+            raw_headers: list[str] = sh_entry["headers_list"]
+            ordered_headers = [h for h in preferred_col_order if h in raw_headers] + [
+                h for h in raw_headers if h not in preferred_col_order
+            ]
+            sheets_out.append(
+                TablePreviewSheet(
+                    sheet_name=sh_name,
+                    caption=sh_entry["caption"],
+                    headers=ordered_headers,
+                    rows=sh_entry["rows"],
+                )
+            )
+
+        audit = AuditEvent(
+            tenant_id=tid,
+            user_id=UUID(tenant.user_id),
+            event_type="knowledge_compliance",
+            action="document_table_viewed",
+            resource_id=str(version_id),
+        )
+        session.add(audit)
+        await session.flush()
+
+    return TablePreviewResponse(
+        version_id=str(version_id),
+        document_title=doc.title,
+        sheets=sheets_out,
+    )
+
+
 @router.get("/documents/{version_id}/pages/{page_number}/thumbnail")
 async def get_page_thumbnail(
     assistant_id: str,
@@ -660,22 +797,32 @@ async def reprocess_document(
             )
             session.add(audit)
             await session.flush()
+
+            if ext in ("csv", "xlsx"):
+                table_svc = create_table_ingestion_service(session)
+                await table_svc.ingest_table_file(
+                    tenant_id=UUID(tenant.tenant_id),
+                    document_version_id=new_version_id,
+                    file=file_bytes,
+                    extension=ext,
+                )
         except Exception:
             await storage.delete(new_key)
             raise
 
-    # 5. Enqueue split job with IDs only
-    try:
-        await split_document_job.defer_async(
-            tenant_id=tenant.tenant_id,
-            document_version_id=str(new_version_id),
-        )
-    except Exception:
-        async with worker_app.open_async():
+    # 5. Enqueue split job with IDs only (for non-table documents; tables are ingested above)
+    if ext not in ("csv", "xlsx"):
+        try:
             await split_document_job.defer_async(
                 tenant_id=tenant.tenant_id,
                 document_version_id=str(new_version_id),
             )
+        except Exception:
+            async with worker_app.open_async():
+                await split_document_job.defer_async(
+                    tenant_id=tenant.tenant_id,
+                    document_version_id=str(new_version_id),
+                )
 
     return ReprocessDocumentResponse(
         document_id=str(document_id),

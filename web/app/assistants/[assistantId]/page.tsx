@@ -70,6 +70,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   const [activeSourceDoc, setActiveSourceDoc] = useState("");
   const [activeSourcePage, setActiveSourcePage] = useState<number>(1);
   const [activeSourceVersionId, setActiveSourceVersionId] = useState<string | undefined>(undefined);
+  const [activeSourceSheet, setActiveSourceSheet] = useState<string | undefined>(undefined);
+  const [activeSourceRow, setActiveSourceRow] = useState<number | undefined>(undefined);
   const [liveSourceWarning, setLiveSourceWarning] = useState(false);
 
   // Session upload & extraction state (Invariant 7)
@@ -81,6 +83,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractingStatusLine, setExtractingStatusLine] = useState<string | null>(null);
   const liveFileInputRef = useRef<HTMLInputElement | null>(null);
+  const visionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Feedback state (Task 5.5)
   const [feedbackMap, setFeedbackMap] = useState<
@@ -122,6 +125,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (visionTimerRef.current) {
+        clearTimeout(visionTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === "function") {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
@@ -141,7 +152,11 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     try {
       const res = await uploadSessionDocument(assistantId, activeConvId, file);
       if (!res.ok) {
-        setLiveExtractionError(res.code || "UPLOAD_FAILED");
+        setLiveExtractionError(
+          res.code
+            ? `Unable to upload document (${res.code}). Please try again.`
+            : "Unable to upload document. Please try again."
+        );
         return;
       }
 
@@ -201,13 +216,17 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         setMessages((prev) => [...prev, asstMsg]);
       }
     } catch {
-      setLiveExtractionError("UPLOAD_FAILED");
+      setLiveExtractionError("Unable to upload document (UPLOAD_FAILED). Please try again.");
     } finally {
       setIsUploading(false);
     }
   }
 
-  async function handleExtractFields() {
+  async function handleExtractFields(e?: React.MouseEvent<HTMLButtonElement>) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (
       !attachedDoc ||
       !attachedDoc.session_document_id ||
@@ -219,12 +238,17 @@ export default function AssistantHomePage({ params }: HomePageProps) {
       return;
     }
 
+    if (visionTimerRef.current) {
+      clearTimeout(visionTimerRef.current);
+      visionTimerRef.current = null;
+    }
+
     setIsExtracting(true);
     setExtractingStatusLine("Page 1 is a scanned image, reading it now...");
     setLiveExtractionError(null);
 
     // Stage M: After 10s show loading vision model notice
-    const visionModelTimer = setTimeout(() => {
+    visionTimerRef.current = setTimeout(() => {
       setExtractingStatusLine("Still working, loading the vision model...");
     }, 10_000);
 
@@ -235,9 +259,16 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         activeConvId,
         attachedDoc.session_document_id
       );
-      clearTimeout(visionModelTimer);
+      if (visionTimerRef.current) {
+        clearTimeout(visionTimerRef.current);
+        visionTimerRef.current = null;
+      }
       if (!res.ok) {
-        setLiveExtractionError(res.code || "EXTRACTION_FAILED");
+        setLiveExtractionError(
+          res.code
+            ? `Unable to extract fields (${res.code}). Please try again.`
+            : "Unable to extract fields from the attached document. Please try again."
+        );
         return;
       }
 
@@ -277,10 +308,16 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
       setMessages((prev) => [...prev, asstMsg]);
     } catch {
-      clearTimeout(visionModelTimer);
-      setLiveExtractionError("EXTRACTION_FAILED");
+      if (visionTimerRef.current) {
+        clearTimeout(visionTimerRef.current);
+        visionTimerRef.current = null;
+      }
+      setLiveExtractionError("Unable to extract fields (EXTRACTION_FAILED). Please try again.");
     } finally {
-      clearTimeout(visionModelTimer);
+      if (visionTimerRef.current) {
+        clearTimeout(visionTimerRef.current);
+        visionTimerRef.current = null;
+      }
       setIsExtracting(false);
       setExtractingStatusLine(null);
     }
@@ -288,6 +325,10 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
   // "New chat" button always starts an empty conversation
   function handleNewChat() {
+    if (visionTimerRef.current) {
+      clearTimeout(visionTimerRef.current);
+      visionTimerRef.current = null;
+    }
     setMessages([]);
     setConversationId(null);
     setInputValue("");
@@ -383,10 +424,18 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     setReasonComments("");
   }
 
-  function handleOpenSource(docTitle: string, pageNumber: number = 1, versionId?: string) {
+  function handleOpenSource(
+    docTitle: string,
+    pageNumber: number = 1,
+    versionId?: string | null,
+    sheetName?: string | null,
+    rowNumber?: number | null
+  ) {
     setActiveSourceDoc(docTitle);
     setActiveSourcePage(pageNumber);
-    setActiveSourceVersionId(versionId);
+    setActiveSourceVersionId(versionId ?? undefined);
+    setActiveSourceSheet(sheetName ?? undefined);
+    setActiveSourceRow(rowNumber ?? undefined);
     setSourcePanelOpen(true);
     if (isLiveAssistant && !versionId) {
       setLiveSourceWarning(true);
@@ -612,17 +661,19 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             </span>
           </div>
 
-          <div
-            data-testid="extraction-status-line"
-            style={{
-              fontSize: "var(--font-size-xs)",
-              color: "var(--color-text-secondary)",
-              fontWeight: 600,
-              marginBottom: "var(--spacing-3)",
-            }}
-          >
-            › Page {pageNum} is a scanned image, reading it now...
-          </div>
+          {!isLiveAssistant && (
+            <div
+              data-testid="extraction-status-line"
+              style={{
+                fontSize: "var(--font-size-xs)",
+                color: "var(--color-text-secondary)",
+                fontWeight: 600,
+                marginBottom: "var(--spacing-3)",
+              }}
+            >
+              › Page {pageNum} is a scanned image, reading it now...
+            </div>
+          )}
 
           <div
             data-testid="extraction-split-view"
@@ -759,7 +810,15 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 <button
                   key={`conf-s-${idx}`}
                   type="button"
-                  onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1)}
+                  onClick={() =>
+                    handleOpenSource(
+                      s.document_title,
+                      s.page_number ?? 1,
+                      undefined,
+                      s.sheet_name,
+                      s.row_number
+                    )
+                  }
                   style={{
                     fontSize: "var(--font-size-xs)",
                     padding: "2px 8px",
@@ -873,8 +932,14 @@ export default function AssistantHomePage({ params }: HomePageProps) {
     }
 
     // 6. Safe friendly fallback on unknown response type
-    if (status && status !== "answered" && status !== "unknown") {
-      // Stage M: If response is extraction evidence or failure, never show confusing "unexpected response format"
+    if (
+      status &&
+      status !== "answered" &&
+      status !== "completed" &&
+      status !== "extracted" &&
+      status !== "in_progress" &&
+      status !== "unknown"
+    ) {
       if (resp.evidence_type === "extraction" || status === "failed" || status === "error") {
         return (
           <div
@@ -903,7 +968,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             whiteSpace: "pre-wrap",
           }}
         >
-          Received an unexpected response format. Please try again.
+          Unable to complete this request. Please try again.
         </div>
       );
     }
@@ -1004,7 +1069,15 @@ export default function AssistantHomePage({ params }: HomePageProps) {
                 key={`source-${sIdx}`}
                 type="button"
                 data-testid={`source-chip-${s.document_title}`}
-                onClick={() => handleOpenSource(s.document_title, s.page_number ?? 1, s.version_id || s.version)}
+                onClick={() =>
+                  handleOpenSource(
+                    s.document_title,
+                    s.page_number ?? 1,
+                    s.version_id || s.version,
+                    s.sheet_name,
+                    s.row_number
+                  )
+                }
                 style={{
                   fontSize: "var(--font-size-xs)",
                   padding: "2px 8px",
@@ -1103,6 +1176,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
         {/* Chat Messages Stream */}
         <div
+          data-testid="chat-messages-stream"
           style={{
             flex: 1,
             overflowY: "auto",
@@ -1112,75 +1186,6 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             gap: "var(--spacing-4)",
           }}
         >
-          {/* Document card at the top of the conversation */}
-          {attachedDoc && (
-            <div
-              data-testid="session-document-card"
-              style={{
-                padding: "12px 16px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-border)",
-                backgroundColor: "var(--color-bg-card)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                marginBottom: "var(--spacing-2)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span style={{ fontSize: "20px" }}>📄</span>
-                <div>
-                  <div
-                    style={{ fontWeight: 600, fontSize: "var(--font-size-sm)" }}
-                    data-testid="attached-doc-filename"
-                  >
-                    {attachedDoc.filename}
-                  </div>
-                  <div
-                    style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}
-                  >
-                    <span data-testid="attached-doc-page-count">
-                      {attachedDoc.page_count} page{attachedDoc.page_count !== 1 ? "s" : ""}
-                    </span>
-                    {" • "}
-                    <span data-testid="attached-doc-retention">
-                      Attached to this chat. Deleted after {attachedDoc.retention_hours || 24} hours
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                data-testid="extract-fields-button"
-                onClick={handleExtractFields}
-                disabled={
-                  isExtracting || isUploading || isSubmitting || Boolean(attachedDoc.isExtracted)
-                }
-                style={{
-                  padding: "6px 14px",
-                  borderRadius: "var(--radius-md)",
-                  fontSize: "var(--font-size-sm)",
-                  fontWeight: 600,
-                  backgroundColor: attachedDoc.isExtracted
-                    ? "var(--color-bg-subtle)"
-                    : "var(--color-primary)",
-                  color: attachedDoc.isExtracted
-                    ? "var(--color-text-secondary)"
-                    : "var(--color-text-on-primary)",
-                  border: "none",
-                  cursor: attachedDoc.isExtracted || isExtracting ? "not-allowed" : "pointer",
-                }}
-              >
-                {isExtracting
-                  ? "Extracting..."
-                  : attachedDoc.isExtracted
-                  ? "Fields Extracted"
-                  : "Extract fields"}
-              </button>
-            </div>
-          )}
-
           {messages.length === 0 && (
             <div style={{ textAlign: "center", marginTop: "var(--spacing-8)" }}>
               <h2
@@ -1454,9 +1459,9 @@ export default function AssistantHomePage({ params }: HomePageProps) {
             );
           })}
 
-          {(isSubmitting || extractingStatusLine) && (
+          {(isSubmitting || (isExtracting && extractingStatusLine)) && (
             <div>
-              {extractingStatusLine ? (
+              {isExtracting && extractingStatusLine ? (
                 <div
                   data-testid="live-extracting-status"
                   style={{
@@ -1515,39 +1520,112 @@ export default function AssistantHomePage({ params }: HomePageProps) {
 
         {/* Input Bar */}
         <div
+          data-testid="chat-input-bar"
           style={{
             padding: "var(--spacing-4) var(--spacing-6)",
             borderTop: "1px solid var(--color-border)",
             backgroundColor: "var(--color-bg-surface)",
           }}
         >
-          {/* Attached Document Banner (Invariant 7) */}
+          {/* Attached Document Card & Banner (Invariant 7) */}
           {attachedDoc && (
             <div
               data-testid="session-document-indicator"
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 10px",
-                backgroundColor: "var(--color-bg-subtle)",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-border)",
                 marginBottom: "var(--spacing-2)",
-                fontSize: "var(--font-size-xs)",
-                color: "var(--color-text-primary)",
               }}
             >
-              <span>
-                Session document attached: <strong>{attachedDoc.filename}</strong> — stays in this conversation only and is never added to the knowledge base.
-              </span>
-              <button
-                type="button"
-                onClick={() => setAttachedDoc(null)}
-                style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}
+              <div
+                data-testid="session-document-card"
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-bg-subtle)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                }}
               >
-                ✕
-              </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+                  <span style={{ fontSize: "18px" }}>📄</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        fontSize: "var(--font-size-xs)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    >
+                      Session document attached:{" "}
+                      <span data-testid="attached-doc-filename">{attachedDoc.filename}</span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "var(--font-size-xs)",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      <span data-testid="attached-doc-page-count">
+                        {attachedDoc.page_count} page{attachedDoc.page_count !== 1 ? "s" : ""}
+                      </span>
+                      {" • "}
+                      <span data-testid="attached-doc-retention">
+                        Attached to this chat. Deleted after {attachedDoc.retention_hours || 24} hours — stays in this conversation only and is never added to the knowledge base.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                  {attachedDoc.session_document_id && (
+                    <button
+                      type="button"
+                      data-testid="extract-fields-button"
+                      onClick={handleExtractFields}
+                      disabled={
+                        isExtracting ||
+                        isUploading ||
+                        isSubmitting ||
+                        Boolean(attachedDoc.isExtracted)
+                      }
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: "var(--radius-md)",
+                        fontSize: "var(--font-size-xs)",
+                        fontWeight: 600,
+                        backgroundColor: attachedDoc.isExtracted
+                          ? "var(--color-bg-page)"
+                          : "var(--color-primary)",
+                        color: attachedDoc.isExtracted
+                          ? "var(--color-text-secondary)"
+                          : "var(--color-text-on-primary)",
+                        border: "none",
+                        cursor:
+                          attachedDoc.isExtracted || isExtracting ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {isExtracting
+                        ? "Extracting..."
+                        : attachedDoc.isExtracted
+                        ? "Fields Extracted"
+                        : "Extract fields"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label="Remove attached document"
+                    onClick={() => setAttachedDoc(null)}
+                    style={{
+                      fontSize: "12px",
+                      color: "var(--color-text-secondary)",
+                      padding: "4px",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1793,7 +1871,7 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         </div>
       )}
 
-      {/* PDF.js Source Viewer Panel */}
+      {/* PDF.js / Table Source Viewer Panel */}
       <SourcePanel
         isOpen={sourcePanelOpen}
         onClose={() => setSourcePanelOpen(false)}
@@ -1802,6 +1880,8 @@ export default function AssistantHomePage({ params }: HomePageProps) {
         isLiveAssistant={isLiveAssistant}
         assistantId={assistantId}
         versionId={activeSourceVersionId}
+        sheetName={activeSourceSheet}
+        highlightedRow={activeSourceRow}
       />
     </AppShell>
   );

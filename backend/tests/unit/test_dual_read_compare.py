@@ -138,6 +138,47 @@ class TestDualReadCompare:
         assert f.read1_value == "7/10"
         assert f.read2_value == "1/10"
 
+    def test_dual_read_compare_treats_null_none_na_empty_as_absent_not_filled_medium(self) -> None:
+        """Any read that is empty, 'null', 'none', 'n/a' or similar is treated as absent."""
+        ocr_reading = {
+            "dosage": "null",
+            "secondary_insurance": "N/A",
+            "facility_location": "none",
+            "clinical_justification": "",
+            "authorized_medication": "null",
+        }
+        vision_reading = {
+            "dosage": None,
+            "secondary_insurance": "null",
+            "facility_location": "",
+            "clinical_justification": "n/a",
+            "authorized_medication": "Amoxicillin 500mg",
+        }
+        fields = dual_read_compare(
+            read1_ocr=ocr_reading,
+            read2_vision=vision_reading,
+            document_title="invalid_npi_fax.pdf",
+            page_number=1,
+        )
+        by_name = {f.name: f for f in fields}
+
+        for absent_key in (
+            "dosage",
+            "secondary_insurance",
+            "facility_location",
+            "clinical_justification",
+        ):
+            assert by_name[absent_key].state == FieldState.NOT_PRESENT
+            assert by_name[absent_key].value is None
+            assert by_name[absent_key].read1_value is None
+            assert by_name[absent_key].read2_value is None
+
+        # When one read is "null" (absent) and the other has a valid value -> FILLED_MEDIUM
+        assert by_name["authorized_medication"].state == FieldState.FILLED_MEDIUM
+        assert by_name["authorized_medication"].value == "Amoxicillin 500mg"
+        assert by_name["authorized_medication"].read1_value is None
+        assert by_name["authorized_medication"].read2_value == "Amoxicillin 500mg"
+
 
 @pytest.mark.asyncio
 class TestExtractionSubgraphInvocation:

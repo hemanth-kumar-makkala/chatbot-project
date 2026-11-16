@@ -9,7 +9,10 @@ Verifies:
 
 from __future__ import annotations
 
-from app.core.extraction.subgraph import extract_fields_from_ocr_text
+from app.core.extraction.subgraph import (
+    extract_fields_from_ocr_text,
+    parse_vision_json_reading,
+)
 
 
 def test_dosage_extracted_strictly_from_labeled_line() -> None:
@@ -100,3 +103,53 @@ def test_dosage_extraction_with_scrambled_line_order_from_real_skewed_fax_ocr() 
     assert "Patient" not in str(fields.get("dosage", ""))
     assert "Refill" not in str(fields.get("dosage", ""))
     assert confidences.get("dosage", 0.0) >= 0.90
+
+
+def test_real_invalid_npi_fax_ocr_stops_at_next_field_label() -> None:
+    """Verify OCR field extraction on real invalid_npi_fax.pdf stops at any 'Label:' pattern."""
+    real_invalid_npi_ocr = (
+        "* * * SYNTHETIC TEST DOCUMENT * * * TRANSMISSION CONFIDENTIAL MEDICAL RECORD FACSIMILE\n\n"
+        "URGENT CLINIC INTAKE FAX Date: 2026-02-14 "
+        "Patient Name: Casey Bennett Chart Number: MRN-1102-K "
+        "Authorized Medication: Amoxicillin 5OOmg Authorization Date: 2026-02-14 "
+        "Prescriber NPI: 1982736451 Prescriber Signature: Dr. Evelyn Reed "
+        "Clinic Phone: 555-0145"
+    )
+    fields, _ = extract_fields_from_ocr_text(real_invalid_npi_ocr)
+    assert fields.get("patient_name") == "Casey Bennett"
+    assert fields.get("chart_number") == "MRN-1102-K"
+    assert fields.get("authorized_medication") == "Amoxicillin 5OOmg"
+    assert fields.get("authorization_date") == "2026-02-14"
+    assert fields.get("prescriber_npi") == "1982736451"
+    assert fields.get("prescriber_signature") == "Dr. Evelyn Reed"
+    assert fields.get("clinic_phone") == "555-0145"
+    assert fields.get("dosage") is None
+
+
+def test_absent_tokens_null_none_na_empty_treated_as_absent_in_ocr_and_vision_parsers() -> None:
+    """Any read that is empty, 'null', 'none', 'n/a' or similar must be treated as absent (None)."""
+    ocr_with_nulls = (
+        "Patient Name: Casey Bennett\n"
+        "Dosage: null\n"
+        "Secondary Insurance: N/A\n"
+        "Procedure Ordered: none\n"
+        "Clinical Justification: [blank]\n"
+    )
+    ocr_fields, _ = extract_fields_from_ocr_text(ocr_with_nulls)
+    assert ocr_fields.get("patient_name") == "Casey Bennett"
+    assert ocr_fields.get("dosage") is None
+    assert ocr_fields.get("secondary_insurance") is None
+    assert ocr_fields.get("procedure_ordered") is None
+    assert ocr_fields.get("clinical_justification") is None
+
+    vision_json = (
+        '{"patient_name": "Casey Bennett", "dosage": "null", '
+        '"secondary_insurance": "N/A", "refill_count": "none", "facility_location": ""}'
+    )
+    vis_fields = parse_vision_json_reading(vision_json)
+    assert vis_fields.get("patient_name") == "Casey Bennett"
+    assert vis_fields.get("dosage") is None
+    assert vis_fields.get("secondary_insurance") is None
+    assert vis_fields.get("refill_count") is None
+    assert vis_fields.get("facility_location") is None
+
