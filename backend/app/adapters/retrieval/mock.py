@@ -24,8 +24,10 @@ class MockRetriever(Retriever):
         canned_evidence_ids: list[EvidenceId] | None = None,
         canned_titles: list[str] | None = None,
         canned_evidence_text: dict[str, str] | None = None,
+        canned_table_candidates: list[TableCandidate] | None = None,
     ) -> None:
         self._canned_evidence_ids_provided = canned_evidence_ids is not None
+        self._canned_table_candidates = canned_table_candidates
         if canned_evidence_ids is not None:
             self._canned_evidence_ids = canned_evidence_ids
         else:
@@ -204,6 +206,8 @@ class MockRetriever(Retriever):
     ) -> list[TableCandidate]:
         """Return canned table candidate rows for mock profile."""
         _ = (tenant_ctx, query)
+        if self._canned_table_candidates is not None:
+            return self._canned_table_candidates[:limit]
         return [
             TableCandidate(
                 id="mock-table-row-1",

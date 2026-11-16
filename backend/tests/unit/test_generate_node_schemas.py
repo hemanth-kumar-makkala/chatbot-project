@@ -196,7 +196,7 @@ class TestGenerateNodeSchemas:
         """Fix 1: router_classify prompt 1.2.0+ defines route and answer_mode rules and enum values."""
         registry = get_prompt_registry()
         router_entry = registry["prompts"]["router_classify"]
-        assert router_entry["default_version"] in ("1.2.0", "1.3.0")
+        assert router_entry["default_version"] in ("1.2.0", "1.3.0", "1.4.0")
 
         tmpl = load_prompt_template("router_classify")
         assert "{question}" in tmpl

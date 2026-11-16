@@ -406,7 +406,7 @@ class PostgresRetriever(Retriever):
             score_terms = []
             sql_params: dict[str, Any] = {"tenant_id": tid, "limit": limit}
 
-            for idx, token in enumerate(tokens[:8]):
+            for idx, token in enumerate(tokens[:12]):
                 param_name = f"t_{idx}"
                 sql_params[param_name] = f"%{token}%"
                 title_conditions.append(f"d.title ILIKE :{param_name}")

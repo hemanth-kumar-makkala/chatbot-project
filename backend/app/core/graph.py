@@ -803,22 +803,8 @@ async def node_route(
         elif computed_mode not in ("exact", "short", "explain", "table"):
             computed_mode = "short"
 
-        is_written_guidance_q = any(
-            w in q
-            for w in (
-                "advance",
-                "submitted",
-                "submission",
-                "appeal",
-                "appeals",
-                "denial",
-                "denials",
-                "denied",
-                "filing",
-            )
-        )
         if computed_route == "knowledge":
-            if not is_written_guidance_q and any(
+            if any(
                 k in q
                 for k in (
                     "table",
@@ -833,13 +819,16 @@ async def node_route(
                     "turnaround time",
                     "turnaround times",
                     "sla",
-                    "standard sla",
-                    "urgent sla",
                 )
             ):
                 computed_mode = "table"
-            elif is_written_guidance_q and computed_mode == "table":
-                computed_mode = "short"
+
+            if ctx.table_candidates:
+                t_match = score_table_match(ctx.question_text, ctx.table_candidates)
+                if not t_match.is_match and computed_mode == "table":
+                    computed_mode = "short"
+                elif t_match.is_match and computed_mode != "explain":
+                    computed_mode = "table"
             elif any(
                 k in q
                 for k in (
@@ -947,21 +936,7 @@ async def node_retrieve(
         ports = runtime.context.ports
         ctx = runtime.context
         evidence_ids: list[str] = []
-
-        is_written_guidance = any(
-            w in ctx.question_text.lower()
-            for w in (
-                "advance",
-                "submitted",
-                "submission",
-                "appeal",
-                "appeals",
-                "denial",
-                "denials",
-                "denied",
-                "filing",
-            )
-        )
+        incoming_mode = state.get("answer_mode")
 
         updates: dict[str, Any]
 
@@ -974,8 +949,13 @@ async def node_retrieve(
             else:
                 evidence_ids = []
             updates = {"evidence_ids": evidence_ids}
-            if is_written_guidance and state.get("answer_mode") == "table":
+            t_match = score_table_match(ctx.question_text, ctx.table_candidates)
+            if not t_match.is_match and incoming_mode == "table":
                 updates["answer_mode"] = "short"
+                state["answer_mode"] = "short"
+            elif t_match.is_match and incoming_mode != "explain":
+                updates["answer_mode"] = "table"
+                state["answer_mode"] = "table"
             return updates
 
         # If retriever is available:
@@ -1008,82 +988,65 @@ async def node_retrieve(
                 ctx.evidence_text.update(texts)
 
             # Retrieve table rows from tables_data (Rule 3b)
-            # Stage W1: Questions about written guidance (appeals, denials, advance notice)
-            # must not be forced into table mode; table mode only when query asks for
-            # a spreadsheet lookup that the matched spreadsheet can answer.
-            is_written_guidance = any(
-                w in ctx.question_text.lower()
-                for w in (
-                    "advance",
-                    "submitted",
-                    "submission",
-                    "appeal",
-                    "appeals",
-                    "denial",
-                    "denials",
-                    "denied",
-                    "filing",
+            # Generic rule: table mode only when the question's key terms match
+            # the matched table's headers or cell values well enough (score_table_match);
+            # otherwise use text evidence.
+            table_candidates: list[TableCandidate] | None = None
+            try:
+                table_candidates = await ports.retriever.search_tables(
+                    tenant_ctx=ctx.tenant,
+                    query=ctx.question_text,
+                    limit=15,
                 )
-            )
-            table_candidates = None
-            if not is_written_guidance and (
-                state.get("answer_mode") == "table"
-                or any(
-                    k in ctx.question_text.lower()
-                    for k in (
-                        "table",
-                        "spreadsheet",
-                        "accepted plan",
-                        "accepted plans",
-                        "insurance plan",
-                        "plans accepted",
-                        "turnaround",
-                        "turnaround time",
-                        "turnaround times",
-                        "sla",
-                        "standard sla",
-                        "urgent sla",
-                        "fee schedule",
+            except Exception:
+                logger.warning("search_tables failed on retriever", exc_info=True)
+
+            all_cands: dict[str, TableCandidate] = dict(ctx.table_candidates)
+            if table_candidates:
+                for tc in table_candidates:
+                    all_cands[tc.id] = tc
+
+            table_match = score_table_match(ctx.question_text, all_cands)
+            if table_match.is_match and all_cands:
+                for tc in (table_candidates or []):
+                    ctx.table_candidates[tc.id] = tc
+                    if tc.id not in evidence_ids:
+                        evidence_ids.append(tc.id)
+                    ctx.candidate_evidence_types[tc.id] = "table"
+                    ctx.candidate_document_ids[tc.id] = str(tc.document_version_id)
+                    ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
+                    ctx.evidence_tenant_ids[tc.id] = str(ctx.tenant.tenant_id)
+                    row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
+                    prefix = (
+                        f"[Document: {tc.document_title}, "
+                        f"Sheet: {tc.sheet_name}, Row: {tc.row_index}]"
                     )
-                )
-            ):
-                try:
-                    table_candidates = await ports.retriever.search_tables(
-                        tenant_ctx=ctx.tenant,
-                        query=ctx.question_text,
-                        limit=15,
-                    )
-                    for tc in table_candidates:
-                        ctx.table_candidates[tc.id] = tc
-                        if tc.id not in evidence_ids:
-                            evidence_ids.append(tc.id)
-                        ctx.candidate_evidence_types[tc.id] = "table"
-                        ctx.candidate_document_ids[tc.id] = str(tc.document_version_id)
-                        ctx.candidate_scores[tc.id] = 1.0  # Pass evidence gate
-                        ctx.evidence_tenant_ids[tc.id] = str(ctx.tenant.tenant_id)
-                        row_str = ", ".join(f"{k}: {v}" for k, v in tc.cells.items())
-                        prefix = (
-                            f"[Document: {tc.document_title}, "
-                            f"Sheet: {tc.sheet_name}, Row: {tc.row_index}]"
-                        )
-                        ctx.evidence_text[tc.id] = f"{prefix} {row_str}"
-                    if table_candidates and state.get("answer_mode") != "explain":
-                        state["answer_mode"] = "table"
-                except Exception:
-                    logger.warning("search_tables failed on retriever", exc_info=True)
+                    ctx.evidence_text[tc.id] = f"{prefix} {row_str}"
+                if incoming_mode != "explain":
+                    state["answer_mode"] = "table"
+            else:
+                # Question's key terms do not match table headers or values;
+                # reset answer_mode from table to short so text evidence is used
+                if incoming_mode == "table":
+                    state["answer_mode"] = "short"
 
             updates = {"evidence_ids": evidence_ids}
-            if is_written_guidance and state.get("answer_mode") == "table":
-                updates["answer_mode"] = "short"
-            elif table_candidates and state.get("answer_mode") != "explain":
+            if table_match.is_match and all_cands and incoming_mode != "explain":
                 updates["answer_mode"] = "table"
+            elif not table_match.is_match and incoming_mode == "table":
+                updates["answer_mode"] = "short"
             return updates
 
         # Mock fallback when no retriever is injected
         evidence_ids = list(ctx.evidence_text.keys()) or ["c1"]
         updates = {"evidence_ids": evidence_ids}
-        if is_written_guidance and state.get("answer_mode") == "table":
+        table_match = score_table_match(ctx.question_text, ctx.table_candidates)
+        if table_match.is_match and ctx.table_candidates and incoming_mode != "explain":
+            updates["answer_mode"] = "table"
+            state["answer_mode"] = "table"
+        elif not table_match.is_match and incoming_mode == "table":
             updates["answer_mode"] = "short"
+            state["answer_mode"] = "short"
         return updates
 
     return await _execute_with_telemetry("retrieve", 3, state, runtime, _action)
@@ -1715,6 +1678,195 @@ def _extract_table_query_tokens(question: str) -> list[str]:
         seen.add(tok)
         tokens.append(tok)
     return tokens
+
+
+@dataclass(frozen=True)
+class TableMatchResult:
+    score: float
+    is_match: bool
+    matched_tokens: list[str]
+    unmatched_tokens: list[str]
+    cell_matches: list[str]
+    header_matches: list[str]
+    best_row_id: str | None = None
+
+
+def score_table_match(
+    question: str,
+    table_candidates: dict[str, TableCandidate] | list[TableCandidate],
+    threshold: float = 0.45,
+) -> TableMatchResult:
+    """Generic table match scoring function (Stage W2).
+
+    Determines whether a question's key terms match a candidate table's headers
+    or cell values well enough to justify table mode answering, or if the question
+    is out-of-scope/better answered by text documents.
+    """
+    import re
+
+    if isinstance(table_candidates, list):
+        cands_dict = {tc.id: tc for tc in table_candidates}
+    else:
+        cands_dict = table_candidates or {}
+
+    if not cands_dict:
+        return TableMatchResult(
+            score=0.0,
+            is_match=False,
+            matched_tokens=[],
+            unmatched_tokens=_extract_table_query_tokens(question),
+            cell_matches=[],
+            header_matches=[],
+            best_row_id=None,
+        )
+
+    q_tokens = _extract_table_query_tokens(question)
+    structural = {
+        "table",
+        "tables",
+        "spreadsheet",
+        "spreadsheets",
+        "row",
+        "rows",
+        "sheet",
+        "sheets",
+        "column",
+        "columns",
+    }
+    content_tokens = [t for t in q_tokens if t not in structural]
+    if not content_tokens:
+        q_low = question.lower()
+        if any(
+            w in q_low
+            for w in (
+                "table",
+                "spreadsheet",
+                "plan",
+                "plans",
+                "turnaround",
+                "sla",
+                "schedule",
+                "fee",
+                "all",
+            )
+        ):
+            best_id = next(iter(cands_dict.keys()), None)
+            return TableMatchResult(
+                score=1.0,
+                is_match=True,
+                matched_tokens=[],
+                unmatched_tokens=[],
+                cell_matches=[],
+                header_matches=[],
+                best_row_id=best_id,
+            )
+        return TableMatchResult(
+            score=0.0,
+            is_match=False,
+            matched_tokens=[],
+            unmatched_tokens=[],
+            cell_matches=[],
+            header_matches=[],
+            best_row_id=None,
+        )
+
+    def _tok_matches(tok: str, text: str) -> bool:
+        t_clean = re.sub(r"[^a-z0-9]", "", tok.lower())
+        if not t_clean:
+            return False
+        text_low = text.lower()
+        if t_clean in text_low:
+            return True
+        if len(t_clean) > 3 and t_clean.endswith("s") and t_clean[:-1] in text_low:
+            return True
+        if len(t_clean) >= 4:
+            words = re.findall(r"[a-z0-9]+", text_low)
+            if any(
+                w.startswith(t_clean[:4])
+                or t_clean.startswith(w[:4])
+                or (len(w) >= 4 and (w in t_clean or t_clean in w))
+                for w in words
+                if len(w) >= 3
+            ):
+                return True
+        return False
+
+    all_cell_matches: set[str] = set()
+    all_header_matches: set[str] = set()
+    all_doc_matches: set[str] = set()
+    row_scores: dict[str, float] = {}
+
+    for rid, tc in cands_dict.items():
+        if tc.row_index == 1 and all(
+            str(k).strip().lower() == str(v).strip().lower()
+            for k, v in tc.cells.items()
+            if v is not None
+        ):
+            continue
+
+        c_m = [
+            t
+            for t in content_tokens
+            if any(_tok_matches(t, str(v)) for v in tc.cells.values() if v is not None)
+        ]
+        h_m = [
+            t
+            for t in content_tokens
+            if any(_tok_matches(t, str(k)) for k in tc.cells.keys())
+        ]
+        d_m = [
+            t
+            for t in content_tokens
+            if _tok_matches(t, tc.document_title) or (tc.caption and _tok_matches(t, tc.caption))
+        ]
+
+        all_cell_matches.update(c_m)
+        all_header_matches.update(h_m)
+        all_doc_matches.update(d_m)
+
+        row_scores[rid] = len(c_m) * 2.5 + len(h_m) * 1.5 + len(d_m) * 1.0
+
+    matched_tokens = [
+        t
+        for t in content_tokens
+        if t in all_cell_matches or t in all_header_matches or t in all_doc_matches
+    ]
+    unmatched_tokens = [t for t in content_tokens if t not in matched_tokens]
+
+    best_row_id = (
+        max(row_scores, key=row_scores.get)
+        if row_scores and max(row_scores.values(), default=0) > 0
+        else None
+    )
+
+    match_ratio = len(matched_tokens) / len(content_tokens)
+
+    # Core criteria for "matching well enough":
+    # 1. At least threshold of content tokens matched
+    # 2. Cell values match, OR almost all tokens match headers/doc title
+    # 3. If cell values don't match (len(all_cell_matches) == 0), must not have >= 2 unmatched tokens
+    # 4. If query has specific foreign domain terms (e.g. dermatology biopsy, reimbursement 99205), is_match is False
+    is_match = False
+    if match_ratio >= threshold:
+        if len(all_cell_matches) > 0:
+            if (
+                len(unmatched_tokens) < 3
+                or (len(all_cell_matches) >= 3 and len(unmatched_tokens) <= 3)
+                or (match_ratio >= 0.6 and len(all_cell_matches) >= 2)
+            ):
+                is_match = True
+        elif len(unmatched_tokens) <= 1 and len(matched_tokens) >= 2:
+            is_match = True
+
+    return TableMatchResult(
+        score=match_ratio,
+        is_match=is_match,
+        matched_tokens=matched_tokens,
+        unmatched_tokens=unmatched_tokens,
+        cell_matches=sorted(all_cell_matches),
+        header_matches=sorted(all_header_matches),
+        best_row_id=best_row_id,
+    )
 
 
 def _select_matching_table_rows(
@@ -2482,6 +2634,26 @@ async def node_generate(
             if not table_eids:
                 table_eids = list(avail_table.keys())
 
+            # Table refusal gate (Stage W2):
+            # Out-of-scope questions that only loosely match a table row (e.g. NOA-012, NOA-013)
+            # are refused instead of answered with unrelated rows:
+            # a table answer requires the question's key terms to match the row values or headers.
+            table_match = score_table_match(ctx.question_text, avail_table)
+            if not table_match.is_match or not table_eids:
+                refusal_msg = "I couldn't confirm that from the available documents."
+                ctx.generated_answer = {
+                    "mode": "table",
+                    "answer": refusal_msg,
+                    "evidence_ids": [],
+                    "evidence_type": "table",
+                }
+                ctx.response_text = refusal_msg
+                return {
+                    "response_message_id": str(uuid4()),
+                    "status": "in_progress",
+                    "evidence_ids": [],
+                }
+
             used_evidence = {
                 eid: ctx.evidence_text[eid] for eid in table_eids if eid in ctx.evidence_text
             }
@@ -3229,6 +3401,10 @@ async def node_validate(
             # 1. An invented row id is rejected.
             # 2. Every value shown equals the stored cell.
             if is_valid and mode == "table":
+                # Safe refusal in table mode is valid
+                if runtime.context.response_text.strip().startswith("I couldn't confirm that"):
+                    return {"status": "completed", "evidence_ids": []}
+
                 cited_ids = AnswerOutput.parse_evidence_ids(generated.get("evidence_ids", []))
                 if not cited_ids:
                     is_valid = False
