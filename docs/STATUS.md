@@ -598,6 +598,19 @@
   - Persisted complete benchmark reports: `docs/reports/2026-11-05-model-comparison.md` and `docs/reports/2026-11-05-model-comparison.json`.
   - Filtered `<think>` prefill messages in `OpenAICompatibleModelProvider` to avoid HTTP 400 Bad Request on Mistral hosted endpoints.
   - Implemented intermediate progress caching (`docs/reports/cache_answer_results.json`) and per-page timeout hardening (300s) on multimodal vision calls.
+- **Completed (Queue Stages S1, S2 & S3: E2E Failure Analysis, Reprocess Document Action, and Table Header Guessing Removal)**:
+  - **Stage S1: E2E Failure Analysis (`failure_analysis.md`)**: Analyzed all 17 failures from the 50/67 strict e2e evaluation report (`evals/reports/2026-11-13_desktop_gpu_e2e.json`), evaluated retrieval candidates, reranking, and gate thresholds, and categorized causes across routing overrides (3), heuristic pronoun over-clarification (2), retrieval misses (3), evidence gate thresholding (5), generation/stale process (2), and table refusal leakage (2). Formulated the top 3 recovery fixes in `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\failure_analysis.md`.
+  - **Stage S2: Reprocess Document Action & API (`backend/app/api/routes/knowledge.py`, `web/lib/api.ts`, `web/components/DocumentsTable.tsx`)**:
+    - Implemented `POST /v1/assistants/{assistant_id}/knowledge/documents/{document_id}/reprocess` restricted to `client_admin` and `platform_admin` with CSRF validation and anti-probing 404s for cross-tenant or retired documents.
+    - Copies raw file from storage under a new version UUID (`StorageKey`), creates a new `DocumentVersion` in DB (`status="received"`), logs compliance audit event (`action="document_reprocessed"`), enqueues background ingestion job, and fails closed with storage cleanup on DB failure.
+    - Added "Reprocess" action button in `web/components/DocumentsTable.tsx` for non-retired documents, including in-flight loading state and table refresh.
+    - Added tests in `backend/tests/integration/test_reprocess_document_api.py` and `web/__tests__/knowledge_page.test.tsx`.
+    - Verified full mock suite: `1036 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_S2.log`.
+  - **Stage S3: Remove Table Header Guessing (`backend/app/core/graph.py`, `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`)**:
+    - Removed answer-time legacy heuristic inference in `_build_table_header_map` that guessed column names from row-1 cell values.
+    - Stored table cell keys (`tc.cells.keys()`) are now authoritative: table answers (`_format_table_answer_text`) and validation (`node_validate` for `mode == "table"`) use stored headers directly without translation or guessing.
+    - Added proving tests in `test_table_answering_closest_rows.py` and `test_table_and_conflict_validation.py`.
+    - Verified full mock suite: `1038 passed, 1 skipped, 16 deselected, 0 failed` in `queue_stage_S3.log`.
 - **Next roadmap phase:** Phase 6 — Cloud staging on GCP; next planned roadmap task is Task 6.1, GCP infrastructure provisioning and BAA compliance check (`docs/phases/PHASE-6.md`).
 - **Test infrastructure note:** `load_dotenv` may load application settings at runtime; tests may use fixtures that load settings and migrate only their isolated throwaway databases. Do not read `.env` manually.
 

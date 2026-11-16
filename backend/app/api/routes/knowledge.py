@@ -10,7 +10,7 @@ Provides:
 from __future__ import annotations
 
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -101,6 +101,14 @@ class PageRetryResponse(BaseModel):
     page_number: int
     needs_review: bool
     status: str = "retrying"
+
+
+class ReprocessDocumentResponse(BaseModel):
+    """Response returned upon re-running ingestion for a document."""
+
+    document_id: str
+    document_version_id: str
+    status: str = "queued"
 
 
 @router.post(
@@ -535,6 +543,144 @@ async def retire_document(
         document_id=str(doc.id),
         is_retired=doc.is_retired,
         status="retired",
+    )
+
+
+@router.post(
+    "/documents/{document_id}/reprocess",
+    response_model=ReprocessDocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(validate_csrf)],
+)
+async def reprocess_document(
+    document_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_client_admin_tenant_context_for_assistant)],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> ReprocessDocumentResponse:
+    """Re-run ingestion for an existing document as a new version.
+
+    - Admin-only: client_admin (or platform_admin) role required.
+    - Tenant isolation: opens tenant_session(tenant) directly.
+    - Anti-probing: returns 404 if document does not exist in caller tenant or is retired.
+    - Retrieves raw file of current version from storage.
+    - Creates a new document version in DB with status 'received'.
+    - Copies raw file in storage under new version ID.
+    - Records compliance audit event (action="document_reprocessed",
+      event_type="knowledge_compliance").
+    - Enqueues split_document_job with IDs only.
+    """
+    profile = getattr(settings, "profile", "mock")
+    storage_dir = getattr(settings, "storage_dir", "storage")
+    storage = create_storage_backend(profile=profile, base_dir=storage_dir)
+
+    new_version_id = uuid4()
+    new_key: StorageKey | None = None
+
+    async with tenant_session(tenant) as session:
+        # 1. Anti-probing document check
+        doc_stmt = select(Document).where(
+            Document.tenant_id == UUID(tenant.tenant_id),
+            Document.id == document_id,
+        )
+        doc = (await session.execute(doc_stmt)).scalars().first()
+        if doc is None or getattr(doc, "is_retired", False):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found",
+            )
+
+        # 2. Locate source version to reprocess
+        v_stmt = (
+            select(DocumentVersion)
+            .where(
+                DocumentVersion.tenant_id == UUID(tenant.tenant_id),
+                DocumentVersion.document_id == document_id,
+            )
+            .order_by(DocumentVersion.created_at.desc())
+        )
+        source_ver = (await session.execute(v_stmt)).scalars().first()
+        if source_ver is None or source_ver.file_extension is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document has no processable version",
+            )
+
+        source_key = StorageKey(
+            tenant_id=UUID(tenant.tenant_id),
+            path=f"documents/{source_ver.id}/original.{source_ver.file_extension}",
+        )
+        try:
+            file_bytes = await storage.get(source_key)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source document file not found in storage",
+            ) from None
+
+        # 3. Store file under new version ID
+        ext = source_ver.file_extension
+        new_key = StorageKey(
+            tenant_id=UUID(tenant.tenant_id),
+            path=f"documents/{new_version_id}/original.{ext}",
+        )
+        mime_type = (
+            "application/pdf"
+            if ext == "pdf"
+            else (
+                "text/csv"
+                if ext == "csv"
+                else (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    if ext == "xlsx"
+                    else "application/octet-stream"
+                )
+            )
+        )
+        await storage.put(new_key, file_bytes, content_type=mime_type)
+
+        # 4. Insert new version and audit event
+        try:
+            repo = create_document_repository(session)
+            await repo.create_version(
+                tenant_id=tenant.tenant_id,
+                document_id=document_id,
+                sha256=source_ver.sha256,
+                uploaded_by=tenant.user_id,
+                file_extension=ext,
+                status="received",
+                version_id=new_version_id,
+            )
+
+            audit = AuditEvent(
+                tenant_id=UUID(tenant.tenant_id),
+                user_id=UUID(tenant.user_id),
+                event_type="knowledge_compliance",
+                action="document_reprocessed",
+                resource_id=str(new_version_id),
+            )
+            session.add(audit)
+            await session.flush()
+        except Exception:
+            await storage.delete(new_key)
+            raise
+
+    # 5. Enqueue split job with IDs only
+    try:
+        await split_document_job.defer_async(
+            tenant_id=tenant.tenant_id,
+            document_version_id=str(new_version_id),
+        )
+    except Exception:
+        async with worker_app.open_async():
+            await split_document_job.defer_async(
+                tenant_id=tenant.tenant_id,
+                document_version_id=str(new_version_id),
+            )
+
+    return ReprocessDocumentResponse(
+        document_id=str(document_id),
+        document_version_id=str(new_version_id),
+        status="queued",
     )
 
 

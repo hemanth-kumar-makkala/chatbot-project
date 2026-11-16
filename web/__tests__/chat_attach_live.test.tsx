@@ -278,6 +278,7 @@ describe("Live Chat Attach Flow (Task 3 fix)", () => {
             document_title: "skewed_fax.pdf",
             page_number: 1,
             version: "1.0",
+            evidence_type: "visual",
           },
         ],
         route: "session_document",

@@ -4188,3 +4188,55 @@ Append-only record of all completed tasks, architectural choices, and test recor
   8. `evals/reports/2026-11-13_desktop_gpu_e2e.md`
   9. `docs/BUILD_LOG.md`
   10. `docs/STATUS.md`
+
+---
+
+### [2026-11-16] Queue Stages S1, S2 & S3: Failure Analysis, Reprocess Document Action & Table Header Guessing Removal
+
+- **Stage S1: E2E Failure Analysis (`$env:USERPROFILE\Downloads\Projects\cka-data\tmp\failure_analysis.md`)**:
+  - **Task**: For each of the 17 failures from the 50/67 strict e2e evaluation report (`evals/reports/2026-11-13_desktop_gpu_e2e.json`), determine retrieval candidates, reranker score, and evidence gate status. Classify causes across retrieval, reranking, evidence gate, generation, validation, or eval expectation. Formulate the 3 highest-leverage fixes to recover the most cases.
+  - **Diagnosis & Classifications**:
+    - `Routing / Answer Mode Override` (3 cases: `TF-003`, `TF-006`, `TF-008`): Keyword heuristic or router misclassified text queries as `mode="table"`, searching `pa_turnaround_times.xlsx` instead of utilizing retrieved text chunks from `prior_auth_guide.pdf`.
+    - `Routing Heuristic Pronoun Over-Clarification` (2 cases: `CONF-007`, `NOA-008`): `node_rewrite` pronoun check flagged "our check-in protocol" and "their outstanding balance" as referring to missing conversational context and triggered early clarification.
+    - `Retrieval Miss` (3 cases: `TL-011`, `TL-013`, `TL-014`): Target rows in `accepted_plans.csv` were missed by table retrieval.
+    - `Evidence Gate Thresholding` (5 cases: `TF-001`, `TF-007`, `TF-009`, `VR-009`, `VR-011`): Chunks retrieved, but reranker or OCR confidence fell below `RELIABLE_TEXT_THRESHOLD` (0.25).
+    - `Generation / Stale Running Server` (2 cases: `E2E-SD-003`, `E2E-TAB-001`): The running API server (PID 12192) was started prior to Stages R1 and R2; prompt code updates for summary bullet points and table direct lead sentence were not active in memory.
+    - `Generation / Table Refusal Gate Too Loose` (2 cases: `NOA-012`, `NOA-013`): Close rows in `pa_turnaround_times.xlsx` returned and generated partial responses rather than refusing for out-of-domain questions.
+  - **Top 3 Recommended Fixes**:
+    1. Table Mode Guarding & Strict Refusal Gate (recovers `TF-003`, `TF-006`, `TF-008`, `NOA-012`, `NOA-013`).
+    2. Re-ingestion & Multi-Table Indexing for `accepted_plans.csv` (recovers `TL-011`, `TL-013`, `TL-014`).
+    3. Heuristic Rewrite Pronoun Scope Refinement (recovers `CONF-007`, `NOA-008`).
+  - **Artifact**: Produced `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\failure_analysis.md` without modifying product code.
+
+- **Stage S2: Reprocess Document Action & API (`backend/app/api/routes/knowledge.py`, `backend/tests/integration/test_reprocess_document_api.py`, `web/lib/api.ts`, `web/components/DocumentsTable.tsx`, `web/__tests__/knowledge_page.test.tsx`)**:
+  - **Task**: Add an admin-only "Reprocess" action per document (`POST /v1/assistants/{assistant_id}/knowledge/documents/{document_id}/reprocess` and button on Data sources in web UI) that re-runs ingestion for the current file as a new version, preserving tenant isolation and audit logging (`action="document_reprocessed"`).
+  - **Implementation**:
+    - Endpoint added to `backend/app/api/routes/knowledge.py` with CSRF validation (`validate_csrf`) and admin RBAC check (`get_client_admin_tenant_context_for_assistant`).
+    - Enforces anti-probing 404 for non-existent, cross-tenant, and retired documents.
+    - Copies raw file from storage under a new version UUID (`StorageKey`), creates a new `DocumentVersion` in DB (`status="received"`), logs compliance audit event (`action="document_reprocessed"`), enqueues background `split_document_job`, and cleans up storage key if DB/audit transaction fails.
+    - Added `reprocessDocument` in `web/lib/api.ts` and "Reprocess" button in `web/components/DocumentsTable.tsx` for non-retired documents, including in-flight loading state and table refresh.
+    - Proving tests: `backend/tests/integration/test_reprocess_document_api.py` (2 passed) and `web/__tests__/knowledge_page.test.tsx`.
+    - Verification: `ruff check` (clean), `mypy` (clean), `npm run typecheck` (clean), Web Vitest suite (151 passed across 14 test files). Full mock test suite: `1036 passed, 1 skipped, 16 deselected, 53 warnings in 297.44s (0:04:57) — 0 failed` in `queue_stage_S2.log`.
+
+- **Stage S3: Remove Header Guessing (`backend/app/core/graph.py`, `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`)**:
+  - **Task**: Remove the answer-time legacy mapping that infers column names from the first data row (`_build_table_header_map` legacy path in `backend/app/core/graph.py`). Table answers and validation must use stored headers only.
+  - **Implementation**:
+    - Replaced `_build_table_header_map`'s row-1 inference and hardcoded overrides with an empty stub returning `{}`.
+    - Updated `_format_table_answer_text` to use stored cell keys (`tc.cells.keys()`) directly as column headers without guessing or inferring from row-1 values, while continuing to exclude caption metadata.
+    - Updated `node_validate` for `mode == "table"` to validate pairs (`col_name: shown_val`) directly against `tc.cells.get(col_name)` byte-for-byte without `header_map` translation.
+    - Proving tests: Updated fixtures and added tests in `test_table_answering_closest_rows.py` and `test_table_and_conflict_validation.py` (20 passed in 0.78s).
+    - Verification: `ruff check` (clean), `mypy` (clean). Full mock test suite: `1038 passed, 1 skipped, 16 deselected, 53 warnings in 276.24s (0:04:36) — 0 failed` in `queue_stage_S3.log`.
+
+- **Files Created / Edited Across Stages S1-S3**:
+  1. `backend/app/api/routes/knowledge.py` (edited)
+  2. `backend/app/core/graph.py` (edited)
+  3. `backend/tests/integration/test_reprocess_document_api.py` (created)
+  4. `backend/tests/unit/test_table_and_conflict_validation.py` (edited)
+  5. `backend/tests/unit/test_table_answering_closest_rows.py` (edited)
+  6. `web/__tests__/chat_attach_live.test.tsx` (edited)
+  7. `web/__tests__/knowledge_page.test.tsx` (edited)
+  8. `web/components/DocumentsTable.tsx` (edited)
+  9. `web/lib/api.ts` (edited)
+  10. `docs/BUILD_LOG.md` (edited)
+  11. `docs/STATUS.md` (edited)
+  *(Plus external report `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\failure_analysis.md`)*

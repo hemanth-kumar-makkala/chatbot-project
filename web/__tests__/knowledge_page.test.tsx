@@ -17,6 +17,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getDocuments: vi.fn(),
     uploadDocument: vi.fn(),
     retireDocument: vi.fn(),
+    reprocessDocument: vi.fn(),
     getReviewData: vi.fn(),
     acceptPage: vi.fn(),
     excludePage: vi.fn(),
@@ -323,5 +324,51 @@ describe("Knowledge Page (Task 2.8b Step 5)", () => {
 
     // Check retireDocument was called with assistantId and document_id
     expect(api.retireDocument).toHaveBeenCalledWith(assistantId, "doc_retire_123");
+  });
+
+  it("reprocess button calls reprocessDocument with assistantId and document_id", async () => {
+    const docToReprocess: api.DocumentItem = {
+      document_id: "doc_reprocess_123",
+      title: "Document To Reprocess",
+      current_version: 1,
+      status: "ready",
+      uploaded_at: "2026-10-10T10:00:00Z",
+      latest_version_id: "ver_123",
+      flagged_pages_count: 0,
+    };
+
+    vi.mocked(api.getDocuments).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [docToReprocess],
+    });
+
+    vi.mocked(api.reprocessDocument).mockResolvedValue({
+      ok: true,
+      status: 202,
+      data: {
+        document_id: "doc_reprocess_123",
+        document_version_id: "ver_124",
+        status: "queued",
+      },
+    });
+
+    await act(async () => {
+      render(
+        <Suspense fallback={<div>Loading...</div>}>
+          <KnowledgePage params={Promise.resolve({ assistantId })} />
+        </Suspense>
+      );
+    });
+
+    const reprocessBtn = await screen.findByTestId("reprocess-btn-doc_reprocess_123");
+    expect(reprocessBtn).toBeInTheDocument();
+    expect(reprocessBtn).toHaveTextContent("Reprocess");
+
+    await act(async () => {
+      fireEvent.click(reprocessBtn);
+    });
+
+    expect(api.reprocessDocument).toHaveBeenCalledWith(assistantId, "doc_reprocess_123");
   });
 });

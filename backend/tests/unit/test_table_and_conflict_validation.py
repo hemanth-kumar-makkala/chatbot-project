@@ -323,26 +323,10 @@ async def test_table_answer_unmatched_term_discloses_explicitly_and_shows_closes
 async def test_table_validation_accepts_lead_sentence_and_real_columns_for_legacy_candidates() -> (
     None
 ):
-    """Stage R2: Table answer with lead sentence and real column names passes validation for legacy rows."""
+    """Stage R2/S3: Table answer with lead sentence and real stored column names passes validation."""
     ctx = _make_context()
     doc_cap = "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
     tcs: dict[str, TableCandidate] = {
-        "row-1": TableCandidate(
-            id="row-1",
-            document_title="pa_turnaround_times.xlsx",
-            document_version_id=str(uuid4()),
-            sheet_name="Sheet1",
-            row_index=1,
-            caption=doc_cap,
-            cells={
-                doc_cap: "Payer Name",
-                "Column_2": "Service Category",
-                "Column_3": "Urgency",
-                "Column_4": "Standard SLA",
-                "Column_5": "Liaison Contact",
-            },
-            tenant_id="00000000-0000-0000-0000-000000000001",
-        ),
         "row-2": TableCandidate(
             id="row-2",
             document_title="pa_turnaround_times.xlsx",
@@ -351,11 +335,11 @@ async def test_table_validation_accepts_lead_sentence_and_real_columns_for_legac
             row_index=2,
             caption=doc_cap,
             cells={
-                doc_cap: "Apex Health Insurance",
-                "Column_2": "Diagnostic Imaging",
-                "Column_3": "Routine",
-                "Column_4": "48 Hours",
-                "Column_5": "555-0120",
+                "Payer Name": "Apex Health Insurance",
+                "Service Category": "Diagnostic Imaging",
+                "Urgency": "Routine",
+                "Standard SLA": "48 Hours",
+                "Liaison Contact": "555-0120",
             },
             tenant_id="00000000-0000-0000-0000-000000000001",
         ),
@@ -376,6 +360,59 @@ async def test_table_validation_accepts_lead_sentence_and_real_columns_for_legac
         {"answer_mode": "table", "evidence_ids": ["row-2"]}, _make_runtime(ctx)
     )
     assert res["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_table_validation_rejects_header_guessing_when_keys_differ_from_stored_headers() -> (
+    None
+):
+    """Stage S3: Validation rejects guessed column names that are not stored in cells."""
+    ctx = _make_context()
+    doc_cap = "*** SYNTHETIC TEST DOCUMENT - PRIOR AUTHORIZATION TURNAROUND TIMES ***"
+    tcs: dict[str, TableCandidate] = {
+        "row-1": TableCandidate(
+            id="row-1",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=1,
+            caption=doc_cap,
+            cells={
+                "Column_1": "Payer Name",
+                "Column_2": "Service Category",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-2": TableCandidate(
+            id="row-2",
+            document_title="pa_turnaround_times.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=2,
+            caption=doc_cap,
+            cells={
+                "Column_1": "Apex Health Insurance",
+                "Column_2": "Diagnostic Imaging",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+    }
+    ctx.table_candidates = tcs
+    # Guesses 'Payer Name' and 'Service Category' from row 1, but stored cells have Column_1 and Column_2
+    ans_text = (
+        "Routine requests take 48 to 72 hours depending on payer and service.\n"
+        "[Sheet: Sheet1, Row: 2] Payer Name: Apex Health Insurance, Service Category: Diagnostic Imaging"
+    )
+    ctx.generated_answer = {
+        "mode": "table",
+        "answer": ans_text,
+        "evidence_ids": ["row-2"],
+    }
+    res = await node_validate(
+        {"answer_mode": "table", "evidence_ids": ["row-2"]}, _make_runtime(ctx)
+    )
+    # Must reject (retry/failed) because table answers and validation use stored headers only
+    assert res["status"] in ("failed", "retry")
 
 
 @pytest.mark.asyncio

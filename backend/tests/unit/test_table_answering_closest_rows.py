@@ -111,7 +111,9 @@ def test_format_table_answer_starts_with_direct_answer_sentence() -> None:
 
 
 def test_format_table_answer_never_uses_column_n_or_caption() -> None:
-    """Never uses 'Column_N' or the caption string as a column name."""
+    """Never uses caption or metadata strings as a column name;
+    uses clean stored headers directly.
+    """
     tcs: dict[str, TableCandidate] = {
         "row-1": TableCandidate(
             id="row-1",
@@ -121,8 +123,8 @@ def test_format_table_answer_never_uses_column_n_or_caption() -> None:
             row_index=2,
             caption="*** SYNTHETIC DOCUMENT ***",
             cells={
-                "Column_1": "Apex Health",
-                "Column_2": "Inpatient Surgery",
+                "Payer Name": "Apex Health",
+                "Service Category": "Inpatient Surgery",
                 "Urgency": "Expedited",
                 "Standard SLA": "24 Hours",
                 "caption": "*** SYNTHETIC DOCUMENT ***",
@@ -131,10 +133,10 @@ def test_format_table_answer_never_uses_column_n_or_caption() -> None:
         )
     }
     content = _format_table_answer_text(tcs, ["row-1"], [])
-    assert "Column_1:" not in content
-    assert "Column_2:" not in content
     assert "caption:" not in content
     assert "SYNTHETIC DOCUMENT" not in content
+    assert "Payer Name: Apex Health" in content
+    assert "Service Category: Inpatient Surgery" in content
     assert "Urgency: Expedited" in content
     assert "Standard SLA: 24 Hours" in content
 
@@ -168,11 +170,11 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
             row_index=2,
             caption=doc_cap,
             cells={
-                doc_cap: "Apex Health Insurance",
-                "Column_2": "Diagnostic Imaging",
-                "Column_3": "Routine",
-                "Column_4": "48 Hours",
-                "Column_5": "555-0120",
+                "Payer Name": "Apex Health Insurance",
+                "Service Category": "Diagnostic Imaging",
+                "Urgency": "Routine",
+                "Standard SLA": "48 Hours",
+                "Liaison Contact": "555-0120",
             },
             tenant_id="00000000-0000-0000-0000-000000000001",
         ),
@@ -184,11 +186,11 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
             row_index=4,
             caption=doc_cap,
             cells={
-                doc_cap: "Beacon Mutual Healthcare",
-                "Column_2": "Outpatient Therapy",
-                "Column_3": "Routine",
-                "Column_4": "72 Hours",
-                "Column_5": "555-0121",
+                "Payer Name": "Beacon Mutual Healthcare",
+                "Service Category": "Outpatient Therapy",
+                "Urgency": "Routine",
+                "Standard SLA": "72 Hours",
+                "Liaison Contact": "555-0121",
             },
             tenant_id="00000000-0000-0000-0000-000000000001",
         ),
@@ -200,11 +202,11 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
             row_index=6,
             caption=doc_cap,
             cells={
-                doc_cap: "Summit Care Plan",
-                "Column_2": "Standard Clinical Review",
-                "Column_3": "Routine",
-                "Column_4": "72 Hours",
-                "Column_5": "555-0123",
+                "Payer Name": "Summit Care Plan",
+                "Service Category": "Standard Clinical Review",
+                "Urgency": "Routine",
+                "Standard SLA": "72 Hours",
+                "Liaison Contact": "555-0123",
             },
             tenant_id="00000000-0000-0000-0000-000000000001",
         ),
@@ -253,3 +255,43 @@ def test_format_table_answer_with_real_column_headers() -> None:
     assert "Urgency: Routine" in content
     assert "Standard SLA: 48 Hours" in content
     assert "Liaison Contact: 555-0120" in content
+
+
+def test_format_table_answer_uses_stored_headers_only_never_infers_from_first_data_row() -> None:
+    """Stage S3: Table answers use stored headers directly and never infer from row 1 values."""
+    doc_cap = "*** SYNTHETIC TEST DOCUMENT ***"
+    tcs: dict[str, TableCandidate] = {
+        "row-1": TableCandidate(
+            id="row-1",
+            document_title="custom_data.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=1,
+            caption=doc_cap,
+            cells={
+                "Column_1": "Payer Name",
+                "Column_2": "Service Category",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+        "row-2": TableCandidate(
+            id="row-2",
+            document_title="custom_data.xlsx",
+            document_version_id=str(uuid4()),
+            sheet_name="Sheet1",
+            row_index=2,
+            caption=doc_cap,
+            cells={
+                "Column_1": "Acme Plan",
+                "Column_2": "Outpatient",
+            },
+            tenant_id="00000000-0000-0000-0000-000000000001",
+        ),
+    }
+    content = _format_table_answer_text(tcs, ["row-2"], [])
+    # Uses stored headers directly
+    assert "Column_1: Acme Plan" in content
+    assert "Column_2: Outpatient" in content
+    # Never infers "Payer Name" or "Service Category" from row 1 values
+    assert "Payer Name:" not in content
+    assert "Service Category:" not in content

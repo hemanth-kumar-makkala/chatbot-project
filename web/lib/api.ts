@@ -82,6 +82,12 @@ export interface RetireResponse {
   status: "retired";
 }
 
+export interface ReprocessResponse {
+  document_id: string;
+  document_version_id: string;
+  status: string;
+}
+
 export type ApiResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; code: string };
@@ -387,6 +393,18 @@ export async function retireDocument(
     `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(documentId)}`,
     {
       method: "DELETE",
+    }
+  );
+}
+
+export async function reprocessDocument(
+  assistantId: string,
+  documentId: string
+): Promise<ApiResult<ReprocessResponse>> {
+  return apiFetch<ReprocessResponse>(
+    `/v1/assistants/${encodeURIComponent(assistantId)}/knowledge/documents/${encodeURIComponent(documentId)}/reprocess`,
+    {
+      method: "POST",
     }
   );
 }

@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { DocumentItem } from "@/lib/api";
 import { StatusChip } from "./StatusChip";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { retireDocument } from "@/lib/api";
+import { retireDocument, reprocessDocument } from "@/lib/api";
 
 interface DocumentsTableProps {
   assistantId: string;
@@ -39,6 +39,22 @@ export function DocumentsTable({
       onRefresh();
     } else {
       setActionError(`Failed to retire document (${result.code}). Please try again.`);
+    }
+  }
+
+  const [reprocessingDocId, setReprocessingDocId] = useState<string | null>(null);
+
+  async function handleReprocess(doc: DocumentItem) {
+    setReprocessingDocId(doc.document_id);
+    setActionError(null);
+
+    const result = await reprocessDocument(assistantId, doc.document_id);
+    setReprocessingDocId(null);
+
+    if (result.ok) {
+      onRefresh();
+    } else {
+      setActionError(`Failed to reprocess document (${result.code}). Please try again.`);
     }
   }
 
@@ -231,22 +247,43 @@ export function DocumentsTable({
                           ) : null}
 
                           {!isRetired ? (
-                            <button
-                              type="button"
-                              data-testid={`retire-btn-${doc.document_id}`}
-                              onClick={() => setRetiringDoc(doc)}
-                              style={{
-                                padding: "6px 12px",
-                                borderRadius: "var(--radius-md)",
-                                border: "1px solid var(--color-border)",
-                                backgroundColor: "transparent",
-                                color: "var(--color-status-retired-text)",
-                                fontWeight: 600,
-                                fontSize: "var(--font-size-xs)",
-                              }}
-                            >
-                              Retire
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                data-testid={`reprocess-btn-${doc.document_id}`}
+                                disabled={reprocessingDocId === doc.document_id}
+                                onClick={() => handleReprocess(doc)}
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "var(--radius-md)",
+                                  border: "1px solid var(--color-border)",
+                                  backgroundColor: "transparent",
+                                  color: "var(--color-navy)",
+                                  fontWeight: 600,
+                                  fontSize: "var(--font-size-xs)",
+                                  cursor: reprocessingDocId === doc.document_id ? "not-allowed" : "pointer",
+                                  opacity: reprocessingDocId === doc.document_id ? 0.6 : 1,
+                                }}
+                              >
+                                {reprocessingDocId === doc.document_id ? "Reprocessing..." : "Reprocess"}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`retire-btn-${doc.document_id}`}
+                                onClick={() => setRetiringDoc(doc)}
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "var(--radius-md)",
+                                  border: "1px solid var(--color-border)",
+                                  backgroundColor: "transparent",
+                                  color: "var(--color-status-retired-text)",
+                                  fontWeight: 600,
+                                  fontSize: "var(--font-size-xs)",
+                                }}
+                              >
+                                Retire
+                              </button>
+                            </>
                           ) : (
                             <span
                               style={{

@@ -1750,61 +1750,13 @@ def _select_matching_table_rows(
     return matched_ids, missing_terms
 
 
-def _build_table_header_map(avail_table: dict[str, TableCandidate]) -> dict[str, str]:
-    """Build a mapping from raw cell keys (Column_N, caption) to real column names (Stage R2)."""
-    import re
-
-    header_map: dict[str, str] = {}
-    known_headers = (
-        "payer name",
-        "service category",
-        "standard sla",
-        "urgency",
-        "liaison contact",
-        "plan code",
-        "plan name",
-        "standard copay",
-        "copay",
-    )
-
-    for tc in avail_table.values():
-        if tc.row_index == 1 or any(
-            str(v).strip().lower() in known_headers for v in tc.cells.values() if v is not None
-        ):
-            for k, v in tc.cells.items():
-                if v is None:
-                    continue
-                v_str = str(v).strip()
-                k_str = str(k).strip()
-                if not v_str:
-                    continue
-                is_caption_header = (
-                    (tc.caption and k_str == tc.caption.strip())
-                    or k_str.startswith("***")
-                    or "SYNTHETIC DOCUMENT" in k_str
-                )
-                is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
-                if is_caption_header or is_generic_col:
-                    header_map[k_str] = v_str
-
-    for tc in avail_table.values():
-        d_title = tc.document_title.lower() if tc.document_title else ""
-        if "turnaround" in d_title:
-            header_map.setdefault("Column_2", "Service Category")
-            header_map.setdefault("Column_3", "Urgency")
-            header_map.setdefault("Column_4", "Standard SLA")
-            header_map.setdefault("Column_5", "Liaison Contact")
-            for k in tc.cells:
-                k_str = str(k).strip()
-                if (k_str.startswith("***") or "SYNTHETIC" in k_str) and k_str not in header_map:
-                    header_map[k_str] = "Payer Name"
-        elif "accepted_plans" in d_title:
-            header_map.setdefault("Column_1", "Payer Name")
-            header_map.setdefault("Column_2", "Plan Code")
-            header_map.setdefault("Column_3", "Plan Name")
-            header_map.setdefault("Column_4", "Standard Copay")
-
-    return header_map
+def _build_table_header_map(
+    _avail_table: dict[str, TableCandidate] | None = None,
+) -> dict[str, str]:
+    """Legacy header mapping removed in Stage S3. Returns empty mapping;
+    stored headers used directly.
+    """
+    return {}
 
 
 def _format_table_answer_text(
@@ -1812,7 +1764,7 @@ def _format_table_answer_text(
     selected_ids: list[str],
     missing_terms: list[str],
 ) -> str:
-    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2)."""
+    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2/S3)."""
     import re
 
     def _display_cell(value: Any) -> str:
@@ -1820,7 +1772,6 @@ def _format_table_answer_text(
             return ""
         return str(value).replace("\r", " ").replace("\n", " ").strip()
 
-    header_map = _build_table_header_map(avail_table)
     row_lines: list[str] = []
     selected_rows_dict: list[dict[str, str]] = []
 
@@ -1851,18 +1802,13 @@ def _format_table_answer_text(
                 or k_str.startswith("***")
                 or "SYNTHETIC DOCUMENT" in k_str
             )
-            is_generic_col = bool(re.match(r"^Column_\d+$", k_str, re.IGNORECASE))
+            if is_caption_header:
+                continue
 
-            if not is_caption_header and not is_generic_col:
-                col_name = k_str
-            else:
-                col_name = header_map.get(k_str, "")
-
-            if col_name:
-                pairs.append(f"{col_name}: {v_disp}")
-                row_fields[col_name] = v_disp
-            else:
-                pairs.append(v_disp)
+            # Stage S3: Use stored headers only, never infer or guess from first data row
+            col_name = k_str
+            pairs.append(f"{col_name}: {v_disp}")
+            row_fields[col_name] = v_disp
 
         selected_rows_dict.append(row_fields)
         row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
@@ -3094,7 +3040,7 @@ async def node_validate(
                                 pairs = [p.strip() for p in row_content.split(", ") if ":" in p]
                                 if pairs:
                                     # Find if any candidate row matches all pairs byte-for-byte
-                                    header_map = _build_table_header_map(tbl_candidates)
+                                    # using stored headers directly
                                     candidate_matched = False
                                     for tc in matching_tcs:
                                         all_pairs_match = True
@@ -3105,22 +3051,8 @@ async def node_validate(
                                             stored_val = str(tc.cells.get(col_name, "")).strip()
                                             if shown_val == stored_val:
                                                 continue
-
-                                            # Resolve via header_map for legacy/generic stored keys
-                                            matched_via_header = False
-                                            for k, v in tc.cells.items():
-                                                if v is None:
-                                                    continue
-                                                k_str = str(k).strip()
-                                                if (
-                                                    header_map.get(k_str) == col_name
-                                                    and str(v).strip() == shown_val
-                                                ):
-                                                    matched_via_header = True
-                                                    break
-                                            if not matched_via_header:
-                                                all_pairs_match = False
-                                                break
+                                            all_pairs_match = False
+                                            break
                                         if all_pairs_match:
                                             candidate_matched = True
                                             break
