@@ -4331,3 +4331,42 @@ Append-only record of all completed tasks, architectural choices, and test recor
   3. `backend/app/api/routes/conversations.py`
   4. `docs/STATUS.md`
   5. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-16] Stage U4: Table Answer Lead Category Resolution, Readable Formatting & Extraction Table Absent Fields Collapse
+
+- **Task**: Complete Stage U4 of `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\stage_U_plan.md` plus web extraction table collapse:
+  - For table queries where the query term is not in the table (e.g. "what is the turnaround time for an urgent prior authorization?"), ensure the lead sentence names the closest matching category from the matched column (e.g., "There is no 'urgent' category; Expedited requests take 24 hours.") instead of picking an unrelated category (e.g., "Inpatient Surgery").
+  - Show matched rows as readable lines without the `[Sheet: Sheet1, Row: N]` prefix (as source chips already present sheet and row coordinates), e.g., "Apex Health Insurance, Inpatient Surgery: 24 Hours (Expedited)".
+  - Ensure validation in `node_validate` checks every shown value against cited candidate rows.
+  - In `web/components/ExtractionTable.tsx`, show fields with a value or problem state (`FILLED_*`, `CONFLICTING`, `UNREADABLE`, `INVALID`) as individual table rows, and collapse all `NOT_PRESENT` fields into one line `"N fields not present in this document"` that expands on click.
+- **Changes**:
+  1. `backend/app/core/graph.py`:
+     - In `_select_matching_table_rows` and `_format_table_answer_text`, added column-level synonym and stem resolution for missing query terms (e.g., `"urgent"` maps to `"urgency"` column), extracting the closest matching category (e.g., `"Expedited"`) and its associated SLA (e.g., `"24 Hours"`) rather than falling through to unrelated columns like `"Service Category"`.
+     - Formatted matched rows into clean readable strings (`"{Payer}, {Service}: {SLA} ({Urgency})"`) without `[Sheet: Sheet1, Row: N]`.
+     - Updated `node_validate` table mode to parse readable line structures and verify that every entity, service, SLA, and urgency string strictly matches stored cell values in cited candidate rows.
+  2. `backend/tests/unit/test_table_answer_wording_u4.py` (new): Added 5 unit tests verifying lead category extraction on missing query terms, readable row line formatting, validation pass on faithful rows, and validation failure / safe refusal on hallucinated SLAs or invented entities.
+  3. `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`, `backend/tests/unit/test_table_retrieval.py`: Updated assertions to verify readable line formatting without `[Sheet:` prefixes and closest category lead text.
+  4. `web/components/ExtractionTable.tsx`: Partitioned extraction fields into present/problem fields and `NOT_PRESENT` fields; collapsed `NOT_PRESENT` fields into an accessible `<button>` row with chevron indicator displaying `"{count} {count === 1 ? 'field' : 'fields'} not present in this document"`, expanding to render the fields when clicked.
+  5. `web/__tests__/extraction_view.test.tsx`: Added test verifying collapsing and expanding behavior of `NOT_PRESENT` fields.
+  6. `web/__tests__/ui4.test.tsx`: Updated test to click toggle before asserting collapsed badge.
+- **Verification**:
+  - `npm --prefix web test -- --run`: 14 test files passed, 154 tests passed.
+  - `npm --prefix web run typecheck`: Passed (0 errors).
+  - `uv run python -m pytest tests/unit/test_table_*.py`: 53 passed.
+  - `uv run python -m pytest tests/invariants/test_architecture_boundaries.py`: 26 passed.
+  - `uv run pre-commit run --files`: All 10 hooks passed.
+  - Full mock suite (`APP_PROFILE=mock`, `uv run python -m pytest -m "not models"`): 1060 passed, 1 skipped, 16 deselected, 57 warnings in 176.16s (0:02:56).
+- **Files Created**:
+  1. `backend/tests/unit/test_table_answer_wording_u4.py`
+- **Files Edited**:
+  1. `backend/app/core/graph.py`
+  2. `backend/tests/unit/test_table_answering_closest_rows.py`
+  3. `backend/tests/unit/test_table_and_conflict_validation.py`
+  4. `backend/tests/unit/test_table_retrieval.py`
+  5. `web/components/ExtractionTable.tsx`
+  6. `web/__tests__/ui4.test.tsx`
+  7. `web/__tests__/extraction_view.test.tsx`
+  8. `docs/STATUS.md`
+  9. `docs/BUILD_LOG.md`

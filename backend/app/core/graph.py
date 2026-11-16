@@ -1792,9 +1792,11 @@ def _format_table_answer_text(
 
     ordered_selected_ids = sorted(
         selected_ids,
-        key=lambda rid: (avail_table[rid].sheet_name, avail_table[rid].row_index)
-        if rid in avail_table
-        else ("", 0),
+        key=lambda rid: (
+            (avail_table[rid].sheet_name, avail_table[rid].row_index)
+            if rid in avail_table
+            else ("", 0)
+        ),
     )
 
     for rid in ordered_selected_ids:
@@ -1838,34 +1840,115 @@ def _format_table_answer_text(
             row_fields[col_name] = v_disp
 
         selected_rows_dict.append(row_fields)
-        row_lines.append(f"[Sheet: {tc.sheet_name}, Row: {tc.row_index}] " + ", ".join(pairs))
+
+        # Stage U4: Matched rows are shown as readable lines without [Sheet: ..., Row: ...]
+        payer = row_fields.get("Payer Name")
+        service = row_fields.get("Service Category")
+        sla = row_fields.get("Standard SLA")
+        urgency = row_fields.get("Urgency")
+
+        if payer and service and sla and urgency:
+            # e.g. "{Payer}, {Service}: {SLA} ({Urgency})"
+            row_lines.append(f"{payer}, {service}: {sla} ({urgency})")
+        elif payer and service and sla:
+            row_lines.append(f"{payer}, {service}: {sla}")
+        else:
+            row_lines.append(", ".join(pairs))
 
     if missing_terms:
         first_tc = avail_table[selected_ids[0]] if selected_ids else None
         term = missing_terms[0]
         closest_cat: str | None = None
         closest_sla: str | None = None
+
         if first_tc:
-            for k, v in first_tc.cells.items():
-                k_low = str(k).lower()
-                v_str = str(v).strip() if v is not None else ""
-                if any(w in k_low for w in ("urgency", "category", "priority", "tier", "type")):
-                    closest_cat = v_str
-                elif any(w in k_low for w in ("sla", "turnaround", "time", "hours", "days")):
-                    closest_sla = v_str
+            matched_col: str | None = None
+            term_lower = term.lower()
+
+            # 1. Direct stem match on column names
+            for col in first_tc.cells:
+                c_low = str(col).lower()
+                if term_lower in c_low or c_low in term_lower:
+                    matched_col = str(col)
+                    break
+                if len(term_lower) >= 4 and len(c_low) >= 4 and term_lower[:4] == c_low[:4]:
+                    matched_col = str(col)
+                    break
+
+            # 2. Urgency/speed domain terms
+            if not matched_col:
+                urgency_synonyms = (
+                    "urgent",
+                    "stat",
+                    "rush",
+                    "emergency",
+                    "priority",
+                    "routine",
+                    "expedited",
+                    "fast",
+                )
+                if term_lower in urgency_synonyms:
+                    for col in first_tc.cells:
+                        c_low = str(col).lower()
+                        if any(w in c_low for w in ("urgenc", "priority", "speed")):
+                            matched_col = str(col)
+                            break
+
+            # 3. Row value match: column holding an expedited/priority value
+            if not matched_col:
+                for col, val in first_tc.cells.items():
+                    if val is not None and str(val).lower() in (
+                        "expedited",
+                        "stat",
+                        "rush",
+                        "emergency",
+                        "priority",
+                    ):
+                        matched_col = str(col)
+                        break
+
+            # Fallback column match
+            if not matched_col:
+                for col in first_tc.cells:
+                    c_low = str(col).lower()
+                    if any(w in c_low for w in ("urgenc", "priority")):
+                        matched_col = str(col)
+                        break
+            if not matched_col:
+                for col in first_tc.cells:
+                    c_low = str(col).lower()
+                    if any(w in c_low for w in ("category", "tier", "type")):
+                        matched_col = str(col)
+                        break
+
+            if matched_col and matched_col in first_tc.cells:
+                val = first_tc.cells.get(matched_col)
+                if val is not None:
+                    closest_cat = str(val).strip()
+
+            for col, val in first_tc.cells.items():
+                c_low = str(col).lower()
+                if any(w in c_low for w in ("sla", "turnaround", "time", "hours", "days")):
+                    if val is not None:
+                        closest_sla = str(val).strip()
+                    break
 
         if closest_cat and closest_sla:
+            sla_text = (
+                closest_sla.lower()
+                if re.search(r"\b(?:hours?|days?)\b", closest_sla, re.I)
+                else closest_sla
+            )
             intro_sentence = (
-                f"There is no '{term}' category ({term} is not listed); "
-                f"{closest_cat} requests are {closest_sla.lower()}."
+                f"There is no '{term}' category; {closest_cat} requests take {sla_text}."
             )
         elif closest_cat:
             intro_sentence = (
-                f"There is no '{term}' category ({term} is not listed); "
-                f"closest matching category is {closest_cat}."
+                f"There is no '{term}' category; closest matching category is {closest_cat}."
             )
         else:
-            intro_sentence = f"There is no '{term}' category in the table ({term} is not listed)."
+            intro_sentence = f"There is no '{term}' category in the table."
+
         return "\n".join([intro_sentence, *row_lines])
 
     # Stage R2: Table answers must start with one plain direct sentence
@@ -3235,18 +3318,121 @@ async def node_validate(
                                 if not is_valid:
                                     break
                         elif is_valid:
-                            # Natural language table answer
-                            found_stored_val = False
-                            for cid in cited_ids:
-                                cand = tbl_candidates.get(cid)
-                                if cand is not None:
-                                    for val in cand.cells.values():
-                                        v_str = str(val).strip()
-                                        if len(v_str) >= 3 and v_str.lower() in ans_text.lower():
-                                            found_stored_val = True
+                            # Stage U4: Validate readable lines without [Sheet: ..., Row: ...]
+                            # Every row line and shown value must exist in cited candidate rows
+                            cited_tcs = [
+                                tbl_candidates[cid] for cid in cited_ids if cid in tbl_candidates
+                            ]
+                            all_cited_cell_values = {
+                                str(val).strip().lower()
+                                for tc in cited_tcs
+                                for val in tc.cells.values()
+                                if val is not None and str(val).strip()
+                            }
+
+                            ans_lines = [
+                                line.strip() for line in ans_text.splitlines() if line.strip()
+                            ]
+                            found_at_least_one_valid_row = False
+
+                            for line in ans_lines:
+                                # Check if lead sentence
+                                if re.match(r"^There is no\b", line, re.IGNORECASE) or re.search(
+                                    r"\brequests take\b|\bcopay for\b|\bmatching rows\b",
+                                    line,
+                                    re.IGNORECASE,
+                                ):
+                                    continue
+
+                                # Matched row line format: "Payer, Service: SLA (Urgency)"
+                                m_readable = re.match(
+                                    r"^([^,:]+),\s*([^:]+):\s*([^(]+?)(?:\s*\(([^)]+)\))?$",
+                                    line,
+                                )
+                                if m_readable:
+                                    r_payer = m_readable.group(1).strip()
+                                    r_service = m_readable.group(2).strip()
+                                    r_sla = m_readable.group(3).strip()
+                                    r_urg = (
+                                        m_readable.group(4).strip() if m_readable.group(4) else None
+                                    )
+
+                                    matched_row = False
+                                    for tc in cited_tcs:
+                                        t_payer = (
+                                            str(tc.cells.get("Payer Name", "")).strip().lower()
+                                        )
+                                        t_service = (
+                                            str(tc.cells.get("Service Category", ""))
+                                            .strip()
+                                            .lower()
+                                        )
+                                        t_sla = (
+                                            str(tc.cells.get("Standard SLA", "")).strip().lower()
+                                        )
+                                        t_urg = str(tc.cells.get("Urgency", "")).strip().lower()
+
+                                        if (
+                                            t_payer == r_payer.lower()
+                                            and t_service == r_service.lower()
+                                            and t_sla == r_sla.lower()
+                                            and (r_urg is None or t_urg == r_urg.lower())
+                                        ):
+                                            matched_row = True
                                             break
-                            if not found_stored_val:
-                                is_valid = False
+
+                                    if not matched_row:
+                                        is_valid = False
+                                        break
+                                    found_at_least_one_valid_row = True
+                                else:
+                                    # Pairs format "Col: Val, Col: Val"
+                                    pairs = [p.strip() for p in line.split(", ") if ":" in p]
+                                    if pairs:
+                                        matched_row = False
+                                        for tc in cited_tcs:
+                                            all_match = True
+                                            for pair in pairs:
+                                                col_name, val_str = pair.split(":", 1)
+                                                col_name = col_name.strip()
+                                                val_str = val_str.strip()
+                                                stored_val = str(tc.cells.get(col_name, "")).strip()
+                                                if val_str != stored_val:
+                                                    all_match = False
+                                                    break
+                                            if all_match:
+                                                matched_row = True
+                                                break
+                                        if not matched_row:
+                                            is_valid = False
+                                            break
+                                        found_at_least_one_valid_row = True
+                                    else:
+                                        # Free-form line: verify key tokens exist in cited cells
+                                        line_tokens = [
+                                            t.lower()
+                                            for t in re.findall(r"[A-Za-z0-9$-]{3,}", line)
+                                            if t.lower() not in _TABLE_STOPWORDS
+                                        ]
+                                        if line_tokens and not any(
+                                            any(tok in cell_v for cell_v in all_cited_cell_values)
+                                            for tok in line_tokens
+                                        ):
+                                            is_valid = False
+                                            break
+
+                            if is_valid and not found_at_least_one_valid_row:
+                                # Natural language fallback check
+                                found_stored_val = any(
+                                    any(
+                                        len(str(val).strip()) >= 3
+                                        and str(val).strip().lower() in ans_text.lower()
+                                        for val in tc.cells.values()
+                                    )
+                                    for tc in cited_tcs
+                                )
+                                if not found_stored_val:
+                                    is_valid = False
 
         # Task 4.2 / Invariant 5: Visual validation with normalized values
         is_visual = (

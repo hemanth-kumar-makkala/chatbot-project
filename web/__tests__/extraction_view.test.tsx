@@ -252,13 +252,58 @@ describe("Phase 4 Task 4.6: Live Extraction View, Side-by-Side Table & All 7 Fie
     expect(within(rowInvalid).getByText("INVALID")).toBeDefined();
     expect(within(rowInvalid).getByText(/CMS NPI Luhn check digit failure/)).toBeDefined();
 
-    // State 6: NOT_PRESENT
+    // State 6: NOT_PRESENT - collapsed by default into toggle line; click to expand
+    const toggle = screen.getByTestId("not-present-toggle");
+    expect(toggle.textContent).toContain("not present in this document");
+    expect(screen.queryByTestId("extraction-row-secondary-insurance")).toBeNull();
+    fireEvent.click(toggle);
     const rowNotPresent = screen.getByTestId("extraction-row-secondary-insurance");
     expect(within(rowNotPresent).getByText("NOT_PRESENT")).toBeDefined();
 
     // State 7: NOT_APPLICABLE
     const rowNotApp = screen.getByTestId("extraction-row-emergency-override");
     expect(within(rowNotApp).getByText("NOT_APPLICABLE")).toBeDefined();
+  });
+
+  it("collapses all NOT_PRESENT fields into one toggle line and expands on click", async () => {
+    vi.mocked(api.uploadSessionDocument).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        session_document_id: "doc-uuid-1",
+        conversation_id: "conv-uuid-1",
+        file_name: "skewed_fax.pdf",
+        page_count: 1,
+        status: "extracted",
+        extracted_fields: mockAll7StatesFields,
+        page_image_url:
+          "/v1/assistants/00000000-0000-0000-0000-000000000101/conversations/conv-uuid-1/documents/doc-uuid-1/pages/1/image",
+      },
+    });
+
+    await act(async () => {
+      render(<ChatPage params={Promise.resolve({ assistantId: liveAssistantId })} />);
+    });
+
+    const fileInput = await screen.findByTestId("live-file-input");
+    const dummyFile = new File(["%PDF-1.4 test"], "skewed_fax.pdf", { type: "application/pdf" });
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [dummyFile] } });
+    });
+
+    await screen.findByTestId("extraction-field-table");
+
+    const toggle = screen.getByTestId("not-present-toggle");
+    expect(toggle.textContent).toContain("1 field not present in this document");
+    expect(screen.queryByTestId("extraction-row-secondary-insurance")).toBeNull();
+
+    // Expand to show secondary_insurance
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("extraction-row-secondary-insurance")).toBeDefined();
+
+    // Collapse again
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("extraction-row-secondary-insurance")).toBeNull();
   });
 
   it("handles typed error response when session document upload fails", async () => {

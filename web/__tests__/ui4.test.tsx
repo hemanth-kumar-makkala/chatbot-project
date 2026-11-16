@@ -290,8 +290,13 @@ describe("UI-4: Phase 4 UI - Session Upload, Extraction View, Field States & Inv
       expect(screen.getByTestId("field-badge-CONFLICTING")).toBeDefined();
       expect(screen.getByTestId("field-badge-UNREADABLE")).toBeDefined();
       expect(screen.getByTestId("field-badge-INVALID")).toBeDefined();
-      expect(screen.getByTestId("field-badge-NOT_PRESENT")).toBeDefined();
       expect(screen.getByTestId("field-badge-NOT_APPLICABLE")).toBeDefined();
+
+      // NOT_PRESENT fields are collapsed into one line by default; click to expand
+      const toggle = screen.getByTestId("not-present-toggle");
+      expect(toggle.textContent).toContain("not present in this document");
+      fireEvent.click(toggle);
+      expect(screen.getByTestId("field-badge-NOT_PRESENT")).toBeDefined();
     });
 
     it("unreadable field value is strictly blank with warning flag and never guessed (Invariant 6)", () => {

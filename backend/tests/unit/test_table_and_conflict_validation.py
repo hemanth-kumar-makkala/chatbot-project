@@ -308,9 +308,10 @@ async def test_table_answer_unmatched_term_discloses_explicitly_and_shows_closes
     ans = ctx.response_text
 
     assert "urgent" in ans.lower()
-    assert "does not" in ans.lower() or "not listed" in ans.lower()
+    assert "there is no 'urgent' category" in ans.lower()
     assert "Expedited" in ans
     assert "24 Hours" in ans
+    assert "Apex Health Insurance, Inpatient Surgery: 24 Hours (Expedited)" in ans
 
     val_res = await node_validate(
         {"answer_mode": "table", "evidence_ids": res["evidence_ids"]},

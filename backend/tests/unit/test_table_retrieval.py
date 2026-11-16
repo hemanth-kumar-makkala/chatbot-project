@@ -158,8 +158,9 @@ async def test_table_answer_uses_readable_headers_and_stored_values(
 
     await node_generate(state, MockRuntime())  # type: ignore
 
-    assert "[Sheet: Sheet1, Row: 1]" in table_context.response_text
-    assert "Apex Health Insurance" in table_context.response_text
+    # Stage U4: Matched rows are shown as readable lines without [Sheet: ..., Row: ...]
+    assert "[Sheet:" not in table_context.response_text
+    assert "Payer Name: Apex Health Insurance" in table_context.response_text
     assert "APX-HMO-01" in table_context.response_text
     assert "| Payer Name | Plan Code |" not in table_context.response_text
 

@@ -111,11 +111,13 @@ def test_format_table_answer_starts_with_direct_answer_sentence() -> None:
     assert "no 'urgent' category" in first_line.lower() or "not listed" in first_line.lower()
     assert "Expedited" in first_line or "expedited" in first_line.lower()
     assert "24" in first_line
+    assert first_line == "There is no 'urgent' category; Expedited requests take 24 hours."
 
-    # Next lines contain closest row citations
+    # Stage U4: Next lines contain readable rows without "[Sheet: Sheet1, Row: N]" prefix
     lines = content.split("\n")
-    assert any("[Sheet: Sheet1, Row:" in line for line in lines[1:])
-    assert "Standard SLA: 24 Hours" in content
+    assert not any("[Sheet:" in line for line in lines[1:])
+    assert "Apex Health Insurance, Inpatient Surgery: 24 Hours (Expedited)" in lines[1]
+    assert "Crestview Health, Specialty Medication: 24 Hours (Expedited)" in lines[2]
 
 
 def test_format_table_answer_never_uses_column_n_or_caption() -> None:
@@ -143,10 +145,7 @@ def test_format_table_answer_never_uses_column_n_or_caption() -> None:
     content = _format_table_answer_text(tcs, ["row-1"], [])
     assert "caption:" not in content
     assert "SYNTHETIC DOCUMENT" not in content
-    assert "Payer Name: Apex Health" in content
-    assert "Service Category: Inpatient Surgery" in content
-    assert "Urgency: Expedited" in content
-    assert "Standard SLA: 24 Hours" in content
+    assert "Apex Health, Inpatient Surgery: 24 Hours (Expedited)" in content
 
 
 def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> None:
@@ -235,12 +234,10 @@ def test_format_table_answer_multiple_matching_rows_includes_sla_values() -> Non
     assert "Summit Care Plan" in content
     assert "Diagnostic Imaging" in content
 
-    # Matching rows must use real column names, even when stored with legacy keys
-    assert "Payer Name: Apex Health Insurance" in content
-    assert "Service Category: Diagnostic Imaging" in content
-    assert "Urgency: Routine" in content
-    assert "Standard SLA: 48 Hours" in content
-    assert "Liaison Contact: 555-0120" in content
+    # Stage U4: Matching rows are shown as readable lines without [Sheet: ..., Row: ...]
+    assert "Apex Health Insurance, Diagnostic Imaging: 48 Hours (Routine)" in content
+    assert "Beacon Mutual Healthcare, Outpatient Therapy: 72 Hours (Routine)" in content
+    assert "Summit Care Plan, Standard Clinical Review: 72 Hours (Routine)" in content
 
     # Must never use Column_N or caption as a column name
     assert "Column_2" not in content
@@ -258,11 +255,10 @@ def test_format_table_answer_with_real_column_headers() -> None:
     first_line = content.split("\n")[0].strip()
     assert first_line == "Routine requests take 48 to 72 hours depending on payer and service."
 
-    assert "Payer Name: Apex Health Insurance" in content
-    assert "Service Category: Diagnostic Imaging" in content
-    assert "Urgency: Routine" in content
-    assert "Standard SLA: 48 Hours" in content
-    assert "Liaison Contact: 555-0120" in content
+    # Stage U4: Matched rows are shown as readable lines
+    assert "Apex Health Insurance, Diagnostic Imaging: 48 Hours (Routine)" in content
+    assert "Beacon Mutual Healthcare, Outpatient Therapy: 72 Hours (Routine)" in content
+    assert "Summit Care Plan, Standard Clinical Review: 72 Hours (Routine)" in content
 
 
 def test_format_table_answer_uses_stored_headers_only_never_infers_from_first_data_row() -> None:
@@ -362,7 +358,6 @@ async def test_node_generate_table_returns_all_three_routine_rows_when_model_cit
     lines = ctx.response_text.splitlines()
     assert lines[0] == "Routine requests take 48 to 72 hours depending on payer and service."
     assert len(lines) == 4
-    assert "Payer Name: Apex Health Insurance" in lines[1]
-    assert "Payer Name: Beacon Mutual Healthcare" in lines[2]
-    assert "Payer Name: Summit Care Plan" in lines[3]
-
+    assert lines[1] == "Apex Health Insurance, Diagnostic Imaging: 48 Hours (Routine)"
+    assert lines[2] == "Beacon Mutual Healthcare, Outpatient Therapy: 72 Hours (Routine)"
+    assert lines[3] == "Summit Care Plan, Standard Clinical Review: 72 Hours (Routine)"
