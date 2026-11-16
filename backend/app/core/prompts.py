@@ -222,6 +222,21 @@ class AnswerOutput(BaseModel):
         return []
 
 
+ASSISTANT_INSTRUCTIONS_PRECEDENCE_RULE = (
+    "Assistant Custom Instructions (Precedence Rule: These instructions may change tone "
+    "and format, such as bullet points, but they must NEVER override platform rules on "
+    "citations, refusals, quote validation, or PHI rules):"
+)
+
+
+def format_assistant_instructions_block(assistant_instructions: str | None) -> str:
+    """Format optional per-assistant custom instructions block placed below fixed platform rules."""
+    if not assistant_instructions or not assistant_instructions.strip():
+        return ""
+    cleaned = assistant_instructions.strip()
+    return f"{ASSISTANT_INSTRUCTIONS_PRECEDENCE_RULE}\n{cleaned}\n"
+
+
 def format_router_prompt(question: str, attached_document: str | None = None) -> str:
     """Format prompt for Node 2 query routing from registry."""
     tmpl = load_prompt_template("router_classify")
@@ -234,6 +249,7 @@ def format_answer_prompt(
     evidence_text: dict[str, str],
     mode: str = "short",
     language: str = "en",
+    assistant_instructions: str | None = None,
 ) -> str:
     """Format prompt for Node 7 answer synthesis strictly with given evidence from registry."""
     lines: list[str] = []
@@ -257,18 +273,35 @@ def format_answer_prompt(
         )
 
     tmpl = load_prompt_template("answer_synthesis")
-    return tmpl.format(
+    rendered = tmpl.format(
         mode=mode_description,
         language=language,
         evidence_context=evidence_context,
         question=question,
     )
+    inst_block = format_assistant_instructions_block(assistant_instructions)
+    if inst_block:
+        if "Evidence:\n" in rendered:
+            rendered = rendered.replace("Evidence:\n", f"{inst_block}\nEvidence:\n", 1)
+        else:
+            rendered = f"{rendered}\n{inst_block}"
+    return rendered
 
 
-def format_general_prompt(question: str) -> str:
+def format_general_prompt(
+    question: str,
+    assistant_instructions: str | None = None,
+) -> str:
     """Format prompt for general conversational/greeting reply from registry."""
     tmpl = load_prompt_template("general_reply")
-    return tmpl.format(question=question)
+    rendered = tmpl.format(question=question)
+    inst_block = format_assistant_instructions_block(assistant_instructions)
+    if inst_block:
+        if "Question:" in rendered:
+            rendered = rendered.replace("Question:", f"{inst_block}\nQuestion:", 1)
+        else:
+            rendered = f"{rendered}\n{inst_block}"
+    return rendered
 
 
 def format_conflict_prompt(question: str, evidence_text: dict[str, str]) -> str:

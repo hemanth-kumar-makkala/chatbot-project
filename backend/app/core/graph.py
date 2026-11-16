@@ -47,6 +47,7 @@ from app.core.prompts import (
     ConflictDetectionOutput,
     RouterOutput,
     format_answer_prompt,
+    format_assistant_instructions_block,
     format_conflict_prompt,
     format_general_prompt,
     format_router_prompt,
@@ -318,6 +319,7 @@ class GraphRuntimeContext:
     session_document_id: str | None = None
     session_document_name: str | None = None
     session_document_pages: list[dict[str, Any]] | None = None
+    assistant_instructions: str | None = None
     citations: list[SourceCitation] = field(default_factory=list)
 
 
@@ -1973,7 +1975,10 @@ async def node_generate(
             content = "Hello! I am your clinic knowledge assistant. How can I help you today?"
             if model is not None and not ports.is_mock_profile:
                 try:
-                    gen_prompt = format_general_prompt(ctx.question_text)
+                    gen_prompt = format_general_prompt(
+                        ctx.question_text,
+                        assistant_instructions=ctx.assistant_instructions,
+                    )
                     resp = await model.generate(
                         role=ModelRole.ANSWER,
                         messages=[ChatMessage(role="user", content=gen_prompt)],
@@ -2047,6 +2052,8 @@ async def node_generate(
             if is_summary:
                 pts_list: list[dict[str, Any]] = []
                 if model is not None and not ports.is_mock_profile:
+                    inst_block = format_assistant_instructions_block(ctx.assistant_instructions)
+                    inst_section = f"{inst_block}\n" if inst_block else ""
                     summary_prompt = (
                         "You are an assistant providing a summary based solely on the "
                         "attached session document.\n"
@@ -2057,6 +2064,7 @@ async def node_generate(
                         "- 'quoted_span': EXACT verbatim supporting text span from the document.\n"
                         "- 'evidence_ids': a list containing the page number (e.g. ['page_1']).\n"
                         "Every quoted_span must appear character-for-character in the document.\n\n"
+                        f"{inst_section}"
                         f"Document text:\n{ev_context}\n\n"
                         f"Question: {ctx.question_text}\n"
                         "Output strictly as JSON matching the schema with 'points'."
@@ -2262,6 +2270,8 @@ async def node_generate(
             evidence_ids: list[str] = []
 
             if model is not None and not ports.is_mock_profile:
+                inst_block = format_assistant_instructions_block(ctx.assistant_instructions)
+                inst_section = f"{inst_block}\n" if inst_block else ""
                 qa_prompt = (
                     "You are an assistant answering solely based on the "
                     "attached session document.\n"
@@ -2269,6 +2279,7 @@ async def node_generate(
                     "Quote the exact supporting text span in quoted_span.\n"
                     "If the answer or requested value is not found in the document text, "
                     f'answer strictly: "{refusal_msg}" with quoted_span null.\n\n'
+                    f"{inst_section}"
                     f"Document text:\n{ev_context}\n\n"
                     f"Question: {ctx.question_text}\n"
                     "Output strictly as JSON matching the schema."
@@ -2377,6 +2388,7 @@ async def node_generate(
                     evidence_text=used_evidence,
                     mode=mode,
                     language=lang,
+                    assistant_instructions=ctx.assistant_instructions,
                 )
                 try:
                     resp = await model.generate(
@@ -2562,6 +2574,7 @@ async def node_generate(
                 evidence_text=used_evidence,
                 mode=mode,
                 language=lang,
+                assistant_instructions=ctx.assistant_instructions,
             )
             try:
                 resp = await model.generate(
@@ -2966,11 +2979,11 @@ async def node_validate(
         ):
             is_valid = False
 
-        # Task 3.5 explain mode: validate each point separately; drop points that fail;
-        # show the validated points; if none validates, regenerate once (the 1-retry loop),
-        # then refuse with "I couldn't confirm that from the documents."
-        # Never show unvalidated text.
-        if is_valid and mode == "explain" and generated:
+        # Task 3.5 explain mode (or bullet-point responses using points): validate each point
+        # separately; drop points that fail; show the validated points; if none validates,
+        # regenerate once (the 1-retry loop), then refuse with "I couldn't confirm that from
+        # the documents." Never show unvalidated text.
+        if is_valid and generated and (mode == "explain" or generated.get("points")):
             raw_points = generated.get("points")
             if raw_points and isinstance(raw_points, list):
                 valid_points = []

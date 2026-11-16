@@ -253,6 +253,28 @@ def _should_include_sources(status_val: str, route_val: str | None) -> bool:
     return status_val not in ("refusal", "clarify") and route_val != "general"
 
 
+async def _load_assistant_instructions(
+    settings: ApiSettings,
+    tenant_uuid: UUID,
+    assistant_id: str,
+) -> str | None:
+    """Load saved per-assistant custom instructions from tenant-scoped storage if present."""
+    with contextlib.suppress(Exception):
+        storage = create_storage_backend(profile=settings.profile, base_dir=settings.storage_dir)
+        key = StorageKey(
+            tenant_id=tenant_uuid,
+            path=f"assistants/{assistant_id}/instructions.json",
+        )
+        raw_data = await storage.get(key)
+        if raw_data:
+            parsed = json.loads(raw_data.decode("utf-8"))
+            if isinstance(parsed, dict):
+                inst = parsed.get("instructions")
+                if isinstance(inst, str) and inst.strip():
+                    return inst.strip()
+    return None
+
+
 async def _resolve_sources(
     db_session: Any,
     tenant_uuid: UUID,
@@ -635,6 +657,12 @@ async def ask_question(
                         StorageKey(tenant_id=tenant_uuid, path=rel_path)
                     )
 
+    assistant_instructions = await _load_assistant_instructions(
+        settings=settings,
+        tenant_uuid=tenant_uuid,
+        assistant_id=payload.assistant_id,
+    )
+
     runtime_ctx = GraphRuntimeContext(
         ports=ports,
         tenant=tenant_ctx,
@@ -649,6 +677,7 @@ async def ask_question(
         session_document_id=session_doc_id,
         session_document_name=session_doc_name,
         session_document_pages=session_doc_pages,
+        assistant_instructions=assistant_instructions,
     )
     state: GraphState = {
         "request_id": request_id,
@@ -949,6 +978,12 @@ async def ask_question_stream(
                                 StorageKey(tenant_id=tenant_uuid, path=rel_path)
                             )
 
+            assistant_instructions = await _load_assistant_instructions(
+                settings=settings,
+                tenant_uuid=tenant_uuid,
+                assistant_id=payload.assistant_id,
+            )
+
             runtime_ctx = GraphRuntimeContext(
                 ports=ports,
                 tenant=tenant_ctx,
@@ -963,6 +998,7 @@ async def ask_question_stream(
                 session_document_id=session_doc_id,
                 session_document_name=session_doc_name,
                 session_document_pages=session_doc_pages,
+                assistant_instructions=assistant_instructions,
             )
             state: GraphState = {
                 "request_id": request_id,
