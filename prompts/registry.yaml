@@ -80,8 +80,8 @@ prompts:
             Example: "what is the front desk fax number" -> route "knowledge", answer_mode "exact".
           - "explain": for procedures, policies, multi-step workflows, or explanations.
             Example: "what is the front desk policy for identity verification" -> route "knowledge", answer_mode "explain".
-          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables).
-            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table".
+          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables). Questions about written guidance, policies, submission rules, or appeals (e.g. advance notice days, appeal timeframes, denial rules) MUST use "short" or "explain", NOT "table".
+            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table". Questions like "how many days in advance must prior auths be submitted" or "within what timeframe must an appeal be filed after a denial" -> route "knowledge", answer_mode "short".
           - "short": brief 1-2 sentence factual questions or general replies.
 
           Question: {question}
@@ -124,8 +124,8 @@ prompts:
             Example: "what is the front desk fax number" -> route "knowledge", answer_mode "exact".
           - "explain": for procedures, policies, multi-step workflows, or explanations.
             Example: "what is the front desk policy for identity verification" -> route "knowledge", answer_mode "explain".
-          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables).
-            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table".
+          - "table": ONLY for lookups in spreadsheet or tabular data (accepted plans, turnaround times, SLA schedules, fee tables). Questions about written guidance, policies, submission rules, or appeals (e.g. advance notice days, appeal timeframes, denial rules) MUST use "short" or "explain", NOT "table".
+            Examples: "which plans are accepted" -> route "knowledge", answer_mode "table"; "what is the turnaround time for an urgent prior authorization" -> route "knowledge", answer_mode "table". Questions like "how many days in advance must prior auths be submitted" or "within what timeframe must an appeal be filed after a denial" -> route "knowledge", answer_mode "short".
           - "short": brief 1-2 sentence factual questions or general replies.
 
           Attached session document: {attached_document}

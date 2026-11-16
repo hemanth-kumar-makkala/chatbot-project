@@ -803,8 +803,22 @@ async def node_route(
         elif computed_mode not in ("exact", "short", "explain", "table"):
             computed_mode = "short"
 
+        is_written_guidance_q = any(
+            w in q
+            for w in (
+                "advance",
+                "submitted",
+                "submission",
+                "appeal",
+                "appeals",
+                "denial",
+                "denials",
+                "denied",
+                "filing",
+            )
+        )
         if computed_route == "knowledge":
-            if any(
+            if not is_written_guidance_q and any(
                 k in q
                 for k in (
                     "table",
@@ -824,6 +838,8 @@ async def node_route(
                 )
             ):
                 computed_mode = "table"
+            elif is_written_guidance_q and computed_mode == "table":
+                computed_mode = "short"
             elif any(
                 k in q
                 for k in (
@@ -932,6 +948,23 @@ async def node_retrieve(
         ctx = runtime.context
         evidence_ids: list[str] = []
 
+        is_written_guidance = any(
+            w in ctx.question_text.lower()
+            for w in (
+                "advance",
+                "submitted",
+                "submission",
+                "appeal",
+                "appeals",
+                "denial",
+                "denials",
+                "denied",
+                "filing",
+            )
+        )
+
+        updates: dict[str, Any]
+
         # Internal fallback: vector vs keyword simulation on mock profile
         if ports.is_mock_profile and (ports.mock_vector_down or ports.mock_keyword_down):
             if ports.mock_vector_down and not ports.mock_keyword_down:
@@ -940,7 +973,10 @@ async def node_retrieve(
                 evidence_ids = [k for k in ctx.evidence_text if "vec" in k] or ["vec_chunk_1"]
             else:
                 evidence_ids = []
-            return {"evidence_ids": evidence_ids}
+            updates = {"evidence_ids": evidence_ids}
+            if is_written_guidance and state.get("answer_mode") == "table":
+                updates["answer_mode"] = "short"
+            return updates
 
         # If retriever is available:
         if ports.retriever is not None:
@@ -972,23 +1008,43 @@ async def node_retrieve(
                 ctx.evidence_text.update(texts)
 
             # Retrieve table rows from tables_data (Rule 3b)
+            # Stage W1: Questions about written guidance (appeals, denials, advance notice)
+            # must not be forced into table mode; table mode only when query asks for
+            # a spreadsheet lookup that the matched spreadsheet can answer.
+            is_written_guidance = any(
+                w in ctx.question_text.lower()
+                for w in (
+                    "advance",
+                    "submitted",
+                    "submission",
+                    "appeal",
+                    "appeals",
+                    "denial",
+                    "denials",
+                    "denied",
+                    "filing",
+                )
+            )
             table_candidates = None
-            if state.get("answer_mode") == "table" or any(
-                k in ctx.question_text.lower()
-                for k in (
-                    "table",
-                    "spreadsheet",
-                    "accepted plan",
-                    "accepted plans",
-                    "insurance plan",
-                    "plans accepted",
-                    "turnaround",
-                    "turnaround time",
-                    "turnaround times",
-                    "sla",
-                    "standard sla",
-                    "urgent sla",
-                    "fee schedule",
+            if not is_written_guidance and (
+                state.get("answer_mode") == "table"
+                or any(
+                    k in ctx.question_text.lower()
+                    for k in (
+                        "table",
+                        "spreadsheet",
+                        "accepted plan",
+                        "accepted plans",
+                        "insurance plan",
+                        "plans accepted",
+                        "turnaround",
+                        "turnaround time",
+                        "turnaround times",
+                        "sla",
+                        "standard sla",
+                        "urgent sla",
+                        "fee schedule",
+                    )
                 )
             ):
                 try:
@@ -1016,14 +1072,19 @@ async def node_retrieve(
                 except Exception:
                     logger.warning("search_tables failed on retriever", exc_info=True)
 
-            updates: dict[str, Any] = {"evidence_ids": evidence_ids}
-            if table_candidates and state.get("answer_mode") != "explain":
+            updates = {"evidence_ids": evidence_ids}
+            if is_written_guidance and state.get("answer_mode") == "table":
+                updates["answer_mode"] = "short"
+            elif table_candidates and state.get("answer_mode") != "explain":
                 updates["answer_mode"] = "table"
             return updates
 
         # Mock fallback when no retriever is injected
         evidence_ids = list(ctx.evidence_text.keys()) or ["c1"]
-        return {"evidence_ids": evidence_ids}
+        updates = {"evidence_ids": evidence_ids}
+        if is_written_guidance and state.get("answer_mode") == "table":
+            updates["answer_mode"] = "short"
+        return updates
 
     return await _execute_with_telemetry("retrieve", 3, state, runtime, _action)
 
@@ -1725,32 +1786,27 @@ def _select_matching_table_rows(
         matched_ids = list(dedup_ids)
 
     if missing_terms:
-        # When an urgency-like term is missing, prefer expedited/priority rows first as closest.
-        def _closest_priority(rid: str) -> tuple[int, int]:
-            vals = " ".join(
-                str(v).lower() for v in avail_table[rid].cells.values() if v is not None
-            )
-            is_fast = any(w in vals for w in ("expedited", "stat", "rush", "emergency", "priority"))
-            return (0 if is_fast else 1, -scores[rid])
+        term = missing_terms[0].lower()
+        matched_col = None
+        first_tc = avail_table[dedup_ids[0]]
+        for col in first_tc.cells:
+            c_low = str(col).lower()
+            if term in c_low or c_low in term:
+                matched_col = str(col)
+                break
+            if len(term) >= 4 and len(c_low) >= 4 and term[:4] == c_low[:4]:
+                matched_col = str(col)
+                break
 
-        matched_ids.sort(key=_closest_priority)
-        fast_ids = [
-            rid
-            for rid in matched_ids
-            if any(
-                w
-                in " ".join(
-                    str(v).lower() for v in avail_table[rid].cells.values() if v is not None
-                )
-                for w in ("expedited", "stat", "rush", "emergency", "priority")
-            )
-        ]
-        if fast_ids and any(
-            t in ("urgent", "stat", "rush", "emergency", "priority") for t in missing_terms
-        ):
-            matched_ids = fast_ids[:3]
-        else:
-            matched_ids = matched_ids[:3]
+        def _closest_row_key(rid: str) -> tuple[int, int]:
+            tc = avail_table[rid]
+            has_val = 0
+            if matched_col and matched_col in tc.cells and tc.cells[matched_col] is not None:
+                has_val = 1
+            return (-has_val, -scores[rid])
+
+        matched_ids.sort(key=_closest_row_key)
+        matched_ids = matched_ids[:3]
     elif len(matched_ids) > max_rows and max_score == 0:
         matched_ids = matched_ids[:max_rows]
 
@@ -1770,8 +1826,9 @@ def _format_table_answer_text(
     avail_table: dict[str, TableCandidate],
     selected_ids: list[str],
     missing_terms: list[str],
+    question: str = "",
 ) -> str:
-    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2/S3)."""
+    """Build a short direct table answer from matching stored rows only (Stage H/Q/R2/S3/W1)."""
     import re
 
     def _display_cell(value: Any) -> str:
@@ -1781,14 +1838,6 @@ def _format_table_answer_text(
 
     row_lines: list[str] = []
     selected_rows_dict: list[dict[str, str]] = []
-
-    preferred_col_order = (
-        "Payer Name",
-        "Service Category",
-        "Urgency",
-        "Standard SLA",
-        "Liaison Contact",
-    )
 
     ordered_selected_ids = sorted(
         selected_ids,
@@ -1802,21 +1851,15 @@ def _format_table_answer_text(
     for rid in ordered_selected_ids:
         tc = avail_table[rid]
         # Ignore synthetic header row itself if present in selected_ids
-        if tc.row_index == 1 and any(
-            str(v).strip().lower() in ("payer name", "service category", "standard sla", "urgency")
-            for v in tc.cells.values()
+        if tc.row_index == 1 and all(
+            str(k).strip().lower() == str(v).strip().lower()
+            for k, v in tc.cells.items()
             if v is not None
         ):
             continue
 
-        pairs: list[str] = []
         row_fields: dict[str, str] = {}
-        raw_keys = list(tc.cells.keys())
-        ordered_keys = [k for k in preferred_col_order if k in tc.cells] + [
-            k for k in raw_keys if k not in preferred_col_order
-        ]
-        for k in ordered_keys:
-            v = tc.cells.get(k)
+        for k, v in tc.cells.items():
             if v is None:
                 continue
             k_str = str(k).strip()
@@ -1834,38 +1877,34 @@ def _format_table_answer_text(
             if is_caption_header:
                 continue
 
-            # Stage S3: Use stored headers only, never infer or guess from first data row
-            col_name = k_str
-            pairs.append(f"{col_name}: {v_disp}")
-            row_fields[col_name] = v_disp
+            row_fields[k_str] = v_disp
+
+        if not row_fields:
+            continue
 
         selected_rows_dict.append(row_fields)
 
-        # Stage U4: Matched rows are shown as readable lines without [Sheet: ..., Row: ...]
-        payer = row_fields.get("Payer Name")
-        service = row_fields.get("Service Category")
-        sla = row_fields.get("Standard SLA")
-        urgency = row_fields.get("Urgency")
-
-        if payer and service and sla and urgency:
-            # e.g. "{Payer}, {Service}: {SLA} ({Urgency})"
-            row_lines.append(f"{payer}, {service}: {sla} ({urgency})")
-        elif payer and service and sla:
-            row_lines.append(f"{payer}, {service}: {sla}")
+        # Generic readable row line: label each row by first column, then "Header: val"
+        keys = list(row_fields.keys())
+        first_col = keys[0]
+        first_val = row_fields[first_col]
+        rest = [f"{k}: {row_fields[k]}" for k in keys[1:]]
+        if rest:
+            row_lines.append(f"{first_val}: " + ", ".join(rest))
         else:
-            row_lines.append(", ".join(pairs))
+            row_lines.append(str(first_val))
 
     if missing_terms:
         first_tc = avail_table[selected_ids[0]] if selected_ids else None
         term = missing_terms[0]
+        term_lower = term.lower()
         closest_cat: str | None = None
-        closest_sla: str | None = None
+        closest_metric: str | None = None
 
         if first_tc:
             matched_col: str | None = None
-            term_lower = term.lower()
 
-            # 1. Direct stem match on column names
+            # 1. Match query term against column headers
             for col in first_tc.cells:
                 c_low = str(col).lower()
                 if term_lower in c_low or c_low in term_lower:
@@ -1875,73 +1914,36 @@ def _format_table_answer_text(
                     matched_col = str(col)
                     break
 
-            # 2. Urgency/speed domain terms
-            if not matched_col:
-                urgency_synonyms = (
-                    "urgent",
-                    "stat",
-                    "rush",
-                    "emergency",
-                    "priority",
-                    "routine",
-                    "expedited",
-                    "fast",
-                )
-                if term_lower in urgency_synonyms:
-                    for col in first_tc.cells:
-                        c_low = str(col).lower()
-                        if any(w in c_low for w in ("urgenc", "priority", "speed")):
-                            matched_col = str(col)
-                            break
-
-            # 3. Row value match: column holding an expedited/priority value
-            if not matched_col:
-                for col, val in first_tc.cells.items():
-                    if val is not None and str(val).lower() in (
-                        "expedited",
-                        "stat",
-                        "rush",
-                        "emergency",
-                        "priority",
-                    ):
-                        matched_col = str(col)
-                        break
-
-            # Fallback column match
-            if not matched_col:
-                for col in first_tc.cells:
-                    c_low = str(col).lower()
-                    if any(w in c_low for w in ("urgenc", "priority")):
-                        matched_col = str(col)
-                        break
-            if not matched_col:
-                for col in first_tc.cells:
-                    c_low = str(col).lower()
-                    if any(w in c_low for w in ("category", "tier", "type")):
-                        matched_col = str(col)
-                        break
+            # 2. Fallback: second column if first is primary label/entity
+            if not matched_col and len(first_tc.cells) > 1:
+                matched_col = list(first_tc.cells.keys())[1]
 
             if matched_col and matched_col in first_tc.cells:
                 val = first_tc.cells.get(matched_col)
                 if val is not None:
                     closest_cat = str(val).strip()
 
+            # 3. Find any metric/duration/numeric cell in the row
             for col, val in first_tc.cells.items():
-                c_low = str(col).lower()
-                if any(w in c_low for w in ("sla", "turnaround", "time", "hours", "days")):
-                    if val is not None:
-                        closest_sla = str(val).strip()
+                if val is None or col == matched_col:
+                    continue
+                s_val = str(val).strip()
+                if re.search(r"\b\d+\s*(?:hours?|days?|minutes?|weeks?)\b", s_val, re.I):
+                    closest_metric = s_val.lower()
+                    break
+                elif re.search(r"\$\d+", s_val):
+                    closest_metric = s_val
                     break
 
-        if closest_cat and closest_sla:
-            sla_text = (
-                closest_sla.lower()
-                if re.search(r"\b(?:hours?|days?)\b", closest_sla, re.I)
-                else closest_sla
-            )
-            intro_sentence = (
-                f"There is no '{term}' category; {closest_cat} requests take {sla_text}."
-            )
+        if closest_cat and closest_metric:
+            if re.search(r"\b(?:hours?|days?|minutes?|weeks?)\b", closest_metric):
+                intro_sentence = (
+                    f"There is no '{term}' category; {closest_cat} requests take {closest_metric}."
+                )
+            else:
+                intro_sentence = (
+                    f"There is no '{term}' in {matched_col}; {closest_cat} is {closest_metric}."
+                )
         elif closest_cat:
             intro_sentence = (
                 f"There is no '{term}' category; closest matching category is {closest_cat}."
@@ -1951,63 +1953,83 @@ def _format_table_answer_text(
 
         return "\n".join([intro_sentence, *row_lines])
 
-    # Stage R2: Table answers must start with one plain direct sentence
+    # Lead sentence for matching rows
     if selected_rows_dict:
-        urgencies: list[str] = list(
-            dict.fromkeys(str(r["Urgency"]).strip() for r in selected_rows_dict if r.get("Urgency"))
-        )
-        slas: list[str] = list(
-            dict.fromkeys(
-                str(r["Standard SLA"]).strip() for r in selected_rows_dict if r.get("Standard SLA")
-            )
-        )
-        payers: list[str] = list(
-            dict.fromkeys(
-                str(r["Payer Name"]).strip() for r in selected_rows_dict if r.get("Payer Name")
-            )
-        )
-        copays: list[str] = list(
-            dict.fromkeys(
-                str(r.get("Standard Copay") or r.get("Copay")).strip()
-                for r in selected_rows_dict
-                if (r.get("Standard Copay") or r.get("Copay"))
-            )
-        )
+        first_doc = avail_table[selected_ids[0]].document_title if selected_ids else "the table"
+        first_row = selected_rows_dict[0]
+        col_names = list(first_row.keys())
 
-        if urgencies and slas:
-            urg_name = urgencies[0]
-            if len(slas) > 1:
-                hours_nums: list[int] = []
-                for s in slas:
-                    m = re.search(r"(\d+)", s)
-                    if m:
-                        hours_nums.append(int(m.group(1)))
-                if len(hours_nums) >= 2:
-                    min_h, max_h = min(hours_nums), max(hours_nums)
-                    lead_sentence = (
-                        f"{urg_name} requests take {min_h} to {max_h} hours "
-                        "depending on payer and service."
-                    )
-                else:
-                    lead_sentence = (
-                        f"{urg_name} requests take {', '.join(slas).lower()} "
-                        "depending on payer and service."
-                    )
+        # Inspect row values dynamically for durations or currency
+        hours_nums: list[int] = []
+        copays: list[str] = []
+        matched_cat: str | None = None
+        q_tokens = _extract_table_query_tokens(question) if question else []
+
+        # Find any common category shared across all matching rows
+        shared_vals = set(selected_rows_dict[0].values()) if selected_rows_dict else set()
+        for r in selected_rows_dict[1:]:
+            shared_vals &= set(r.values())
+        for sv in shared_vals:
+            sv_str = str(sv).strip()
+            if sv_str and not re.search(r"^\d+|^\$|Document|Sheet|http", sv_str, re.I):
+                matched_cat = sv_str
+                break
+
+        for r in selected_rows_dict:
+            for _k, v in r.items():
+                m_h = re.search(r"(\d+)\s*(?:hours?|days?)", str(v), re.I)
+                if m_h:
+                    hours_nums.append(int(m_h.group(1)))
+                m_c = re.search(r"\$\d+(?:\.\d{2})?", str(v))
+                if m_c and m_c.group(0) not in copays:
+                    copays.append(m_c.group(0))
+                if not matched_cat and q_tokens:
+                    for tok in q_tokens:
+                        if tok == str(v).lower():
+                            matched_cat = str(v)
+                            break
+
+        if hours_nums and matched_cat:
+            min_h, max_h = min(hours_nums), max(hours_nums)
+            if min_h != max_h:
+                dep1 = (
+                    re.sub(r"\s*(name|category|code)$", "", col_names[0], flags=re.I)
+                    .strip()
+                    .lower()
+                    if len(col_names) > 0
+                    else "payer"
+                )
+                dep2 = (
+                    re.sub(r"\s*(name|category|code)$", "", col_names[1], flags=re.I)
+                    .strip()
+                    .lower()
+                    if len(col_names) > 1
+                    else "service"
+                )
+                lead_sentence = (
+                    f"{matched_cat} requests take {min_h} to {max_h} hours "
+                    f"depending on {dep1} and {dep2}."
+                )
             else:
-                if len(payers) == 1:
-                    lead_sentence = f"{urg_name} requests for {payers[0]} take {slas[0]}."
-                else:
-                    lead_sentence = f"{urg_name} requests take {slas[0]}."
+                lead_sentence = f"{matched_cat} requests take {hours_nums[0]} hours."
+        elif hours_nums:
+            min_h, max_h = min(hours_nums), max(hours_nums)
+            if min_h != max_h:
+                lead_sentence = f"Turnaround times range from {min_h} to {max_h} hours."
+            else:
+                lead_sentence = f"The turnaround time is {hours_nums[0]} hours."
         elif copays:
-            if len(copays) == 1 and payers:
-                lead_sentence = f"The standard copay for {payers[0]} is {copays[0]}."
+            if len(copays) == 1:
+                first_payer = list(first_row.values())[0] if first_row else "the plan"
+                lead_sentence = f"The standard copay for {first_payer} is {copays[0]}."
             else:
                 lead_sentence = f"Standard copays range from {copays[0]} to {copays[-1]}."
         else:
-            first_doc = avail_table[selected_ids[0]].document_title if selected_ids else "the table"
             lead_sentence = f"The matching rows from {first_doc} are listed below."
 
         return f"{lead_sentence}\n" + "\n".join(row_lines)
+
+    return "\n".join(row_lines)
 
     return "\n".join(row_lines)
 
@@ -2583,7 +2605,9 @@ async def node_generate(
                     avail_table,
                     selected_ids,
                 )
-            content = _format_table_answer_text(avail_table, selected_ids, missing_terms)
+            content = _format_table_answer_text(
+                avail_table, selected_ids, missing_terms, question=ctx.question_text
+            )
             ctx.response_text = content
             ctx.generated_answer = {
                 "mode": "table",
@@ -3344,63 +3368,73 @@ async def node_validate(
                                 ):
                                     continue
 
-                                # Matched row line format: "Payer, Service: SLA (Urgency)"
-                                m_readable = re.match(
-                                    r"^([^,:]+),\s*([^:]+):\s*([^(]+?)(?:\s*\(([^)]+)\))?$",
-                                    line,
-                                )
-                                if m_readable:
-                                    r_payer = m_readable.group(1).strip()
-                                    r_service = m_readable.group(2).strip()
-                                    r_sla = m_readable.group(3).strip()
-                                    r_urg = (
-                                        m_readable.group(4).strip() if m_readable.group(4) else None
-                                    )
+                                matched_row = False
 
-                                    matched_row = False
+                                # Generic format: "Label: Header: Val, Header: Val"
+                                line_pairs: list[tuple[str, str]] = []
+                                label: str | None = None
+                                if ": " in line:
+                                    parts = [p.strip() for p in line.split(", ") if ":" in p]
+                                    if parts:
+                                        first_part = parts[0]
+                                        subparts = first_part.split(": ")
+                                        if len(subparts) == 3:
+                                            label = subparts[0].strip()
+                                            line_pairs.append(
+                                                (subparts[1].strip(), subparts[2].strip())
+                                            )
+                                            for p in parts[1:]:
+                                                if ": " in p:
+                                                    k, v = p.split(": ", 1)
+                                                    line_pairs.append((k.strip(), v.strip()))
+                                        else:
+                                            for p in parts:
+                                                if ": " in p:
+                                                    k, v = p.split(": ", 1)
+                                                    line_pairs.append((k.strip(), v.strip()))
+
+                                if line_pairs:
                                     for tc in cited_tcs:
-                                        t_payer = (
-                                            str(tc.cells.get("Payer Name", "")).strip().lower()
+                                        tc_cells_lower = {
+                                            str(k).strip().lower(): str(v).strip().lower()
+                                            for k, v in tc.cells.items()
+                                            if v is not None
+                                        }
+                                        label_match = True
+                                        if label:
+                                            label_match = label.lower() in tc_cells_lower.values()
+                                        pairs_match = all(
+                                            tc_cells_lower.get(h.lower()) == v.lower()
+                                            for h, v in line_pairs
                                         )
-                                        t_service = (
-                                            str(tc.cells.get("Service Category", ""))
-                                            .strip()
-                                            .lower()
-                                        )
-                                        t_sla = (
-                                            str(tc.cells.get("Standard SLA", "")).strip().lower()
-                                        )
-                                        t_urg = str(tc.cells.get("Urgency", "")).strip().lower()
-
-                                        if (
-                                            t_payer == r_payer.lower()
-                                            and t_service == r_service.lower()
-                                            and t_sla == r_sla.lower()
-                                            and (r_urg is None or t_urg == r_urg.lower())
-                                        ):
+                                        if label_match and pairs_match:
                                             matched_row = True
                                             break
-
                                     if not matched_row:
                                         is_valid = False
                                         break
                                     found_at_least_one_valid_row = True
                                 else:
-                                    # Pairs format "Col: Val, Col: Val"
-                                    pairs = [p.strip() for p in line.split(", ") if ":" in p]
-                                    if pairs:
-                                        matched_row = False
+                                    # Shorthand format: "Val1, Val2: Val3 (Val4)"
+                                    m_readable = re.match(
+                                        r"^([^,:]+),\s*([^:]+):\s*([^(]+?)(?:\s*\(([^)]+)\))?$",
+                                        line,
+                                    )
+                                    if m_readable:
+                                        comp_vals = [
+                                            m_readable.group(1).strip().lower(),
+                                            m_readable.group(2).strip().lower(),
+                                            m_readable.group(3).strip().lower(),
+                                        ]
+                                        if m_readable.group(4):
+                                            comp_vals.append(m_readable.group(4).strip().lower())
                                         for tc in cited_tcs:
-                                            all_match = True
-                                            for pair in pairs:
-                                                col_name, val_str = pair.split(":", 1)
-                                                col_name = col_name.strip()
-                                                val_str = val_str.strip()
-                                                stored_val = str(tc.cells.get(col_name, "")).strip()
-                                                if val_str != stored_val:
-                                                    all_match = False
-                                                    break
-                                            if all_match:
+                                            tc_vals = [
+                                                str(v).strip().lower()
+                                                for v in tc.cells.values()
+                                                if v is not None
+                                            ]
+                                            if all(cv in tc_vals for cv in comp_vals):
                                                 matched_row = True
                                                 break
                                         if not matched_row:

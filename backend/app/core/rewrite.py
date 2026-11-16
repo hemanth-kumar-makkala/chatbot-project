@@ -42,8 +42,11 @@ class QuestionRewriteOutput(BaseModel):
         return str(v).strip() if v is not None else ""
 
 
-_PRONOUN_PATTERN = re.compile(
-    r"\b(it|its|they|them|their|this|that|these|those)\b",
+_UNRESOLVED_PRONOUN_PATTERN = re.compile(
+    r"\b(it|they|them)\b|"
+    r"\b(that|this)\s+one\b|"
+    r"\b(for|with|about|to|from|of)\s+(it|that|this|them|these|those)\b|"
+    r"\b(that|this|these|those)\s*\?$",
     re.IGNORECASE,
 )
 
@@ -54,11 +57,16 @@ _FOLLOWUP_START_PATTERN = re.compile(
 
 
 def is_followup_question(question: str) -> bool:
-    """Check if question contains follow-up conjunctions or unresolved pronouns."""
+    """Check if question contains follow-up conjunctions or unresolved pronouns.
+
+    Possessive determiners modifying attached nouns ('our check-in protocol',
+    'their appointment time', 'their outstanding balance') represent self-contained
+    inquiries and do not trigger follow-up clarification.
+    """
     q_clean = question.strip()
     if _FOLLOWUP_START_PATTERN.search(q_clean):
         return True
-    if _PRONOUN_PATTERN.search(q_clean):
+    if _UNRESOLVED_PRONOUN_PATTERN.search(q_clean):
         return True
     return any(
         phrase in q_clean.lower()
@@ -67,6 +75,7 @@ def is_followup_question(question: str) -> bool:
             "for it",
             "for that",
             "about that",
+            "about it",
         )
     )
 

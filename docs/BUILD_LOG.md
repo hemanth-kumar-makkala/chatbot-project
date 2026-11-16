@@ -4370,3 +4370,50 @@ Append-only record of all completed tasks, architectural choices, and test recor
   7. `web/__tests__/extraction_view.test.tsx`
   8. `docs/STATUS.md`
   9. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-16] Stage W1: Routing Fixes for Written Guidance & Follow-up Rewrites, plus Generic Table Verification
+
+- **Task**: Complete Stage W1 of `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\stage_W_plan.md` preceded by Stage U4 generic table check:
+  - Confirm table answer formatting, matching, and validation in `graph.py` contain no column names, values, or synonym lists specific to `pa_turnaround_times.xlsx` (e.g., "Payer", "Service", "SLA", "Urgency", "urgent", "Apex Health Insurance"). Make formatting and matching generic (e.g., label each row by its first column, then "Header: value" for the rest; match query terms against headers and cell values in general) and add a test with a second, differently shaped table (`accepted_plans.csv`). Grep evidence and report it.
+  - Fix questions about written guidance (TF-003, TF-006, TF-008 from `failure_analysis.md`) so they are answered from text policy documents, not forced into table mode; table mode only when the question asks for a lookup that the matched spreadsheet can answer.
+  - Fix possessives like "our check-in protocol" (CONF-007) or "their outstanding balance" (NOA-008) so they no longer trigger clarify question when conversation history is empty; only real unresolved references (e.g., "what about that one?") ask for clarification.
+  - Proving unit tests for each named case.
+- **Changes**:
+  1. `backend/app/core/rewrite.py`:
+     - Replaced broad `_PRONOUN_PATTERN` with `_UNRESOLVED_PRONOUN_PATTERN` targeting only bare pronouns (`it`, `they`, `them`), prepositional phrases (`for it`, `with it`, `about that`, `about this`), and demonstratives (`that one`, `this one`, `that?`, `this?`).
+     - Excluded possessive determiners (`our <noun>`, `their <noun>`, `its <noun>`). Queries CONF-007 ("According to our check-in protocol...") and NOA-008 ("Can patients pay their outstanding balance...") return `is_followup_question = False` and route directly to knowledge retrieval without triggering clarify.
+  2. `backend/app/core/graph.py`:
+     - `node_route`: Added `is_written_guidance_q` check for terms like "advance", "submitted", "submission", "appeal", "denial", "filing". Questions about written policies/guidance are never assigned `computed_mode = "table"`.
+     - `node_retrieve`: Injected `is_written_guidance` guard preventing `search_tables` from forcing `answer_mode = "table"` for written guidance questions. If incoming mode was `"table"`, resets to `"short"`.
+     - `_select_matching_table_rows`: Removed hardcoded synonym lists `("expedited", "stat", "rush", "emergency", "priority")`. Query terms are generically matched against column headers and cell values using case-insensitive substring and prefix comparison.
+     - `_format_table_answer_text`: Removed `preferred_col_order` and all hardcoded column references (`"Payer Name"`, `"Service Category"`, `"Standard SLA"`, `"Urgency"`). Labels each row by its first column value, followed by comma-separated `"Header: value"` for remaining fields. Lead sentence dynamically detects durations, currency copays, or shared values across candidate rows.
+     - `node_validate`: Updated table validation to parse generic `"Label: Header: Val, Header: Val"` structures without assuming specific column names, ensuring all values exist in candidate rows and failing on hallucinated values.
+  3. `prompts/registry.yaml`:
+     - Updated `router_classify` prompts (v1.2.0, v1.3.0) to explicitly instruct that questions about written guidance, policies, submission rules, or appeals must use `"short"` or `"explain"` rather than `"table"`.
+  4. `backend/tests/unit/test_routing_fixes_w1.py` (new):
+     - 11 unit tests covering U4 generic table checks (accepted_plans.csv shape, validation pass on faithful rows, validation fail on hallucinated deductibles/tiers), W1 possessive rewrites (CONF-007, NOA-008, real unresolved referent), and W1 routing fixes (TF-003, TF-006, TF-008, retrieve table mode reset, true table query retention).
+  5. `backend/tests/unit/test_multiturn_followup.py`: Added assertions for CONF-007, NOA-008, and unresolved referents.
+  6. `backend/tests/unit/test_table_answering_closest_rows.py`, `backend/tests/unit/test_table_and_conflict_validation.py`, `backend/tests/unit/test_table_retrieval.py`, `backend/tests/unit/test_table_answer_wording_u4.py`:
+     - Updated assertions to align with generic row formatting (`Label: Header: Val, ...`).
+- **Verification**:
+  - Grep verification on `backend/app/core/graph.py`: 0 occurrences of `"Apex Health Insurance"`, `"Payer Name"`, `"Service Category"`, `"Urgency"`, or synonym lists in table matching/formatting/validation.
+  - `uv run python -m pytest tests/unit/test_routing_fixes_w1.py`: `11 passed in 0.56s`.
+  - `uv run ruff check tests/unit/test_routing_fixes_w1.py`: All checks passed!
+  - `uv run ruff format --check tests/unit/test_routing_fixes_w1.py`: 1 file already formatted.
+  - `uv run pre-commit run --files`: All 10 hooks passed with 0 exit code across all modified files.
+  - Full mock test suite (`APP_PROFILE=mock`, `uv run python -m pytest -m "not models"`): `1071 passed, 1 skipped, 16 deselected, 57 warnings in 291.43s (0:04:51)`.
+- **Files Created**:
+  1. `backend/tests/unit/test_routing_fixes_w1.py`
+- **Files Edited**:
+  1. `backend/app/core/rewrite.py`
+  2. `backend/app/core/graph.py`
+  3. `prompts/registry.yaml`
+  4. `backend/tests/unit/test_multiturn_followup.py`
+  5. `backend/tests/unit/test_table_answering_closest_rows.py`
+  6. `backend/tests/unit/test_table_and_conflict_validation.py`
+  7. `backend/tests/unit/test_table_retrieval.py`
+  8. `backend/tests/unit/test_table_answer_wording_u4.py`
+  9. `docs/STATUS.md`
+  10. `docs/BUILD_LOG.md`

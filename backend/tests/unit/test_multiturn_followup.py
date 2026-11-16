@@ -37,6 +37,20 @@ def test_is_followup_question_detection():
     assert is_followup_question("How recent must they be?") is True
     assert is_followup_question("What documentation is needed for that?") is True
     assert is_followup_question("What insurance plans are accepted?") is False
+    # Stage W1: Possessives modifying nouns do not trigger follow-up detection
+    q_conf = (
+        "According to our check-in protocol, "
+        "how far in advance of their appointment time must routine patients arrive?"
+    )
+    assert is_followup_question(q_conf) is False
+    assert (
+        is_followup_question(
+            "Can patients pay their outstanding balance using Bitcoin or cryptocurrency?"
+        )
+        is False
+    )
+    # Real unresolved references do trigger follow-up detection
+    assert is_followup_question("what about that one?") is True
 
 
 def test_heuristic_rewrite_resolves_prior_auth_followup():
