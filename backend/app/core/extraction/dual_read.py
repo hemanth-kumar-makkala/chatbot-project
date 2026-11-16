@@ -11,10 +11,12 @@ Enforces:
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.extraction.field_state import ExtractedField, FieldState
+from app.core.extraction.template import template_ordered_keys
 from app.core.extraction.validators import (
     validate_date,
     validate_id_format,
@@ -89,14 +91,18 @@ def dual_read_compare(
     confidences: dict[str, float] | None = None,
     document_title: str = "",
     page_number: int = 1,
+    template_fields: Sequence[str] = (),
 ) -> list[ExtractedField]:
     """Reconcile OCR and Vision readings into typed ExtractedField objects with explicit states.
 
     Normalized values (digits, dates, IDs, amounts) are used for comparison.
     Prose may differ; IDs, numbers, and dates must match or be marked CONFLICTING.
+
+    Stage U3: every field in template_fields is listed first, in template order. A template field
+    neither reading found is NOT_PRESENT with no value, never omitted. Other keys follow.
     """
     conf_map = confidences or {}
-    all_keys = list(dict.fromkeys(list(read1_ocr.keys()) + list(read2_vision.keys())))
+    all_keys = template_ordered_keys(template_fields, read1_ocr.keys(), read2_vision.keys())
     extracted: list[ExtractedField] = []
 
     for key in all_keys:

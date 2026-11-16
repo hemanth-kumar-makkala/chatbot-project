@@ -22,6 +22,7 @@ from app.api.deps import (
 )
 from app.core.extraction.field_state import ExtractedField
 from app.core.extraction.subgraph import build_extraction_subgraph
+from app.core.extraction.template import complete_template_field_dicts
 from app.core.graph import GraphPorts, GraphRuntimeContext, GraphState
 from app.core.ingestion.validation import validate_file
 from app.db.models import Conversation, ExtractionResult, Message, SessionDocument, Tenant
@@ -702,7 +703,12 @@ async def extract_session_document_fields(
     )
 
     if existing_ext is not None:
-        raw_fields = existing_ext.fields_data.get("fields", [])
+        # Stage U3: results stored before the template rule are completed so every template
+        # field is listed; missing ones are NOT_PRESENT with no value.
+        raw_fields = complete_template_field_dicts(
+            existing_ext.fields_data.get("fields", []),
+            document_title=file_name,
+        )
         return SessionDocumentExtractionResponse(
             session_document_id=str(doc_uuid),
             conversation_id=str(conv_uuid),

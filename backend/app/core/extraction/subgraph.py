@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from app.core.extraction.dual_read import _clean_str, dual_read_compare
 from app.core.extraction.field_state import ExtractedField, FieldState
+from app.core.extraction.template import FAX_INTAKE_TEMPLATE_FIELDS
 from app.core.normalization import normalize_dates
 from app.core.safety_lock import is_vision_model
 from app.ports.types import ChatMessage, ModelRole
@@ -622,6 +623,7 @@ async def node_dual_read_compare(
         confidences=conf_dict,
         document_title=str(doc_title),
         page_number=page_int,
+        template_fields=FAX_INTAKE_TEMPLATE_FIELDS,
     )
 
     ctx.extracted_fields["fields"] = fields

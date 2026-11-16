@@ -4297,3 +4297,37 @@ Append-only record of all completed tasks, architectural choices, and test recor
   4. `backend/tests/unit/test_generate_node_schemas.py`
   5. `docs/STATUS.md`
   6. `docs/BUILD_LOG.md`
+
+---
+
+### [2026-11-16] Stage U3: Show Every Template Field
+
+- **Task**: Complete Stage U3 of `$env:USERPROFILE\Downloads\Projects\cka-data\tmp\stage_U_plan.md`:
+  - Ensure the extraction field table always lists every field of the extraction template.
+  - A field absent from the document (such as `dosage` on `invalid_npi_fax.pdf` or `secondary_insurance` on `missing_field_fax.pdf`) shows `NOT_PRESENT` (no value, `None`), never omitted.
+  - Add proving unit and integration tests using `missing_field_fax.pdf` and `invalid_npi_fax.pdf`.
+- **Changes**:
+  1. `backend/app/core/extraction/template.py` (new): Created canonical extraction template module defining `FAX_INTAKE_TEMPLATE_FIELDS` matching all 17 fields in `EXTRACTION_VISION_PROMPT` in exact template order (`patient_name`, `chart_number`, `authorized_medication`, `authorization_date`, `dosage`, `refill_count`, `clinic_phone`, `referring_provider_phone`, `ordering_clinician_signature`, `prescriber_signature`, `procedure_ordered`, `appointment_date`, `facility_location`, `clinical_justification`, `pain_scale_score`, `prescriber_npi`, `secondary_insurance`), with helpers `template_ordered_keys`, `not_present_field`, and `complete_template_field_dicts`.
+  2. `backend/app/core/extraction/dual_read.py`: Extended `dual_read_compare` to accept `template_fields` and sort keys by `template_ordered_keys(template_fields, read1_ocr.keys(), read2_vision.keys())`. Fields absent from both OCR and vision readings are assigned `FieldState.NOT_PRESENT` with `value=None` (or `NOT_APPLICABLE` for override fields).
+  3. `backend/app/core/extraction/subgraph.py`: Passed `template_fields=FAX_INTAKE_TEMPLATE_FIELDS` into `dual_read_compare` in `node_dual_read_compare`, ensuring all 17 template fields are reconciled into `ctx.extracted_fields["fields"]` and formatted into `ctx.response_text` and `ctx.generated_answer["fields"]`.
+  4. `backend/app/api/routes/conversations.py`: In `extract_session_document_fields`, wrapped cached `existing_ext.fields_data` in `complete_template_field_dicts` so legacy stored extraction rows missing newly enforced template fields are completed in template order with `NOT_PRESENT` (value `None`) when served to clients.
+  5. `backend/tests/unit/test_extraction_template_fields.py` (new): Unit tests verifying template order matching the vision prompt, all 17 fields listed on `invalid_npi_fax.pdf` (with `dosage` as `NOT_PRESENT`, `value=None`), missing fields on `missing_field_fax.pdf` listed as `NOT_PRESENT` with `value=None`, and completion of stored extractions.
+  6. `backend/tests/integration/test_extraction_template_fields_route.py` (new): Integration test verifying `POST /extract` on a throwaway database returns all template fields for `missing_field_fax.pdf` and completes legacy stored rows for `invalid_npi_fax.pdf`.
+- **Verification**:
+  - `uv run python -m pytest tests/unit/test_extraction_template_fields.py tests/unit/test_dual_read_compare.py tests/unit/test_dosage_ocr_extraction.py -m "not models" -q`: `20 passed`.
+  - `uv run python -m pytest tests/integration/test_extraction_template_fields_route.py tests/integration/test_session_document_extraction_route.py -m "not models" -q`: `2 passed`.
+  - `uv run ruff check`: `All checks passed!`.
+  - `uv run ruff format --check`: `6 files already formatted`.
+  - `uv run mypy app`: `Success: no issues found in 121 source files`.
+  - `uv run pre-commit run --files`: All hooks passed.
+  - Full mock suite (`APP_PROFILE=mock`, `uv run python -m pytest -m "not models"`): `1055 passed, 1 skipped, 16 deselected, 53 warnings in 172.34s (0:02:52)`.
+- **Files Created**:
+  1. `backend/app/core/extraction/template.py`
+  2. `backend/tests/unit/test_extraction_template_fields.py`
+  3. `backend/tests/integration/test_extraction_template_fields_route.py`
+- **Files Edited**:
+  1. `backend/app/core/extraction/dual_read.py`
+  2. `backend/app/core/extraction/subgraph.py`
+  3. `backend/app/api/routes/conversations.py`
+  4. `docs/STATUS.md`
+  5. `docs/BUILD_LOG.md`
